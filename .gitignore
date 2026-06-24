@@ -1,6 +1,7 @@
 CLAUDE.md
 .claude/
 .temp/
+.agents/
 
 # Python
 __pycache__/

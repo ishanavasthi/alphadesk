@@ -1,0 +1,126 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 222 16% 5%;
+  --foreground: 220 16% 90%;
+  --card: 222 15% 7%;
+  --card-foreground: 220 16% 90%;
+  --popover: 222 16% 6%;
+  --popover-foreground: 220 16% 90%;
+  --primary: 37 92% 55%;
+  --primary-foreground: 224 30% 6%;
+  --secondary: 220 12% 13%;
+  --secondary-foreground: 220 14% 88%;
+  --muted: 220 12% 12%;
+  --muted-foreground: 220 8% 58%;
+  --accent: 220 12% 15%;
+  --accent-foreground: 220 16% 92%;
+  --destructive: 3 80% 57%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 220 12% 14%;
+  --input: 220 12% 16%;
+  --ring: 37 92% 55%;
+  --radius: 0.25rem;
+
+  --term-up: #16c784;
+  --term-down: #e5484d;
+  --term-flag: #f5a623;
+  --term-cyan: #3dd6f5;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "ss01", "cv01";
+  }
+  ::selection {
+    background: hsl(var(--primary) / 0.25);
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 6px;
+    border: 2px solid hsl(var(--background));
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.4);
+  }
+}
+
+@layer components {
+  /* Uppercase mono micro-label used throughout the terminal */
+  .eyebrow {
+    @apply font-mono text-[0.65rem] uppercase tracking-[0.18em] text-muted-foreground;
+  }
+
+  /* Status pills — colored by semantic meaning */
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-sm border px-1.5 py-0.5 font-mono
+      text-[0.62rem] font-medium uppercase tracking-[0.1em] leading-tight;
+  }
+  .pill-pass {
+    color: var(--term-up);
+    background: color-mix(in srgb, var(--term-up) 12%, transparent);
+    border-color: color-mix(in srgb, var(--term-up) 35%, transparent);
+  }
+  .pill-flag {
+    color: var(--term-flag);
+    background: color-mix(in srgb, var(--term-flag) 12%, transparent);
+    border-color: color-mix(in srgb, var(--term-flag) 35%, transparent);
+  }
+  .pill-reject {
+    color: var(--term-down);
+    background: color-mix(in srgb, var(--term-down) 12%, transparent);
+    border-color: color-mix(in srgb, var(--term-down) 35%, transparent);
+  }
+  .pill-muted {
+    @apply text-muted-foreground;
+    border-color: hsl(var(--border));
+    background: hsl(var(--muted) / 0.4);
+  }
+
+  /* Soft tints for terminal semantic colors (opacity modifiers don't work on
+     raw CSS-var colors, only on hsl() tokens) */
+  .bg-up-soft {
+    background: color-mix(in srgb, var(--term-up) 6%, transparent);
+  }
+  .bg-down-soft {
+    background: color-mix(in srgb, var(--term-down) 6%, transparent);
+  }
+
+  /* Blinking command-line caret */
+  .caret::after {
+    content: "▋";
+    margin-left: 1px;
+    color: hsl(var(--primary));
+    animation: blink 1s step-end infinite;
+  }
+
+  /* Hero ambient glow, used once */
+  .hero-glow {
+    background:
+      radial-gradient(
+        60rem 28rem at 50% -8rem,
+        hsl(var(--primary) / 0.08),
+        transparent 70%
+      );
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
