@@ -122,9 +122,10 @@ export function ResultsDashboard({ query, onReset }: { query: string; onReset: (
     }
   }
 
+  // Approvable = anything that cleared the guardrails (PASS or FLAG).
   const passItems = recs
     .map((rec) => ({ rec, risk: risks[rec.symbol] }))
-    .filter((x) => x.risk?.decision === "PASS");
+    .filter((x) => x.risk?.approved === true);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">

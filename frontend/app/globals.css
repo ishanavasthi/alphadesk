@@ -96,6 +96,56 @@
     background: color-mix(in srgb, var(--term-down) 6%, transparent);
   }
 
+  /* Hover/focus tooltip (see components/Hint.tsx) */
+  .hint {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    right: 0;
+    z-index: 50;
+    min-width: 13rem;
+    max-width: 18rem;
+    padding: 0.5rem 0.6rem;
+    border: 1px solid hsl(var(--border));
+    background: hsl(var(--popover));
+    border-radius: var(--radius);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    font-size: 0.72rem;
+    line-height: 1.35;
+    color: hsl(var(--foreground));
+    text-align: left;
+    text-transform: none;
+    letter-spacing: normal;
+    white-space: normal;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(2px);
+    transition: opacity 0.12s ease, transform 0.12s ease;
+    pointer-events: none;
+  }
+  .group:hover > .hint,
+  .group:focus-visible > .hint,
+  .group:focus-within > .hint {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
+  .hint-head {
+    display: block;
+    margin-bottom: 0.25rem;
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: hsl(var(--muted-foreground));
+  }
+  .hint-body {
+    display: block;
+  }
+  .hint-body strong {
+    color: hsl(var(--primary));
+    font-weight: 600;
+  }
+
   /* Blinking command-line caret */
   .caret::after {
     content: "▋";

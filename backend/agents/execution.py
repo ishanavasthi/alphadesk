@@ -32,7 +32,9 @@ def _stage_pending(state: PortfolioState) -> PortfolioState:
     """Phase 1: queue PASS stocks for approval and add them to the paper watchlist."""
     existing = {pa.symbol for pa in state.pending_actions}
     for assessment in state.risk_assessments:
-        if assessment.decision != "PASS" or assessment.symbol in existing:
+        # Stage everything that cleared the guardrails (PASS or FLAG); REJECTs are
+        # not approved. FLAG is a caution badge, not a separate gate.
+        if not assessment.approved or assessment.symbol in existing:
             continue
         state.pending_actions.append(
             PendingAction(

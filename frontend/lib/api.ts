@@ -149,6 +149,29 @@ export async function streamAnalyze(
   }
 }
 
+export interface WatchlistItem {
+  symbol: string;
+  run_id?: string;
+  query?: string | null;
+  added_at?: string;
+}
+
+/** GET /watchlist — cumulative paper watchlist across runs. */
+export async function getWatchlist(): Promise<WatchlistItem[]> {
+  const response = await fetch(`${API_BASE}/watchlist`);
+  if (!response.ok) throw new Error(`Watchlist failed (${response.status}).`);
+  const data = await response.json();
+  return (data.items as WatchlistItem[]) || [];
+}
+
+/** DELETE /watchlist/{symbol} — remove a stock from the paper watchlist. */
+export async function removeFromWatchlist(symbol: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/watchlist/${encodeURIComponent(symbol)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) throw new Error(`Remove failed (${response.status}).`);
+}
+
 /** POST /approve — approve or reject the staged batch for a run. */
 export async function approve(
   actionId: string,

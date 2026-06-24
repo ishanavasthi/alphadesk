@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
@@ -56,6 +57,25 @@ app.add_middleware(
 _RUNS: Dict[str, Dict[str, Any]] = {}
 # action_id -> run_id (the pending approval batch a /approve call targets)
 _ACTIONS: Dict[str, str] = {}
+# symbol -> {symbol, run_id, query, added_at}; the cumulative paper watchlist
+# across runs (in-memory; swap for a store in production).
+_PAPER_WATCHLIST: Dict[str, Dict[str, Any]] = {}
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _record_watchlist(run_id: str, symbols: list) -> None:
+    query = _RUNS.get(run_id, {}).get("query")
+    for sym in symbols or []:
+        if sym not in _PAPER_WATCHLIST:
+            _PAPER_WATCHLIST[sym] = {
+                "symbol": sym,
+                "run_id": run_id,
+                "query": query,
+                "added_at": _now_iso(),
+            }
 
 _SSE_HEADERS = {
     "Cache-Control": "no-cache",
@@ -229,6 +249,7 @@ async def approve(body: ApproveRequest) -> Dict[str, Any]:
     if body.approved:
         final = await resume_after_approval(thread_id=run_id, approved=True)
         _RUNS[run_id]["status"] = "completed"
+        _record_watchlist(run_id, final.paper_watchlist)
         return {"run_id": run_id, "status": "completed", "state": final.model_dump()}
 
     # Rejected: record reason, do not resume execution (no paper-watchlist writes).
@@ -239,6 +260,22 @@ async def approve(body: ApproveRequest) -> Dict[str, Any]:
     _RUNS[run_id]["status"] = "rejected"
     snapshot = await alphaDesk_graph.aget_state(config)
     return {"run_id": run_id, "status": "rejected", "state": _state_dict(snapshot)}
+
+
+@app.get("/watchlist")
+async def get_watchlist() -> Dict[str, Any]:
+    """Return the cumulative paper watchlist (stocks approved across runs)."""
+    items = sorted(
+        _PAPER_WATCHLIST.values(), key=lambda x: x.get("added_at", ""), reverse=True
+    )
+    return {"count": len(items), "items": items}
+
+
+@app.delete("/watchlist/{symbol}")
+async def remove_from_watchlist(symbol: str) -> Dict[str, Any]:
+    """Remove a symbol from the paper watchlist."""
+    removed = _PAPER_WATCHLIST.pop(symbol, None) is not None
+    return {"count": len(_PAPER_WATCHLIST), "symbol": symbol, "removed": removed}
 
 
 @app.get("/status/{run_id}")

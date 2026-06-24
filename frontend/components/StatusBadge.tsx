@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { Hint } from "@/components/Hint";
 import type { AnalystAction, RiskDecision } from "@/lib/api";
 
 const RISK_CLASS: Record<RiskDecision, string> = {
@@ -7,8 +8,27 @@ const RISK_CLASS: Record<RiskDecision, string> = {
   REJECT: "pill-reject",
 };
 
+const RISK_DESC: Record<RiskDecision, string> = {
+  PASS: "Cleared all guardrails (confidence >= 0.75).",
+  FLAG: "Cleared the guardrails but confidence is borderline (0.70-0.75). Review before approving.",
+  REJECT: "Failed a guardrail - confidence < 0.70, sector full, or the analyst said avoid.",
+};
+
 export function RiskBadge({ decision }: { decision: RiskDecision }) {
-  return <span className={cn("pill", RISK_CLASS[decision])}>{decision}</span>;
+  return (
+    <Hint
+      content={
+        <>
+          <span className="hint-head">Risk Manager · verdict</span>
+          <span className="hint-body">
+            <strong>{decision}</strong> — {RISK_DESC[decision]}
+          </span>
+        </>
+      }
+    >
+      <span className={cn("pill", RISK_CLASS[decision])}>{decision}</span>
+    </Hint>
+  );
 }
 
 const ACTION_CLASS: Record<AnalystAction, string> = {
@@ -17,6 +37,25 @@ const ACTION_CLASS: Record<AnalystAction, string> = {
   avoid: "pill-reject",
 };
 
+const ACTION_DESC: Record<AnalystAction, string> = {
+  buy: "Thesis favors upside.",
+  hold: "Roughly balanced — no strong edge either way.",
+  avoid: "Thesis is negative; better left alone.",
+};
+
 export function ActionBadge({ action }: { action: AnalystAction }) {
-  return <span className={cn("pill", ACTION_CLASS[action])}>{action}</span>;
+  return (
+    <Hint
+      content={
+        <>
+          <span className="hint-head">Analyst · call</span>
+          <span className="hint-body">
+            <strong>{action.toUpperCase()}</strong> — {ACTION_DESC[action]}
+          </span>
+        </>
+      }
+    >
+      <span className={cn("pill", ACTION_CLASS[action])}>{action}</span>
+    </Hint>
+  );
 }
