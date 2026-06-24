@@ -4,13 +4,13 @@ IMPORTANT: the IND Money MCP is READ-ONLY. This agent never calls
 ``user_watchlist`` or otherwise mutates the user's real IND Money watchlists.
 Instead it maintains an application-level paper watchlist and an approval queue.
 
-Pure node ``(state: PortfolioState) -> PortfolioState`` that runs in two phases:
+The graph gates this node with ``interrupt_before=["execution"]`` (see
+graph/graph.py), so the human-in-the-loop pause happens *before* this node runs.
+When it runs it:
 
-1. ``human_approved`` is False  -> stage PASS stocks as PendingActions, add them
-   to ``paper_watchlist``, and leave ``human_approved`` False. This is the HiTL
-   interrupt point.
-2. ``human_approved`` is True   -> for each pending action place a real order if
-   a BrokerAdapter is configured, otherwise log and persist; then move the action
+1. Stages PASS stocks as PendingActions, adding them to ``paper_watchlist``.
+2. If ``human_approved`` is True, places a real order for each action when a
+   BrokerAdapter is configured, otherwise logs and persists; then moves actions
    from ``pending_actions`` to ``approved_actions`` (paper_watchlist preserved).
 
 No real trade is ever placed unless a BrokerAdapter is explicitly configured.
@@ -47,8 +47,6 @@ def _stage_pending(state: PortfolioState) -> PortfolioState:
         existing.add(assessment.symbol)
         if assessment.symbol not in state.paper_watchlist:
             state.paper_watchlist.append(assessment.symbol)
-
-    state.human_approved = False  # HiTL interrupt: wait for human approval
     return state
 
 
@@ -76,7 +74,13 @@ def _process_approved(state: PortfolioState) -> PortfolioState:
 
 
 async def execution(state: PortfolioState) -> PortfolioState:
-    """Stage pending actions, or process them once a human has approved."""
-    if not state.human_approved:
-        return _stage_pending(state)
-    return _process_approved(state)
+    """Stage PASS stocks, then finalize them once a human has approved.
+
+    The graph gates this node with ``interrupt_before=["execution"]``, so by the
+    time it runs the human has already approved (or the run ended at the pause).
+    Staging is idempotent (deduped against existing pending_actions).
+    """
+    _stage_pending(state)
+    if state.human_approved:
+        _process_approved(state)
+    return state
