@@ -85,7 +85,19 @@ class AnalystRecommendation(BaseModel):
         le=1.0,
         description="Confidence score in [0, 1]; must reach 0.70 to clear the RiskManager.",
     )
-    thesis: str = Field(..., description="Investment thesis supporting the recommended action.")
+    thesis: Optional[str] = Field(
+        None, description="Optional one-paragraph synthesis of the bull and bear cases."
+    )
+    bull_thesis: str = Field(..., description="The case for the stock outperforming.")
+    bear_thesis: str = Field(
+        ..., description="The downside case / reasons the stock could underperform."
+    )
+    key_risks: List[str] = Field(
+        default_factory=list, description="Principal risks that could break the thesis."
+    )
+    catalysts: List[str] = Field(
+        default_factory=list, description="Events/catalysts that could move the stock."
+    )
     target_price: Optional[float] = Field(
         None, description="Optional price target underpinning the thesis."
     )
@@ -109,7 +121,14 @@ class RiskAssessment(BaseModel):
         None, description="Sector used to enforce the max-3-stocks-per-sector rule."
     )
     approved: bool = Field(
-        ..., description="True if the recommendation passes all guardrails."
+        ..., description="True if the recommendation passes all guardrails (PASS or FLAG)."
+    )
+    decision: Literal["PASS", "REJECT", "FLAG"] = Field(
+        ...,
+        description=(
+            "RiskManager verdict: PASS (queue for execution), REJECT (drop), "
+            "FLAG (clears guardrails but needs human review before queueing)."
+        ),
     )
     confidence: float = Field(
         ...,
