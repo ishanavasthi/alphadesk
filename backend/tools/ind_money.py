@@ -40,6 +40,28 @@ def _extract_text(result: Any) -> Optional[str]:
     return "\n".join(parts) if parts else None
 
 
+def _unwrap(data: Any) -> Any:
+    """Unwrap IND Money's nested response envelope.
+
+    The IND Money MCP returns payloads as ``{"result": "<stringified JSON>"}`` —
+    the actual data is a JSON string nested under ``result``. Repeatedly unwrap a
+    sole ``result`` key and re-parse any JSON string until we reach the real
+    object (bounded to avoid pathological loops).
+    """
+    for _ in range(4):
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+                continue
+            except json.JSONDecodeError:
+                return data
+        if isinstance(data, dict) and list(data.keys()) == ["result"]:
+            data = data["result"]
+            continue
+        break
+    return data
+
+
 async def _call_mcp_tool(tool_name: str, arguments: Optional[dict] = None) -> Any:
     """Open a session to the IND Money MCP server, call ``tool_name``, return JSON.
 
@@ -63,15 +85,15 @@ async def _call_mcp_tool(tool_name: str, arguments: Optional[dict] = None) -> An
 
     structured = getattr(result, "structuredContent", None)
     if structured:
-        return structured
+        return _unwrap(structured)
 
     text = _extract_text(result)
     if text is None:
         raise MCPClientError(f"{tool_name} returned no content")
     try:
-        return json.loads(text)
+        return _unwrap(json.loads(text))
     except json.JSONDecodeError:
-        return text
+        return _unwrap(text)
 
 
 def _pick_list(data: Any, *aliases: str) -> List[dict]:
@@ -101,21 +123,30 @@ class _Base(BaseModel):
 
 
 class OHLCBar(_Base):
-    timestamp: Optional[str] = None
+    timestamp_sec: Optional[int] = None
+    datetime_ist: Optional[str] = None
     open: Optional[float] = None
     high: Optional[float] = None
     low: Optional[float] = None
     close: Optional[float] = None
     volume: Optional[float] = None
+    timestamp: Optional[str] = None  # legacy/alt field name, kept for forward-compat
 
 
 class OHLCResponse(_Base):
+    ind_key: Optional[str] = Field(None, description="IND Money internal instrument key.")
     symbol: Optional[str] = None
+    interval: Optional[str] = Field(None, description="Candle interval, e.g. '1day'.")
+    count: Optional[int] = Field(None, description="Number of candles returned.")
+    has_more_data: Optional[bool] = Field(
+        None, description="True when the server has older candles beyond this page."
+    )
     bars: List[OHLCBar] = Field(default_factory=list)
 
     @classmethod
     def from_mcp(cls, data: Any) -> "OHLCResponse":
-        bars = _pick_list(data, "bars", "candles", "ohlc", "data")
+        # Real IND Money key is "candles"; aliases kept for other shapes.
+        bars = _pick_list(data, "candles", "bars", "ohlc", "data")
         return cls(bars=[OHLCBar(**b) for b in bars], **_scalars(data))
 
 
