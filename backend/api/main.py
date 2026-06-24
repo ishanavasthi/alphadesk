@@ -37,10 +37,12 @@ from graph.state import PortfolioState  # noqa: E402
 
 app = FastAPI(title="AlphaDesk", version="0.1.0")
 
-# Frontend dev server (Next.js) origin.
+# Frontend dev server (Next.js). Allow both localhost and 127.0.0.1 on any port
+# so the browser reaches the API regardless of how the dev URL is opened.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ArrowLeft, AlertTriangle, CheckCircle2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AgentStepCard, type StageStatus } from "@/components/AgentStepCard";
@@ -39,13 +39,21 @@ export function ResultsDashboard({ query, onReset }: { query: string; onReset: (
   const [rejectionReason, setRejectionReason] = useState<string | null>(null);
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
-  const started = useRef(false);
 
   useEffect(() => {
-    if (started.current) return;
-    started.current = true;
     const controller = new AbortController();
 
+    // Reset for a fresh run (also covers a re-query on the same instance).
+    setStages(Object.fromEntries(STAGES.map((s) => [s.key, "pending" as StageStatus])));
+    setDetails({});
+    setRecs([]);
+    setRisks({});
+    setActionId(null);
+    setRejectionReason(null);
+    setWatchlist([]);
+    setError(null);
+    setStatus("running");
+    setModalOpen(false);
     setStages((s) => ({ ...s, scanner: "active" }));
 
     streamAnalyze(

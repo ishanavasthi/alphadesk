@@ -16,7 +16,6 @@ from pydantic import BaseModel, Field
 
 from graph.state import AnalystRecommendation, PortfolioState, ResearchReport
 from rag.retriever import get_relevant_context
-from tools.ind_money import IndKeysResponse, lookup_ind_keys
 
 ANALYST_MODEL = "llama-3.3-70b-versatile"
 
@@ -38,16 +37,9 @@ def _get_llm() -> ChatGroq:
     return ChatGroq(model=ANALYST_MODEL, temperature=0)
 
 
-async def _gather_context(report: ResearchReport) -> List[str]:
-    """RAG passages plus any IND key references for the symbol."""
-    context = get_relevant_context(report.symbol, report.summary)
-    try:
-        keys = await lookup_ind_keys.ainvoke({"query": report.symbol})
-        if isinstance(keys, IndKeysResponse):
-            context.extend(f"ind_key:{k.name}" for k in keys.keys if k.name)
-    except Exception:  # noqa: BLE001 - context enrichment is best-effort
-        pass
-    return context
+def _gather_context(report: ResearchReport) -> List[str]:
+    """RAG passages relevant to the symbol + research summary."""
+    return get_relevant_context(report.symbol, report.summary)
 
 
 def _build_prompt(report: ResearchReport, context: List[str]) -> str:
@@ -73,7 +65,7 @@ def _build_prompt(report: ResearchReport, context: List[str]) -> str:
 
 
 async def _analyze_one(report: ResearchReport) -> Optional[AnalystRecommendation]:
-    context = await _gather_context(report)
+    context = _gather_context(report)
     try:
         llm = _get_llm().with_structured_output(_AnalystOutput)
         out = await llm.ainvoke(_build_prompt(report, context))

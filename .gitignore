@@ -29,3 +29,6 @@ dist/
 
 # RAG vector store
 data/chroma_db/
+
+# IND Money OAuth token cache
+backend/.ind_money_token.json

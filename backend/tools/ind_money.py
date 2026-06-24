@@ -1,26 +1,39 @@
 """IND Money MCP server wrapped as LangGraph tools (read-only market data).
 
-Connects to the IND Money MCP server over streamable HTTP using the URL in the
-``IND_MONEY_MCP_URL`` environment variable. Each of the seven tools below is an
-async LangChain ``@tool`` that returns a typed Pydantic model on success, or a
-clear human-readable error string if the underlying MCP call fails.
+Connects to the IND Money MCP over streamable HTTP (URL in ``IND_MONEY_MCP_URL``)
+with an OAuth bearer token from ``ind_money_auth.get_access_token()``. Each tool is
+an async LangChain ``@tool`` returning a typed Pydantic model, or a clear error
+string on failure.
 
-The exact JSON shape returned by the live IND Money MCP server is not known at
-scaffold time, so the response models allow extra fields (``extra="allow"``) and
-the ``from_mcp`` constructors pull list payloads from a few likely key aliases.
-Tighten the field mappings once the real server schema is confirmed.
+The IND Money API keys every instrument by ``ind_key`` (e.g. "INDS00577"), not by
+ticker symbol. Resolve a ticker/name to an ind_key with ``lookup_ind_keys`` or read
+it off ``get_indian_stocks_movers``. Responses are wrapped as
+``{"result": "<stringified JSON>"}`` and unwrapped here.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from langchain_core.tools import tool
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import BaseModel, ConfigDict, Field
+
+from tools.ind_money_auth import MCPAuthError, get_access_token
+
+# Valid categories for get_indian_stocks_movers (from the live tool schema).
+MOVER_CATEGORIES = (
+    "top-gainers",
+    "top-losers",
+    "most-active",
+    "52-week-high",
+    "52-week-low",
+    "upper-circuit-stocks",
+    "lower-circuit-stocks",
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -31,7 +44,6 @@ class MCPClientError(Exception):
 
 
 def _extract_text(result: Any) -> Optional[str]:
-    """Return the concatenated text of any TextContent blocks in a tool result."""
     parts: List[str] = []
     for block in getattr(result, "content", None) or []:
         text = getattr(block, "text", None)
@@ -41,13 +53,7 @@ def _extract_text(result: Any) -> Optional[str]:
 
 
 def _unwrap(data: Any) -> Any:
-    """Unwrap IND Money's nested response envelope.
-
-    The IND Money MCP returns payloads as ``{"result": "<stringified JSON>"}`` —
-    the actual data is a JSON string nested under ``result``. Repeatedly unwrap a
-    sole ``result`` key and re-parse any JSON string until we reach the real
-    object (bounded to avoid pathological loops).
-    """
+    """Unwrap IND Money's ``{"result": "<stringified JSON>"}`` envelope."""
     for _ in range(4):
         if isinstance(data, str):
             try:
@@ -63,19 +69,25 @@ def _unwrap(data: Any) -> Any:
 
 
 async def _call_mcp_tool(tool_name: str, arguments: Optional[dict] = None) -> Any:
-    """Open a session to the IND Money MCP server, call ``tool_name``, return JSON.
+    """Call ``tool_name`` on the IND Money MCP and return the unwrapped JSON.
 
-    Returns the tool's structured content when present, otherwise the parsed JSON
-    text payload (falling back to the raw text). Raises ``MCPClientError`` on any
-    transport, protocol, or tool-level error.
+    Raises ``MCPClientError`` on missing URL/auth, transport, or tool-level errors.
     """
     url = os.environ.get("IND_MONEY_MCP_URL")
     if not url:
         raise MCPClientError("IND_MONEY_MCP_URL is not set")
 
+    # None values are dropped; required args must be supplied by the wrapper.
     args = {k: v for k, v in (arguments or {}).items() if v is not None}
 
-    async with streamablehttp_client(url) as (read_stream, write_stream, _):
+    try:
+        token = await get_access_token()
+    except MCPAuthError as exc:
+        raise MCPClientError(str(exc))
+
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+    async with streamablehttp_client(url, headers=headers) as (read_stream, write_stream, _):
         async with ClientSession(read_stream, write_stream) as session:
             await session.initialize()
             result = await session.call_tool(tool_name, args)
@@ -97,19 +109,17 @@ async def _call_mcp_tool(tool_name: str, arguments: Optional[dict] = None) -> An
 
 
 def _pick_list(data: Any, *aliases: str) -> List[dict]:
-    """Find the first list payload in ``data``, trying ``aliases`` keys if a dict."""
     if isinstance(data, list):
-        return [item for item in data if isinstance(item, dict)]
+        return [x for x in data if isinstance(x, dict)]
     if isinstance(data, dict):
         for alias in aliases:
-            value = data.get(alias)
-            if isinstance(value, list):
-                return [item for item in value if isinstance(item, dict)]
+            v = data.get(alias)
+            if isinstance(v, list):
+                return [x for x in v if isinstance(x, dict)]
     return []
 
 
 def _scalars(data: Any) -> dict:
-    """Top-level scalar fields of ``data`` (kept via ``extra="allow"``)."""
     if not isinstance(data, dict):
         return {}
     return {k: v for k, v in data.items() if not isinstance(v, (list, dict))}
@@ -130,116 +140,50 @@ class OHLCBar(_Base):
     low: Optional[float] = None
     close: Optional[float] = None
     volume: Optional[float] = None
-    timestamp: Optional[str] = None  # legacy/alt field name, kept for forward-compat
 
 
 class OHLCResponse(_Base):
-    ind_key: Optional[str] = Field(None, description="IND Money internal instrument key.")
-    symbol: Optional[str] = None
-    interval: Optional[str] = Field(None, description="Candle interval, e.g. '1day'.")
-    count: Optional[int] = Field(None, description="Number of candles returned.")
-    has_more_data: Optional[bool] = Field(
-        None, description="True when the server has older candles beyond this page."
-    )
+    ind_key: Optional[str] = None
+    interval: Optional[str] = None
+    count: Optional[int] = None
+    has_more_data: Optional[bool] = None
     bars: List[OHLCBar] = Field(default_factory=list)
 
     @classmethod
     def from_mcp(cls, data: Any) -> "OHLCResponse":
-        # Real IND Money key is "candles"; aliases kept for other shapes.
         bars = _pick_list(data, "candles", "bars", "ohlc", "data")
         return cls(bars=[OHLCBar(**b) for b in bars], **_scalars(data))
 
 
-class StockDetails(_Base):
+class MoverStock(_Base):
+    ind_key: Optional[str] = None
     symbol: Optional[str] = None
     name: Optional[str] = None
+    exchange: Optional[str] = None
     sector: Optional[str] = None
-    last_price: Optional[float] = None
-    market_cap: Optional[float] = None
-    pe_ratio: Optional[float] = None
-    day_high: Optional[float] = None
-    day_low: Optional[float] = None
-    week52_high: Optional[float] = None
-    week52_low: Optional[float] = None
-
-    @classmethod
-    def from_mcp(cls, data: Any) -> "StockDetails":
-        if isinstance(data, dict):
-            return cls(**data)
-        return cls()
-
-
-class MoverItem(_Base):
-    symbol: Optional[str] = None
-    name: Optional[str] = None
-    last_price: Optional[float] = None
-    change: Optional[float] = None
-    change_percent: Optional[float] = None
+    market_cap_category: Optional[str] = None
+    price: Optional[float] = None
+    change_pct: Optional[float] = None
+    abs_change: Optional[float] = None
+    previous_close: Optional[float] = None
+    volume: Optional[float] = None
+    mcap_cr: Optional[float] = None
 
 
 class MoversResponse(_Base):
-    gainers: List[MoverItem] = Field(default_factory=list)
-    losers: List[MoverItem] = Field(default_factory=list)
-    most_active: List[MoverItem] = Field(default_factory=list)
+    category: Optional[str] = None
+    count: Optional[int] = None
+    stocks: List[MoverStock] = Field(default_factory=list)
 
     @classmethod
     def from_mcp(cls, data: Any) -> "MoversResponse":
-        return cls(
-            gainers=[MoverItem(**m) for m in _pick_list(data, "gainers", "top_gainers")],
-            losers=[MoverItem(**m) for m in _pick_list(data, "losers", "top_losers")],
-            most_active=[MoverItem(**m) for m in _pick_list(data, "most_active", "active")],
-            **_scalars(data),
-        )
-
-
-class OptionStrike(_Base):
-    strike_price: Optional[float] = None
-    call_ltp: Optional[float] = None
-    call_oi: Optional[float] = None
-    call_iv: Optional[float] = None
-    put_ltp: Optional[float] = None
-    put_oi: Optional[float] = None
-    put_iv: Optional[float] = None
-
-
-class OptionChainResponse(_Base):
-    symbol: Optional[str] = None
-    expiry: Optional[str] = None
-    underlying_price: Optional[float] = None
-    strikes: List[OptionStrike] = Field(default_factory=list)
-
-    @classmethod
-    def from_mcp(cls, data: Any) -> "OptionChainResponse":
-        strikes = _pick_list(data, "strikes", "option_chain", "chain", "data")
-        return cls(strikes=[OptionStrike(**s) for s in strikes], **_scalars(data))
-
-
-class GreeksSnapshot(_Base):
-    timestamp: Optional[str] = None
-    strike: Optional[float] = None
-    option_type: Optional[str] = None
-    delta: Optional[float] = None
-    gamma: Optional[float] = None
-    theta: Optional[float] = None
-    vega: Optional[float] = None
-    rho: Optional[float] = None
-    iv: Optional[float] = None
-
-
-class GreeksHistoryResponse(_Base):
-    symbol: Optional[str] = None
-    snapshots: List[GreeksSnapshot] = Field(default_factory=list)
-
-    @classmethod
-    def from_mcp(cls, data: Any) -> "GreeksHistoryResponse":
-        snaps = _pick_list(data, "snapshots", "history", "greeks", "data")
-        return cls(snapshots=[GreeksSnapshot(**s) for s in snaps], **_scalars(data))
+        stocks = _pick_list(data, "stocks", "movers", "data")
+        return cls(stocks=[MoverStock(**s) for s in stocks], **_scalars(data))
 
 
 class IndKey(_Base):
-    symbol: Optional[str] = None
-    name: Optional[str] = None
     ind_key: Optional[str] = None
+    name: Optional[str] = None
 
 
 class IndKeysResponse(_Base):
@@ -247,166 +191,248 @@ class IndKeysResponse(_Base):
 
     @classmethod
     def from_mcp(cls, data: Any) -> "IndKeysResponse":
-        keys = _pick_list(data, "keys", "results", "matches", "data")
-        return cls(keys=[IndKey(**k) for k in keys], **_scalars(data))
+        items = data if isinstance(data, list) else _pick_list(data, "keys", "results", "matches", "data")
+        return cls(keys=[IndKey(**k) for k in items if isinstance(k, dict)])
 
 
-class WatchlistItem(_Base):
-    symbol: Optional[str] = None
+class StockDetail(_Base):
+    ind_key: Optional[str] = None
     name: Optional[str] = None
-    added_at: Optional[str] = None
+    symbol: Optional[str] = None
+    exchange: Optional[str] = None
+    market_cap: Optional[str] = None
+    market_cap_in_currency: Optional[float] = None
+    has_fno: Optional[bool] = None
+    live_price: Optional[float] = None
+    day_change_percentage: Optional[float] = None
+    prev_close: Optional[float] = None
+    day_low: Optional[float] = None
+    day_high: Optional[float] = None
+    week52_high: Optional[float] = None
+    week52_low: Optional[float] = None
+
+
+class StockDetailsResponse(_Base):
+    details: Dict[str, StockDetail] = Field(default_factory=dict)
+
+    @classmethod
+    def from_mcp(cls, data: Any) -> "StockDetailsResponse":
+        out: Dict[str, StockDetail] = {}
+        if isinstance(data, dict):
+            for key, ent in data.items():
+                if not isinstance(ent, dict):
+                    continue
+                eb = ent.get("entity_basic") or {}
+                es = ent.get("entity_stats") or {}
+                out[key] = StockDetail(
+                    ind_key=eb.get("ind_key", key),
+                    name=eb.get("name"),
+                    symbol=eb.get("symbol"),
+                    exchange=eb.get("exchange"),
+                    market_cap=eb.get("market_cap"),
+                    market_cap_in_currency=eb.get("market_cap_in_currency"),
+                    has_fno=eb.get("has_fno"),
+                    live_price=es.get("live_price"),
+                    day_change_percentage=es.get("day_change_percentage"),
+                    prev_close=es.get("prev_close"),
+                    day_low=es.get("day_low"),
+                    day_high=es.get("day_high"),
+                    week52_high=es.get("52week_high"),
+                    week52_low=es.get("52week_low"),
+                )
+        return cls(details=out)
+
+
+class OptionChainResponse(_Base):
+    ind_key: Optional[str] = None
+    expiry_date: Optional[str] = None
+    strikes: List[dict] = Field(default_factory=list)
+
+    @classmethod
+    def from_mcp(cls, data: Any) -> "OptionChainResponse":
+        strikes = _pick_list(data, "strikes", "option_chain", "chain", "options", "data")
+        return cls(strikes=strikes, **_scalars(data))
+
+
+class GreeksHistoryResponse(_Base):
+    ind_key: Optional[str] = None
+    snapshots: List[dict] = Field(default_factory=list)
+
+    @classmethod
+    def from_mcp(cls, data: Any) -> "GreeksHistoryResponse":
+        snaps = _pick_list(data, "snapshots", "history", "greeks", "data")
+        return cls(snapshots=snaps, **_scalars(data))
+
+
+class WatchlistStock(_Base):
+    ind_key: Optional[str] = None
+    ticker: Optional[str] = None
+
+
+class Watchlist(_Base):
+    name: Optional[str] = None
+    watchlist_id: Optional[int] = None
+    stocks: List[WatchlistStock] = Field(default_factory=list)
 
 
 class WatchlistResponse(_Base):
-    action: Optional[str] = None
-    status: Optional[str] = None
-    items: List[WatchlistItem] = Field(default_factory=list)
+    type: Optional[str] = None
+    watchlists: List[Watchlist] = Field(default_factory=list)
 
     @classmethod
     def from_mcp(cls, data: Any) -> "WatchlistResponse":
-        items = _pick_list(data, "items", "watchlist", "stocks", "data")
-        return cls(items=[WatchlistItem(**i) for i in items], **_scalars(data))
+        lists = _pick_list(data, "watchlists", "data")
+        parsed = []
+        for wl in lists:
+            stocks = [WatchlistStock(**s) for s in (wl.get("stocks") or []) if isinstance(s, dict)]
+            parsed.append(Watchlist(stocks=stocks, **{k: v for k, v in wl.items() if k != "stocks"}))
+        return cls(watchlists=parsed, **_scalars(data))
 
 
 # --------------------------------------------------------------------------- #
-# LangGraph tools (Scanner / Research / Analyst / Execution use these)
+# LangGraph tools
 # --------------------------------------------------------------------------- #
 @tool
-async def get_indian_stocks_ohlc(
-    symbol: str,
-    interval: Optional[str] = None,
-    range: Optional[str] = None,
-) -> OHLCResponse | str:
-    """Fetch OHLC (open/high/low/close/volume) candles for an NSE stock.
+async def get_indian_stocks_movers(category: str, limit: int = 10) -> MoversResponse | str:
+    """Fetch NSE market movers for a category.
 
     Args:
-        symbol: NSE ticker symbol, e.g. "RELIANCE".
-        interval: Candle interval, e.g. "1d", "1h" (optional).
-        range: Look-back window, e.g. "1mo", "1y" (optional).
+        category: One of top-gainers, top-losers, most-active, 52-week-high,
+                  52-week-low, upper-circuit-stocks, lower-circuit-stocks.
+        limit: Number of stocks to return (default 10).
+    """
+    try:
+        data = await _call_mcp_tool(
+            "get_indian_stocks_movers", {"category": category, "limit": limit}
+        )
+        return MoversResponse.from_mcp(data)
+    except Exception as exc:  # noqa: BLE001
+        return f"Error fetching movers ({category}): {exc}"
+
+
+@tool
+async def lookup_ind_keys(names: List[str], filter_type: Optional[str] = None) -> IndKeysResponse | str:
+    """Resolve company names / tickers to IND Money ind_keys.
+
+    Args:
+        names: Names or tickers to look up, e.g. ["INFY", "Reliance"].
+        filter_type: Optional instrument-type filter.
+    """
+    try:
+        data = await _call_mcp_tool(
+            "lookup_ind_keys", {"names": names, "filter_type": filter_type}
+        )
+        return IndKeysResponse.from_mcp(data)
+    except Exception as exc:  # noqa: BLE001
+        return f"Error looking up ind keys for {names}: {exc}"
+
+
+@tool
+async def get_indian_stocks_details(
+    ind_keys: List[str],
+    segments: Optional[List[str]] = None,
+) -> StockDetailsResponse | str:
+    """Fetch fundamental + quote details for one or more NSE instruments.
+
+    Args:
+        ind_keys: IND Money ind_keys, e.g. ["INDS00577"].
+        segments: Optional extra segments — any of "analyst", "news".
+    """
+    try:
+        data = await _call_mcp_tool(
+            "get_indian_stocks_details", {"ind_keys": ind_keys, "segments": segments}
+        )
+        return StockDetailsResponse.from_mcp(data)
+    except Exception as exc:  # noqa: BLE001
+        return f"Error fetching details for {ind_keys}: {exc}"
+
+
+@tool
+async def get_indian_stocks_ohlc(
+    ind_key: str,
+    interval: str = "1day",
+    lookback: str = "3month",
+) -> OHLCResponse | str:
+    """Fetch OHLC candles for an NSE instrument.
+
+    Args:
+        ind_key: IND Money ind_key, e.g. "INDS00577".
+        interval: Candle interval, e.g. "1day".
+        lookback: Look-back window, e.g. "1month", "3month", "1year".
     """
     try:
         data = await _call_mcp_tool(
             "get_indian_stocks_ohlc",
-            {"symbol": symbol, "interval": interval, "range": range},
+            {"ind_key": ind_key, "interval": interval, "lookback": lookback},
         )
         return OHLCResponse.from_mcp(data)
-    except Exception as exc:  # noqa: BLE001 - surface a clean message to the agent
-        return f"Error fetching OHLC for {symbol}: {exc}"
-
-
-@tool
-async def get_indian_stocks_details(symbol: str) -> StockDetails | str:
-    """Fetch fundamental and quote details for a single NSE stock.
-
-    Args:
-        symbol: NSE ticker symbol, e.g. "TCS".
-    """
-    try:
-        data = await _call_mcp_tool("get_indian_stocks_details", {"symbol": symbol})
-        return StockDetails.from_mcp(data)
     except Exception as exc:  # noqa: BLE001
-        return f"Error fetching details for {symbol}: {exc}"
-
-
-@tool
-async def get_indian_stocks_movers(category: Optional[str] = None) -> MoversResponse | str:
-    """Fetch market movers (gainers, losers, most active) for NSE.
-
-    Args:
-        category: Optional filter, e.g. "gainers", "losers", "most_active".
-                  When omitted, all categories are returned.
-    """
-    try:
-        data = await _call_mcp_tool("get_indian_stocks_movers", {"category": category})
-        return MoversResponse.from_mcp(data)
-    except Exception as exc:  # noqa: BLE001
-        return f"Error fetching market movers: {exc}"
+        return f"Error fetching OHLC for {ind_key}: {exc}"
 
 
 @tool
 async def get_indian_stocks_option_chain(
-    symbol: str,
-    expiry: Optional[str] = None,
+    ind_key: str,
+    use_expiry_date: bool = False,
+    expiry_date: Optional[str] = None,
+    strikes_around_atm: Optional[int] = None,
 ) -> OptionChainResponse | str:
-    """Fetch the option chain for an NSE underlying.
+    """Fetch the option chain for an NSE underlying (F&O only).
 
     Args:
-        symbol: Underlying NSE symbol, e.g. "NIFTY" or "RELIANCE".
-        expiry: Expiry date (e.g. "2026-06-25"). Defaults to nearest expiry.
+        ind_key: Underlying IND Money ind_key.
+        use_expiry_date: Whether to filter by a specific expiry_date.
+        expiry_date: Expiry date to use when use_expiry_date is True.
+        strikes_around_atm: How many strikes around at-the-money to return.
     """
     try:
         data = await _call_mcp_tool(
             "get_indian_stocks_option_chain",
-            {"symbol": symbol, "expiry": expiry},
+            {
+                "ind_key": ind_key,
+                "use_expiry_date": use_expiry_date,
+                "expiry_date": expiry_date,
+                "strikes_around_atm": strikes_around_atm,
+            },
         )
         return OptionChainResponse.from_mcp(data)
     except Exception as exc:  # noqa: BLE001
-        return f"Error fetching option chain for {symbol}: {exc}"
+        return f"Error fetching option chain for {ind_key}: {exc}"
 
 
 @tool
 async def get_indian_stocks_greeks_history(
-    symbol: str,
-    expiry: Optional[str] = None,
-    strike: Optional[float] = None,
-    option_type: Optional[str] = None,
+    ind_key: str,
+    lookback: Optional[str] = None,
 ) -> GreeksHistoryResponse | str:
-    """Fetch the historical option greeks for an NSE contract.
+    """Fetch historical option greeks for an NSE underlying (F&O only).
 
     Args:
-        symbol: Underlying NSE symbol, e.g. "NIFTY".
-        expiry: Expiry date of the contract (optional).
-        strike: Strike price of the contract (optional).
-        option_type: "CE" (call) or "PE" (put) (optional).
+        ind_key: Underlying IND Money ind_key.
+        lookback: Optional look-back window, e.g. "1month".
     """
     try:
         data = await _call_mcp_tool(
             "get_indian_stocks_greeks_history",
-            {
-                "symbol": symbol,
-                "expiry": expiry,
-                "strike": strike,
-                "option_type": option_type,
-            },
+            {"ind_key": ind_key, "lookback": lookback},
         )
         return GreeksHistoryResponse.from_mcp(data)
     except Exception as exc:  # noqa: BLE001
-        return f"Error fetching greeks history for {symbol}: {exc}"
+        return f"Error fetching greeks history for {ind_key}: {exc}"
 
 
 @tool
-async def lookup_ind_keys(query: str) -> IndKeysResponse | str:
-    """Resolve a name or symbol to IND Money internal keys/identifiers.
+async def user_watchlist(type: str = "all") -> WatchlistResponse | str:
+    """Read the user's IND Money watchlists (read-only).
+
+    NOTE: the IND Money MCP cannot modify watchlists. AlphaDesk uses its own
+    paper watchlist for adds; this tool only reads existing watchlists.
 
     Args:
-        query: Company name or ticker to look up, e.g. "Infosys".
+        type: Which watchlists to return, e.g. "all".
     """
     try:
-        data = await _call_mcp_tool("lookup_ind_keys", {"query": query})
-        return IndKeysResponse.from_mcp(data)
-    except Exception as exc:  # noqa: BLE001
-        return f"Error looking up ind keys for '{query}': {exc}"
-
-
-@tool
-async def user_watchlist(
-    action: str = "get",
-    symbol: Optional[str] = None,
-) -> WatchlistResponse | str:
-    """Read or modify the user's watchlist.
-
-    NOTE: write actions ("add"/"remove") must only be invoked by the Execution
-    agent after ``human_approved`` is True in state.
-
-    Args:
-        action: "get" to list, "add" to add a symbol, "remove" to remove one.
-        symbol: NSE ticker the action applies to (required for add/remove).
-    """
-    try:
-        data = await _call_mcp_tool(
-            "user_watchlist",
-            {"action": action, "symbol": symbol},
-        )
+        data = await _call_mcp_tool("user_watchlist", {"type": type})
         return WatchlistResponse.from_mcp(data)
     except Exception as exc:  # noqa: BLE001
-        return f"Error accessing watchlist (action={action}): {exc}"
+        return f"Error reading watchlist: {exc}"

@@ -1,174 +1,210 @@
-"""Scanner agent — screens NSE stocks for tradable signals.
+"""Scanner agent — turns a natural-language query into NSE candidates.
 
-Pure async node ``(state: PortfolioState) -> PortfolioState``. Pulls market
-movers, confirms momentum with OHLC, then uses ``llama-3.1-8b-instant`` to rank
-the field down to the top 5 opportunities written into ``state.scan_results``.
+Pure async node ``(state: PortfolioState) -> PortfolioState``. Uses
+``llama-3.1-8b-instant`` to read intent from ``state.user_query`` — which mover
+categories to scan and which explicit tickers/companies to pull — then:
+
+  - calls ``get_indian_stocks_movers`` for each category (rich rows: ind_key,
+    symbol, sector, price, change_pct, volume), and
+  - resolves any named symbols via ``lookup_ind_keys`` + ``get_indian_stocks_details``.
+
+Writes the top 5 opportunities (with ind_key + sector) into ``state.scan_results``.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import List, Optional
+import re
+from typing import Dict, List, Optional
 
 from langchain_groq import ChatGroq
 from pydantic import BaseModel, Field
 
 from graph.state import PortfolioState, ScanResult
 from tools.ind_money import (
+    MOVER_CATEGORIES,
+    IndKeysResponse,
     MoversResponse,
-    OHLCResponse,
+    StockDetailsResponse,
+    get_indian_stocks_details,
     get_indian_stocks_movers,
-    get_indian_stocks_ohlc,
+    lookup_ind_keys,
 )
 
 SCANNER_MODEL = "llama-3.1-8b-instant"
 MAX_OPPORTUNITIES = 5
-_OHLC_ENRICH_LIMIT = 10  # cap OHLC calls to bound latency/cost
+_MOVERS_LIMIT = 8
 
 
 def _get_llm() -> ChatGroq:
     return ChatGroq(model=SCANNER_MODEL, temperature=0)
 
 
+class _Intent(BaseModel):
+    categories: List[str] = Field(
+        default_factory=list, description="Mover categories to scan (from the allowed enum)."
+    )
+    symbols: List[str] = Field(
+        default_factory=list, description="Explicit tickers or company names named in the query."
+    )
+
+
 class _Candidate(BaseModel):
+    ind_key: Optional[str] = None
     symbol: str
     name: Optional[str] = None
     sector: Optional[str] = None
-    last_price: Optional[float] = None
-    change_percent: Optional[float] = None
+    price: Optional[float] = None
+    change_pct: Optional[float] = None
     source: str
-    momentum: Optional[float] = None  # close-vs-close over the OHLC window, percent
 
 
-class _ScannerPick(BaseModel):
-    symbol: str = Field(..., description="Ticker chosen as an opportunity.")
-    signal: str = Field(..., description="One-line reason this stock is interesting.")
-    score: float = Field(..., ge=0.0, le=1.0, description="Relative signal strength 0-1.")
+def _heuristic_intent(query: str) -> _Intent:
+    """Fallback intent parse when the LLM is unavailable."""
+    q = query.lower()
+    if any(w in q for w in ("loser", "oversold", "fall", "down", "decline")):
+        category = "top-losers"
+    elif any(w in q for w in ("active", "volume", "liquid")):
+        category = "most-active"
+    elif "52" in q and "low" in q:
+        category = "52-week-low"
+    elif "52" in q and "high" in q:
+        category = "52-week-high"
+    else:
+        category = "top-gainers"
+    # Uppercase tokens look like tickers (e.g. "INFY", "TCS").
+    symbols = [t for t in re.findall(r"\b[A-Z]{2,12}\b", query) if t not in {"NSE", "BSE", "IT", "FNO"}]
+    return _Intent(categories=[category], symbols=symbols)
 
 
-class _ScannerPicks(BaseModel):
-    picks: List[_ScannerPick] = Field(default_factory=list)
-
-
-def _collect_candidates(movers: MoversResponse) -> List[_Candidate]:
-    """Flatten gainers/most-active/losers into a de-duplicated candidate list."""
-    out: List[_Candidate] = []
-    seen: set[str] = set()
-    buckets = (
-        ("get_indian_stocks_movers:gainers", movers.gainers),
-        ("get_indian_stocks_movers:most_active", movers.most_active),
-        ("get_indian_stocks_movers:losers", movers.losers),
+async def _intent(query: str) -> _Intent:
+    prompt = (
+        "You route an equity-research query to a market scanner.\n"
+        f"Allowed mover categories: {', '.join(MOVER_CATEGORIES)}.\n"
+        "Pick the categories that fit the query's intent (momentum->top-gainers, "
+        "oversold/weakness->top-losers, liquidity->most-active, breakouts->52-week-high).\n"
+        "Also extract any explicit tickers or company names mentioned (symbols).\n"
+        "If the query names specific stocks, you may return no categories.\n\n"
+        f"Query: {query}"
     )
-    for source, items in buckets:
-        for it in items:
-            if not it.symbol or it.symbol in seen:
-                continue
-            seen.add(it.symbol)
-            out.append(
-                _Candidate(
-                    symbol=it.symbol,
-                    name=it.name,
-                    last_price=it.last_price,
-                    change_percent=it.change_percent,
-                    source=source,
-                )
+    try:
+        llm = _get_llm().with_structured_output(_Intent)
+        out = await llm.ainvoke(prompt)
+        cats = [c for c in (out.categories or []) if c in MOVER_CATEGORIES]
+        intent = _Intent(categories=cats, symbols=out.symbols or [])
+    except Exception:  # noqa: BLE001
+        intent = _heuristic_intent(query)
+    if not intent.categories and not intent.symbols:
+        intent.categories = ["top-gainers"]
+    return intent
+
+
+async def _from_movers(category: str) -> List[_Candidate]:
+    res = await get_indian_stocks_movers.ainvoke({"category": category, "limit": _MOVERS_LIMIT})
+    if not isinstance(res, MoversResponse):
+        return []
+    out = []
+    for s in res.stocks:
+        if not s.symbol:
+            continue
+        out.append(
+            _Candidate(
+                ind_key=s.ind_key,
+                symbol=s.symbol,
+                name=s.name,
+                sector=s.sector,
+                price=s.price,
+                change_pct=s.change_pct,
+                source=f"movers:{category}",
             )
+        )
     return out
 
 
-async def _enrich_momentum(cand: _Candidate) -> _Candidate:
-    """Attach a 1-month close-vs-close momentum reading from OHLC, if available."""
-    res = await get_indian_stocks_ohlc.ainvoke(
-        {"symbol": cand.symbol, "interval": "1d", "range": "1mo"}
+async def _from_symbols(symbols: List[str]) -> List[_Candidate]:
+    lookup = await lookup_ind_keys.ainvoke({"names": symbols})
+    if not isinstance(lookup, IndKeysResponse) or not lookup.keys:
+        return []
+    ind_keys = [k.ind_key for k in lookup.keys if k.ind_key]
+    if not ind_keys:
+        return []
+    details = await get_indian_stocks_details.ainvoke(
+        {"ind_keys": ind_keys[:10], "segments": None}
     )
-    if isinstance(res, OHLCResponse) and res.bars:
-        first, last = res.bars[0].close, res.bars[-1].close
-        if first and last:
-            cand.momentum = round((last - first) / first * 100.0, 2)
-    return cand
-
-
-def _build_rank_prompt(candidates: List[_Candidate]) -> str:
-    lines = [
-        "You are a market scanner for NSE equities.",
-        f"From the candidates below, select the top {MAX_OPPORTUNITIES} trading opportunities.",
-        "Score each 0-1 by signal strength and give a one-line signal reason.",
-        "",
-        "Candidates:",
-    ]
-    for c in candidates:
-        lines.append(
-            f"- {c.symbol} ({c.name or 'n/a'}): price={c.last_price}, "
-            f"day_change={c.change_percent}%, 1mo_momentum={c.momentum}%, source={c.source}"
-        )
-    return "\n".join(lines)
-
-
-def _heuristic_rank(candidates: List[_Candidate]) -> List[_ScannerPick]:
-    """Fallback ranking by absolute daily move when the LLM is unavailable."""
-    ranked = sorted(candidates, key=lambda c: abs(c.change_percent or 0.0), reverse=True)
-    picks: List[_ScannerPick] = []
-    for c in ranked[:MAX_OPPORTUNITIES]:
-        score = max(0.0, min(1.0, abs(c.change_percent or 0.0) / 10.0))
-        picks.append(
-            _ScannerPick(
-                symbol=c.symbol,
-                signal=f"{c.change_percent or 0:+.2f}% move via {c.source.split(':')[-1]}",
-                score=score,
+    by_symbol: Dict[str, _Candidate] = {}
+    if isinstance(details, StockDetailsResponse):
+        for d in details.details.values():
+            if not d.symbol:
+                continue
+            by_symbol[d.symbol.upper()] = _Candidate(
+                ind_key=d.ind_key,
+                symbol=d.symbol,
+                name=d.name,
+                sector=None,
+                price=d.live_price,
+                change_pct=d.day_change_percentage,
+                source="lookup",
             )
-        )
-    return picks
-
-
-async def _rank_candidates(candidates: List[_Candidate]) -> List[_ScannerPick]:
-    try:
-        llm = _get_llm().with_structured_output(_ScannerPicks)
-        out = await llm.ainvoke(_build_rank_prompt(candidates))
-        if out and out.picks:
-            return out.picks
-    except Exception:  # noqa: BLE001 - degrade to heuristic ranking
-        pass
-    return _heuristic_rank(candidates)
+    # Prefer exact ticker matches; fall back to whatever resolved.
+    out: List[_Candidate] = []
+    seen = set()
+    for sym in symbols:
+        cand = by_symbol.get(sym.upper())
+        if cand and cand.ind_key not in seen:
+            out.append(cand)
+            seen.add(cand.ind_key)
+    if not out:
+        out = list(by_symbol.values())
+    return out
 
 
 async def scanner(state: PortfolioState) -> PortfolioState:
-    """Populate ``state.scan_results`` with the top opportunities found on NSE."""
-    movers = await get_indian_stocks_movers.ainvoke({"category": None})
-    if isinstance(movers, str):  # MCP error string — nothing to scan
-        state.scan_results = []
-        return state
+    """Populate ``state.scan_results`` from the user's query."""
+    intent = await _intent(state.user_query)
 
-    candidates = _collect_candidates(movers)
-    if not candidates:
-        state.scan_results = []
-        return state
+    tasks = [_from_movers(c) for c in intent.categories]
+    if intent.symbols:
+        tasks.append(_from_symbols(intent.symbols))
+    groups = await asyncio.gather(*tasks, return_exceptions=True)
 
-    head = candidates[:_OHLC_ENRICH_LIMIT]
-    enriched = await asyncio.gather(
-        *(_enrich_momentum(c) for c in head), return_exceptions=True
-    )
-    for i, r in enumerate(enriched):
-        if isinstance(r, _Candidate):
-            head[i] = r
-    candidates[:_OHLC_ENRICH_LIMIT] = head
+    # Symbol matches first (explicitly requested), then movers.
+    symbol_cands: List[_Candidate] = []
+    mover_cands: List[_Candidate] = []
+    for g in groups:
+        if not isinstance(g, list):
+            continue
+        for c in g:
+            (symbol_cands if c.source == "lookup" else mover_cands).append(c)
 
-    picks = await _rank_candidates(candidates)
-    by_symbol = {c.symbol: c for c in candidates}
+    mover_cands.sort(key=lambda c: abs(c.change_pct or 0.0), reverse=True)
 
     results: List[ScanResult] = []
-    for p in picks[:MAX_OPPORTUNITIES]:
-        c = by_symbol.get(p.symbol)
+    seen = set()
+    for c in symbol_cands + mover_cands:
+        key = c.ind_key or c.symbol
+        if key in seen:
+            continue
+        seen.add(key)
+        change = c.change_pct or 0.0
         results.append(
             ScanResult(
-                symbol=p.symbol,
-                name=c.name if c else None,
-                sector=c.sector if c else None,
-                signal=p.signal,
-                last_price=c.last_price if c else None,
-                change_percent=c.change_percent if c else None,
-                score=p.score,
-                source=c.source if c else "scanner",
+                symbol=c.symbol,
+                ind_key=c.ind_key,
+                name=c.name,
+                sector=c.sector,
+                signal=(
+                    "named in query"
+                    if c.source == "lookup"
+                    else f"{change:+.2f}% — {c.source.split(':')[-1]}"
+                ),
+                last_price=c.price,
+                change_percent=c.change_pct,
+                score=max(0.0, min(1.0, abs(change) / 10.0)),
+                source=c.source,
             )
         )
+        if len(results) >= MAX_OPPORTUNITIES:
+            break
+
     state.scan_results = results
     return state

@@ -24,6 +24,9 @@ class ScanResult(BaseModel):
     """A single candidate surfaced by the Scanner agent."""
 
     symbol: str = Field(..., description="NSE ticker symbol, e.g. 'RELIANCE'.")
+    ind_key: Optional[str] = Field(
+        None, description="IND Money instrument key (e.g. 'INDS00577'); required by downstream tools."
+    )
     name: Optional[str] = Field(None, description="Company display name, if known.")
     sector: Optional[str] = Field(
         None, description="Sector classification used by the per-sector guardrail."

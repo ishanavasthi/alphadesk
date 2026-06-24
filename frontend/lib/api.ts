@@ -1,7 +1,9 @@
 // Typed client for the AlphaDesk FastAPI backend (SSE + approval).
 
+// Default to 127.0.0.1 (not "localhost") so the browser doesn't try IPv6 ::1,
+// where uvicorn isn't listening. Override with NEXT_PUBLIC_API_URL if needed.
 export const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:8000";
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000";
 
 export type RiskDecision = "PASS" | "REJECT" | "FLAG";
 export type AnalystAction = "buy" | "hold" | "avoid";
@@ -82,6 +84,8 @@ export async function streamAnalyze(
       signal,
     });
   } catch (err) {
+    // A cancelled request (component unmount / re-query) is not a failure.
+    if ((err as Error).name === "AbortError") return;
     handlers.onError?.(`Cannot reach AlphaDesk API at ${API_BASE}. Is the backend running?`);
     return;
   }
