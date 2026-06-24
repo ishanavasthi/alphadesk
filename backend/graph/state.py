@@ -177,6 +177,24 @@ class PortfolioState(BaseModel):
         default_factory=list,
         description="Actions queued for the human-in-the-loop gate / Execution agent.",
     )
+    approved_actions: List[PendingAction] = Field(
+        default_factory=list,
+        description=(
+            "Actions promoted from pending_actions after human_approved=True. "
+            "When no broker is configured, they stop here (no live order is placed)."
+        ),
+    )
+    execution_history: List[PendingAction] = Field(
+        default_factory=list,
+        description="Audit trail of actions the Execution agent has processed (executed or persisted).",
+    )
+    paper_watchlist: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Application-level watchlist of NSE symbols that passed research and risk checks. "
+            "Not connected to any brokerage; the read-only IND Money MCP cannot modify real watchlists."
+        ),
+    )
     human_approved: bool = Field(
         False,
         description="Set True by the human gate; required before any user_watchlist write.",
