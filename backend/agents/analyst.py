@@ -15,7 +15,7 @@ from langchain_groq import ChatGroq
 from pydantic import BaseModel, Field
 
 from graph.state import AnalystRecommendation, PortfolioState, ResearchReport
-from rag.retriever import retrieve
+from rag.retriever import get_relevant_context
 from tools.ind_money import IndKeysResponse, lookup_ind_keys
 
 ANALYST_MODEL = "llama-3.3-70b-versatile"
@@ -40,7 +40,7 @@ def _get_llm() -> ChatGroq:
 
 async def _gather_context(report: ResearchReport) -> List[str]:
     """RAG passages plus any IND key references for the symbol."""
-    context = retrieve(f"{report.symbol} {report.summary}")
+    context = get_relevant_context(report.symbol, report.summary)
     try:
         keys = await lookup_ind_keys.ainvoke({"query": report.symbol})
         if isinstance(keys, IndKeysResponse):
