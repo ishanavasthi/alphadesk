@@ -19,6 +19,7 @@ on via env (LANGCHAIN_TRACING_V2); it is never disabled here.
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -26,7 +27,7 @@ from typing import Any, Dict, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 # Load backend/.env so GROQ_API_KEY, LANGCHAIN_*, IND_MONEY_MCP_URL are present
@@ -35,6 +36,18 @@ load_dotenv()
 
 from graph.graph import alphaDesk_graph, resume_after_approval  # noqa: E402
 from graph.state import PortfolioState  # noqa: E402
+from tools.ind_money_auth import (  # noqa: E402
+    MCPAuthError,
+    auth_status,
+    begin_login,
+    complete_login,
+)
+
+# Where IND Money redirects after login. Must be reachable in the browser and
+# match the registered redirect_uri. 127.0.0.1 avoids IPv6 (::1) issues.
+AUTH_REDIRECT_URI = os.environ.get(
+    "IND_MONEY_AUTH_REDIRECT", "http://127.0.0.1:8000/auth/callback"
+)
 
 app = FastAPI(title="AlphaDesk", version="0.1.0")
 
@@ -165,6 +178,55 @@ def _sse(event: str, data: Dict[str, Any]) -> str:
 @app.get("/")
 async def root() -> Dict[str, str]:
     return {"service": "AlphaDesk", "version": "0.1.0"}
+
+
+def _auth_html(message: str, ok: bool = False) -> HTMLResponse:
+    color = "#16c784" if ok else "#e5484d"
+    mark = "✓" if ok else "✕"
+    return HTMLResponse(
+        f"""<!doctype html><html><head><meta charset="utf-8"><title>IND Money</title></head>
+<body style="background:#0a0b0d;color:#e6e9ef;font-family:ui-sans-serif,system-ui;
+display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+  <div style="text-align:center">
+    <div style="color:{color};font-size:20px;margin-bottom:8px">{mark} {message}</div>
+    <div style="color:#8b919e;font-size:13px">You can close this window.</div>
+  </div>
+</body></html>"""
+    )
+
+
+@app.get("/auth/status")
+async def auth_status_endpoint() -> Dict[str, object]:
+    """Whether the backend is authenticated with the IND Money MCP."""
+    return await auth_status()
+
+
+@app.post("/auth/login")
+async def auth_login_endpoint() -> Dict[str, str]:
+    """Begin an OAuth login; returns the authorization URL to open in a browser."""
+    try:
+        url = await begin_login(AUTH_REDIRECT_URI)
+    except MCPAuthError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"authorization_url": url}
+
+
+@app.get("/auth/callback", response_class=HTMLResponse)
+async def auth_callback_endpoint(
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+) -> HTMLResponse:
+    """OAuth redirect target — exchanges the code for tokens."""
+    if error:
+        return _auth_html(f"Authorization failed: {error}")
+    if not code or not state:
+        return _auth_html("Missing authorization code or state.")
+    try:
+        await complete_login(code, state)
+    except Exception as exc:  # noqa: BLE001
+        return _auth_html(f"Login failed: {exc}")
+    return _auth_html("IND Money connected.", ok=True)
 
 
 @app.post("/analyze")
