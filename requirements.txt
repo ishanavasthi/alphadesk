@@ -4,6 +4,8 @@ langsmith
 fastapi
 uvicorn
 chromadb
+langchain-text-splitters
+pypdf
 pydantic
 mcp
 httpx
