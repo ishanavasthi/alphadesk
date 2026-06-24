@@ -59,6 +59,27 @@ export interface ApproveResult {
   };
 }
 
+export interface AnalysisPayload {
+  run_id: string;
+  query: string;
+  status: string;
+  awaiting_approval: boolean;
+  action_id: string | null;
+  analyst_recommendations: AnalystRecommendation[];
+  risk_assessments: RiskAssessment[];
+  rejection_reason?: string | null;
+  paper_watchlist?: string[];
+  created_at?: string;
+}
+
+/** GET /analysis/{id} — full stored analysis for the /a/<id> view. */
+export async function getAnalysis(runId: string): Promise<AnalysisPayload> {
+  const response = await fetch(`${API_BASE}/analysis/${encodeURIComponent(runId)}`);
+  if (response.status === 404) throw new Error("not_found");
+  if (!response.ok) throw new Error(`Analysis fetch failed (${response.status}).`);
+  return response.json();
+}
+
 interface StreamHandlers {
   onStart?: (e: { run_id: string; status: string }) => void;
   onUpdate?: (e: AgentUpdate) => void;

@@ -73,6 +73,9 @@ _ACTIONS: Dict[str, str] = {}
 # symbol -> {symbol, run_id, query, added_at}; the cumulative paper watchlist
 # across runs (in-memory; swap for a store in production).
 _PAPER_WATCHLIST: Dict[str, Dict[str, Any]] = {}
+# run_id -> full analysis payload, so a run survives a browser refresh and can be
+# reopened at /a/<run_id> (in-memory; swap for a store to survive backend restart).
+_ANALYSES: Dict[str, Dict[str, Any]] = {}
 
 
 def _now_iso() -> str:
@@ -274,6 +277,19 @@ async def analyze(body: AnalyzeRequest) -> StreamingResponse:
                 status = "completed"
             _RUNS[run_id]["status"] = status
 
+            _ANALYSES[run_id] = {
+                "run_id": run_id,
+                "query": body.query,
+                "status": status,
+                "awaiting_approval": awaiting,
+                "action_id": action_id,
+                "analyst_recommendations": state.get("analyst_recommendations", []),
+                "risk_assessments": state.get("risk_assessments", []),
+                "rejection_reason": state.get("rejection_reason"),
+                "paper_watchlist": state.get("paper_watchlist", []),
+                "created_at": _now_iso(),
+            }
+
             yield _sse(
                 "complete",
                 {
@@ -312,6 +328,13 @@ async def approve(body: ApproveRequest) -> Dict[str, Any]:
         final = await resume_after_approval(thread_id=run_id, approved=True)
         _RUNS[run_id]["status"] = "completed"
         _record_watchlist(run_id, final.paper_watchlist)
+        a = _ANALYSES.get(run_id)
+        if a:
+            a.update(
+                status="completed",
+                awaiting_approval=False,
+                paper_watchlist=final.paper_watchlist,
+            )
         return {"run_id": run_id, "status": "completed", "state": final.model_dump()}
 
     # Rejected: record reason, do not resume execution (no paper-watchlist writes).
@@ -320,8 +343,44 @@ async def approve(body: ApproveRequest) -> Dict[str, Any]:
         config, {"human_approved": False, "rejection_reason": "Rejected by human."}
     )
     _RUNS[run_id]["status"] = "rejected"
+    a = _ANALYSES.get(run_id)
+    if a:
+        a.update(
+            status="rejected",
+            awaiting_approval=False,
+            rejection_reason="Rejected by analyst.",
+        )
     snapshot = await alphaDesk_graph.aget_state(config)
     return {"run_id": run_id, "status": "rejected", "state": _state_dict(snapshot)}
+
+
+@app.get("/analyses")
+async def list_analyses() -> Dict[str, Any]:
+    """List stored analyses (most recent first)."""
+    items = sorted(
+        (
+            {
+                "run_id": a["run_id"],
+                "query": a.get("query"),
+                "status": a.get("status"),
+                "created_at": a.get("created_at"),
+                "count": len(a.get("analyst_recommendations", [])),
+            }
+            for a in _ANALYSES.values()
+        ),
+        key=lambda x: x.get("created_at") or "",
+        reverse=True,
+    )
+    return {"count": len(items), "items": items}
+
+
+@app.get("/analysis/{run_id}")
+async def get_analysis(run_id: str) -> Dict[str, Any]:
+    """Return the full stored analysis for a run, for the /a/<run_id> view."""
+    analysis = _ANALYSES.get(run_id)
+    if analysis is None:
+        raise HTTPException(status_code=404, detail="Unknown analysis")
+    return analysis
 
 
 @app.get("/watchlist")
