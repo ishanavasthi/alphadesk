@@ -1,1 +1,82 @@
-"""Execution agent — human-in-the-loop gate that adds approved stocks to user_watchlist (requires human_approved=True); stubs broker.place_order() HiTL confirmation for order value > Rs.10,000."""
+"""Execution agent — paper watchlist + human-in-the-loop gate.
+
+IMPORTANT: the IND Money MCP is READ-ONLY. This agent never calls
+``user_watchlist`` or otherwise mutates the user's real IND Money watchlists.
+Instead it maintains an application-level paper watchlist and an approval queue.
+
+Pure node ``(state: PortfolioState) -> PortfolioState`` that runs in two phases:
+
+1. ``human_approved`` is False  -> stage PASS stocks as PendingActions, add them
+   to ``paper_watchlist``, and leave ``human_approved`` False. This is the HiTL
+   interrupt point.
+2. ``human_approved`` is True   -> for each pending action place a real order if
+   a BrokerAdapter is configured, otherwise log and persist; then move the action
+   from ``pending_actions`` to ``approved_actions`` (paper_watchlist preserved).
+
+No real trade is ever placed unless a BrokerAdapter is explicitly configured.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from broker.base import load_broker
+from graph.state import PendingAction, PortfolioState
+
+logger = logging.getLogger("alphadesk.execution")
+
+_NO_BROKER_MSG = "Broker integration not configured. Action saved for future execution."
+
+
+def _stage_pending(state: PortfolioState) -> PortfolioState:
+    """Phase 1: queue PASS stocks for approval and add them to the paper watchlist."""
+    existing = {pa.symbol for pa in state.pending_actions}
+    for assessment in state.risk_assessments:
+        if assessment.decision != "PASS" or assessment.symbol in existing:
+            continue
+        state.pending_actions.append(
+            PendingAction(
+                action_type="add_to_watchlist",
+                symbol=assessment.symbol,
+                rationale=assessment.notes
+                or f"Passed risk checks (confidence={assessment.confidence:.2f}).",
+                requires_human=True,
+                status="pending",
+            )
+        )
+        existing.add(assessment.symbol)
+        if assessment.symbol not in state.paper_watchlist:
+            state.paper_watchlist.append(assessment.symbol)
+
+    state.human_approved = False  # HiTL interrupt: wait for human approval
+    return state
+
+
+def _process_approved(state: PortfolioState) -> PortfolioState:
+    """Phase 2: human approved -> place orders if a broker exists, else persist."""
+    broker = load_broker()
+    for action in state.pending_actions:
+        if broker is not None:
+            try:
+                broker.place_order(action)
+                action.status = "executed"
+            except Exception as exc:  # noqa: BLE001 - never lose the action on failure
+                logger.error("place_order failed for %s: %s", action.symbol, exc)
+                action.status = "approved"
+        else:
+            logger.info("%s (%s)", _NO_BROKER_MSG, action.symbol)
+            action.status = "approved"
+
+        state.approved_actions.append(action)
+        state.execution_history.append(action)
+
+    # Pending queue drained into approved_actions; paper_watchlist is preserved.
+    state.pending_actions = []
+    return state
+
+
+async def execution(state: PortfolioState) -> PortfolioState:
+    """Stage pending actions, or process them once a human has approved."""
+    if not state.human_approved:
+        return _stage_pending(state)
+    return _process_approved(state)
