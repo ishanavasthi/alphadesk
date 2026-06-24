@@ -1,0 +1,10 @@
+langgraph
+langchain-groq
+langsmith
+fastapi
+uvicorn
+chromadb
+pydantic
+mcp
+httpx
+python-dotenv
