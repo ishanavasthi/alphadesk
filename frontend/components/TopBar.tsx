@@ -1,4 +1,5 @@
 import { Github } from "lucide-react";
+import { AuthButton } from "@/components/AuthButton";
 import { WatchlistButton } from "@/components/WatchlistButton";
 
 export function TopBar() {
@@ -12,6 +13,7 @@ export function TopBar() {
           <span className="hidden eyebrow sm:inline">NSE Research Terminal</span>
         </div>
         <div className="flex items-center gap-3">
+          <AuthButton />
           <WatchlistButton />
           <a
             href="https://github.com/ishanavasthi/alphadesk"

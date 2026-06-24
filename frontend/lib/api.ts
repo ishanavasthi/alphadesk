@@ -149,6 +149,28 @@ export async function streamAnalyze(
   }
 }
 
+export interface AuthStatus {
+  authenticated: boolean;
+  source?: string | null;
+  expires_at?: number | null;
+  expires_in_sec?: number | null;
+}
+
+/** GET /auth/status — is the backend authenticated with IND Money? */
+export async function getAuthStatus(): Promise<AuthStatus> {
+  const response = await fetch(`${API_BASE}/auth/status`);
+  if (!response.ok) throw new Error(`Auth status failed (${response.status}).`);
+  return response.json();
+}
+
+/** POST /auth/login — begin OAuth; returns the URL to open in a browser. */
+export async function startAuthLogin(): Promise<string> {
+  const response = await fetch(`${API_BASE}/auth/login`, { method: "POST" });
+  if (!response.ok) throw new Error(`Login start failed (${response.status}).`);
+  const data = await response.json();
+  return data.authorization_url as string;
+}
+
 export interface WatchlistItem {
   symbol: string;
   run_id?: string;
