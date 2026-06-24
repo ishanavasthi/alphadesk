@@ -32,7 +32,8 @@ from tools.ind_money import (
 )
 
 SCANNER_MODEL = "llama-3.1-8b-instant"
-MAX_OPPORTUNITIES = 5
+MAX_OPPORTUNITIES = 5  # cap for a momentum (movers) scan
+_MAX_NAMED = 12  # cap when the user named explicit stocks
 _MOVERS_LIMIT = 8
 
 
@@ -121,66 +122,92 @@ async def _from_movers(category: str) -> List[_Candidate]:
     return out
 
 
+async def _resolve_one(name: str) -> Optional[tuple]:
+    """Resolve a single name to its best (ind_key, name) match."""
+    res = await lookup_ind_keys.ainvoke({"names": [name]})
+    if isinstance(res, IndKeysResponse) and res.keys:
+        top = res.keys[0]
+        if top.ind_key:
+            return (top.ind_key, top.name)
+    return None
+
+
 async def _from_symbols(symbols: List[str]) -> List[_Candidate]:
-    lookup = await lookup_ind_keys.ainvoke({"names": symbols})
-    if not isinstance(lookup, IndKeysResponse) or not lookup.keys:
+    """Resolve each named stock to its best match — one lookup per name.
+
+    Per-name lookup avoids batch fuzzy-noise + truncation: every requested name
+    gets its own top hit (not an exact-ticker re-match), then details are fetched
+    in a single batch. Order follows the request.
+    """
+    # Split combined tokens like "TV18/Network18" into separate names.
+    names: List[str] = []
+    for s in symbols:
+        for part in s.split("/"):
+            p = part.strip()
+            if p and p not in names:
+                names.append(p)
+    if not names:
         return []
-    ind_keys = [k.ind_key for k in lookup.keys if k.ind_key]
+
+    resolved = await asyncio.gather(*(_resolve_one(n) for n in names), return_exceptions=True)
+
+    ind_keys: List[str] = []
+    lk_names: Dict[str, Optional[str]] = {}
+    for r in resolved:
+        if isinstance(r, tuple):
+            ik, nm = r
+            if ik not in lk_names:
+                ind_keys.append(ik)
+                lk_names[ik] = nm
     if not ind_keys:
         return []
-    details = await get_indian_stocks_details.ainvoke(
-        {"ind_keys": ind_keys[:10], "segments": None}
-    )
-    by_symbol: Dict[str, _Candidate] = {}
-    if isinstance(details, StockDetailsResponse):
-        for d in details.details.values():
-            if not d.symbol:
-                continue
-            by_symbol[d.symbol.upper()] = _Candidate(
-                ind_key=d.ind_key,
-                symbol=d.symbol,
-                name=d.name,
-                sector=None,
-                price=d.live_price,
-                change_pct=d.day_change_percentage,
+
+    details = await get_indian_stocks_details.ainvoke({"ind_keys": ind_keys, "segments": None})
+    detail_by_key = details.details if isinstance(details, StockDetailsResponse) else {}
+
+    out: List[_Candidate] = []
+    for ik in ind_keys:
+        d = detail_by_key.get(ik)
+        out.append(
+            _Candidate(
+                ind_key=ik,
+                symbol=(d.symbol if d and d.symbol else None) or ik,
+                name=(d.name if d and d.name else lk_names.get(ik)),
+                sector=None,  # details carry no sector; movers do
+                price=d.live_price if d else None,
+                change_pct=d.day_change_percentage if d else None,
                 source="lookup",
             )
-    # Prefer exact ticker matches; fall back to whatever resolved.
-    out: List[_Candidate] = []
-    seen = set()
-    for sym in symbols:
-        cand = by_symbol.get(sym.upper())
-        if cand and cand.ind_key not in seen:
-            out.append(cand)
-            seen.add(cand.ind_key)
-    if not out:
-        out = list(by_symbol.values())
+        )
     return out
 
 
 async def scanner(state: PortfolioState) -> PortfolioState:
-    """Populate ``state.scan_results`` from the user's query."""
+    """Populate ``state.scan_results`` from the user's query.
+
+    If the query names explicit stocks, return ONLY those (no movers padding);
+    otherwise scan market movers for the intent's categories.
+    """
     intent = await _intent(state.user_query)
 
-    tasks = [_from_movers(c) for c in intent.categories]
+    candidates: List[_Candidate] = []
     if intent.symbols:
-        tasks.append(_from_symbols(intent.symbols))
-    groups = await asyncio.gather(*tasks, return_exceptions=True)
+        candidates = await _from_symbols(intent.symbols)
 
-    # Symbol matches first (explicitly requested), then movers.
-    symbol_cands: List[_Candidate] = []
-    mover_cands: List[_Candidate] = []
-    for g in groups:
-        if not isinstance(g, list):
-            continue
-        for c in g:
-            (symbol_cands if c.source == "lookup" else mover_cands).append(c)
+    named = bool(candidates)
+    if not candidates:
+        # No named stocks (or none resolved) -> momentum scan.
+        cats = intent.categories or ["top-gainers"]
+        groups = await asyncio.gather(*(_from_movers(c) for c in cats), return_exceptions=True)
+        movers = [c for g in groups if isinstance(g, list) for c in g]
+        movers.sort(key=lambda c: abs(c.change_pct or 0.0), reverse=True)
+        candidates = movers
 
-    mover_cands.sort(key=lambda c: abs(c.change_pct or 0.0), reverse=True)
+    cap = min(len(candidates), _MAX_NAMED) if named else MAX_OPPORTUNITIES
 
     results: List[ScanResult] = []
     seen = set()
-    for c in symbol_cands + mover_cands:
+    for c in candidates:
         key = c.ind_key or c.symbol
         if key in seen:
             continue
@@ -203,7 +230,7 @@ async def scanner(state: PortfolioState) -> PortfolioState:
                 source=c.source,
             )
         )
-        if len(results) >= MAX_OPPORTUNITIES:
+        if len(results) >= cap:
             break
 
     state.scan_results = results
