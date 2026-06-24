@@ -22,13 +22,18 @@ import json
 import uuid
 from typing import Any, Dict, Optional
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from graph.graph import alphaDesk_graph, resume_after_approval
-from graph.state import PortfolioState
+# Load backend/.env so GROQ_API_KEY, LANGCHAIN_*, IND_MONEY_MCP_URL are present
+# before the graph and agents read them.
+load_dotenv()
+
+from graph.graph import alphaDesk_graph, resume_after_approval  # noqa: E402
+from graph.state import PortfolioState  # noqa: E402
 
 app = FastAPI(title="AlphaDesk", version="0.1.0")
 

@@ -20,3 +20,11 @@ ENV/
 build/
 dist/
 *.egg-info/
+
+# Secrets / local env (keep .env.example committed)
+.env
+*.env
+!*.env.example
+
+# RAG vector store
+data/chroma_db/
