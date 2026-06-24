@@ -21,7 +21,7 @@ export function RiskBadge({ decision }: { decision: RiskDecision }) {
         <>
           <span className="hint-head">Risk Manager · verdict</span>
           <span className="hint-body">
-            <strong>{decision}</strong> — {RISK_DESC[decision]}
+            <strong>{decision}</strong> - {RISK_DESC[decision]}
           </span>
         </>
       }
@@ -39,7 +39,7 @@ const ACTION_CLASS: Record<AnalystAction, string> = {
 
 const ACTION_DESC: Record<AnalystAction, string> = {
   buy: "Thesis favors upside.",
-  hold: "Roughly balanced — no strong edge either way.",
+  hold: "Roughly balanced - no strong edge either way.",
   avoid: "Thesis is negative; better left alone.",
 };
 
@@ -50,7 +50,7 @@ export function ActionBadge({ action }: { action: AnalystAction }) {
         <>
           <span className="hint-head">Analyst · call</span>
           <span className="hint-body">
-            <strong>{action.toUpperCase()}</strong> — {ACTION_DESC[action]}
+            <strong>{action.toUpperCase()}</strong> - {ACTION_DESC[action]}
           </span>
         </>
       }
