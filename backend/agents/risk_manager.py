@@ -55,14 +55,15 @@ def _assess(
     if rec.action == "avoid":
         violations.append("analyst_recommends_avoid")
 
-    sector_key = sector or "UNKNOWN"
-    # Sector cap only matters for otherwise-passing recommendations.
-    if not violations and sector_counts.get(sector_key, 0) >= MAX_PER_SECTOR:
+    # Sector cap only applies to known sectors. Named-stock lookups carry no
+    # sector, so they are never blocked by (or counted toward) the cap.
+    if not violations and sector and sector_counts.get(sector, 0) >= MAX_PER_SECTOR:
         violations.append("sector_limit_exceeded")
 
     approved = not violations
     if approved:
-        sector_counts[sector_key] = sector_counts.get(sector_key, 0) + 1
+        if sector:
+            sector_counts[sector] = sector_counts.get(sector, 0) + 1
         decision = "FLAG" if rec.confidence < _FLAG_BAND else "PASS"
     else:
         decision = "REJECT"
