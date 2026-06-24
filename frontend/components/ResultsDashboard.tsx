@@ -59,7 +59,13 @@ export function ResultsDashboard({ query, onReset }: { query: string; onReset: (
     streamAnalyze(
       query,
       {
-        onStart: (e) => setRunId(e.run_id),
+        onStart: (e) => {
+          setRunId(e.run_id);
+          // Reflect the run in the URL so a refresh reopens it at /a/<run_id>.
+          if (typeof window !== "undefined") {
+            window.history.replaceState(null, "", `/a/${e.run_id}`);
+          }
+        },
         onUpdate: (e: AgentUpdate) => {
           const stage = STAGES.find((s) => s.key === e.node);
           if (!stage) return;
