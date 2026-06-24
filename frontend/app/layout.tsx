@@ -12,9 +12,9 @@ const mono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AlphaDesk — NSE Research Terminal",
+  title: "AlphaDesk - NSE Research Terminal",
   description:
-    "Multi-agent Indian equity research desk. Type a thesis; the desk scans, researches, and reviews — you approve.",
+    "Multi-agent Indian equity research desk. Type a thesis; the desk scans, researches, and reviews - you approve.",
 };
 
 export default function RootLayout({

@@ -1,3 +1,4 @@
+import { Github } from "lucide-react";
 import { WatchlistButton } from "@/components/WatchlistButton";
 
 export function TopBar() {
@@ -12,6 +13,15 @@ export function TopBar() {
         </div>
         <div className="flex items-center gap-3">
           <WatchlistButton />
+          <a
+            href="https://github.com/ishanavasthi/alphadesk"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Source code on GitHub"
+            className="text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <Github className="h-4 w-4" />
+          </a>
           <div className="flex items-center gap-2">
             <span className="h-1.5 w-1.5 rounded-full bg-up animate-pulse-ring" />
             <span className="eyebrow text-up">Live</span>
