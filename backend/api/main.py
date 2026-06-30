@@ -51,12 +51,24 @@ AUTH_REDIRECT_URI = os.environ.get(
 
 app = FastAPI(title="AlphaDesk", version="0.1.0")
 
-# Frontend dev server (Next.js). Allow both localhost and 127.0.0.1 on any port
-# so the browser reaches the API regardless of how the dev URL is opened.
+# CORS origins. Local dev (localhost / 127.0.0.1 any port) is always allowed.
+# In production set CORS_ALLOW_ORIGINS to the deployed frontend origin(s),
+# comma-separated, e.g. "https://alphadesk.ishanavasthi.in,https://alphadesk.vercel.app".
+# Optionally set CORS_ALLOW_ORIGIN_REGEX (e.g. to allow Vercel preview deploys:
+#   https://[a-z0-9-]+\.vercel\.app ).
+_PROD_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("CORS_ALLOW_ORIGINS", "").split(",")
+    if o.strip()
+]
+_LOCAL_REGEX = r"https?://(localhost|127\.0\.0\.1)(:\d+)?"
+_EXTRA_REGEX = os.environ.get("CORS_ALLOW_ORIGIN_REGEX", "").strip()
+_ORIGIN_REGEX = f"{_LOCAL_REGEX}|{_EXTRA_REGEX}" if _EXTRA_REGEX else _LOCAL_REGEX
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", *_PROD_ORIGINS],
+    allow_origin_regex=_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
