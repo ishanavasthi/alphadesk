@@ -1,3 +1,11 @@
+---
+title: AlphaDesk
+emoji: 📈
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: false
+---
 # AlphaDesk
 
 AlphaDesk is a multi-agent Indian equity research system built with LangGraph. It
