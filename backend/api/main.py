@@ -30,7 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-# Load backend/.env so GROQ_API_KEY, LANGCHAIN_*, IND_MONEY_MCP_URL are present
+# Load backend/.env so LLM keys, LANGCHAIN_*, IND_MONEY_MCP_URL are present
 # before the graph and agents read them.
 load_dotenv()
 

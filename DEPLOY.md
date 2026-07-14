@@ -51,7 +51,10 @@ Mark anything sensitive as a **Secret**.
 
 | Var | Value | Notes |
 | --- | --- | --- |
-| `GROQ_API_KEY` | your Groq key | secret |
+| `GROQ_API_KEY` | your Groq key | secret; omit only if using an OpenAI-compatible endpoint |
+| `OPENAI_API_KEY` | compatible provider key | secret; required when using `OPENAI_BASE_URL` / `OPENAI_COMPATIBLE_MODEL` |
+| `OPENAI_BASE_URL` | compatible provider base URL | optional; enables OpenAI-compatible LLM mode |
+| `OPENAI_COMPATIBLE_MODEL` | compatible provider model | optional; enables OpenAI-compatible LLM mode |
 | `IND_MONEY_MCP_URL` | `https://mcp.indmoney.com/mcp` | the MCP server |
 | `IND_MONEY_AUTH_REDIRECT` | `https://<user>-alphadesk.hf.space/auth/callback` | **critical** - must be the public backend URL |
 | `CORS_ALLOW_ORIGINS` | `https://alphadesk.ishanavasthi.in,https://<your-vercel>.vercel.app` | comma-separated frontend origins |

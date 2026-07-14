@@ -17,9 +17,9 @@ import asyncio
 import re
 from typing import Dict, List, Optional
 
-from langchain_groq import ChatGroq
 from pydantic import BaseModel, Field
 
+from agents.llm import get_chat_llm
 from graph.state import PortfolioState, ScanResult
 from tools.ind_money import (
     MOVER_CATEGORIES,
@@ -37,8 +37,8 @@ _MAX_NAMED = 12  # cap when the user named explicit stocks
 _MOVERS_LIMIT = 8
 
 
-def _get_llm() -> ChatGroq:
-    return ChatGroq(model=SCANNER_MODEL, temperature=0)
+def _get_llm():
+    return get_chat_llm(SCANNER_MODEL, temperature=0)
 
 
 class _Intent(BaseModel):

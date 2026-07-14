@@ -276,8 +276,9 @@ PASS, FLAG, or REJECT.
 ## Tech stack
 
 - Backend: Python 3.11 or newer, LangGraph, FastAPI, ChromaDB, httpx, Pydantic.
-- LLM: Groq via langchain-groq. llama-3.3-70b-versatile for Analyst and
-  RiskManager, llama-3.1-8b-instant for Scanner and lightweight tasks.
+- LLM: Groq via langchain-groq by default. Set `OPENAI_BASE_URL`,
+  `OPENAI_COMPATIBLE_MODEL`, and `OPENAI_API_KEY` to use an OpenAI-compatible
+  endpoint instead.
 - Market data: IND Money MCP server, accessed with the `mcp` Python SDK.
 - RAG: ChromaDB with the built in ONNX MiniLM embedding function.
 - Frontend: Next.js 15, TypeScript, Tailwind CSS, shadcn/ui (new-york), lucide
@@ -423,7 +424,10 @@ Backend, in `backend/.env`:
 
 | Variable | Required | Description |
 | -------- | -------- | ----------- |
-| `GROQ_API_KEY` | yes | Groq API key for all LLM calls |
+| `GROQ_API_KEY` | yes, unless using OpenAI-compatible | Groq API key for default LLM calls |
+| `OPENAI_API_KEY` | yes, if using OpenAI-compatible | API key for the compatible endpoint |
+| `OPENAI_BASE_URL` | optional | OpenAI-compatible API base URL; enables compatible-provider mode |
+| `OPENAI_COMPATIBLE_MODEL` | optional | Model name for the compatible endpoint; enables compatible-provider mode |
 | `IND_MONEY_MCP_URL` | yes | Streamable HTTP URL of the IND Money MCP server |
 | `LANGCHAIN_API_KEY` | recommended | LangSmith key for tracing |
 | `LANGCHAIN_TRACING_V2` | recommended | Set to true to enable tracing |

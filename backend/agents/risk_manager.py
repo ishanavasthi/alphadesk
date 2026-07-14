@@ -16,9 +16,9 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from langchain_groq import ChatGroq
 from pydantic import BaseModel, Field
 
+from agents.llm import get_chat_llm
 from graph.state import (
     AnalystRecommendation,
     PortfolioState,
@@ -100,7 +100,7 @@ async def _annotate(
             f"action={getattr(rec, 'action', None)}"
         )
     try:
-        llm = ChatGroq(model=RISK_MODEL, temperature=0).with_structured_output(_RiskNotes)
+        llm = get_chat_llm(RISK_MODEL, temperature=0).with_structured_output(_RiskNotes)
         out = await llm.ainvoke("\n".join(lines))
         note_map = {n.symbol: n.note for n in out.notes}
         for a in assessments:

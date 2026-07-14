@@ -14,8 +14,7 @@ from __future__ import annotations
 import asyncio
 from typing import Dict, Optional
 
-from langchain_groq import ChatGroq
-
+from agents.llm import get_chat_llm
 from graph.state import PortfolioState, ResearchReport, ScanResult
 from tools.ind_money import (
     GreeksHistoryResponse,
@@ -30,8 +29,8 @@ from tools.ind_money import (
 RESEARCH_MODEL = "llama-3.1-8b-instant"
 
 
-def _get_llm() -> ChatGroq:
-    return ChatGroq(model=RESEARCH_MODEL, temperature=0)
+def _get_llm():
+    return get_chat_llm(RESEARCH_MODEL, temperature=0)
 
 
 def _fundamentals(detail: Optional[StockDetail]) -> Dict[str, float]:

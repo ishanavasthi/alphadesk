@@ -33,3 +33,4 @@ data/chroma_db/
 
 # IND Money OAuth token cache
 backend/.ind_money_token.json
+.DS_Store

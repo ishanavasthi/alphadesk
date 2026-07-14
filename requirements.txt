@@ -1,5 +1,6 @@
 langgraph
 langchain-groq
+langchain-openai
 langsmith
 fastapi
 uvicorn

@@ -11,9 +11,9 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional
 
-from langchain_groq import ChatGroq
 from pydantic import BaseModel, Field
 
+from agents.llm import get_chat_llm
 from graph.state import AnalystRecommendation, PortfolioState, ResearchReport
 from rag.retriever import get_relevant_context
 
@@ -33,8 +33,8 @@ class _AnalystOutput(BaseModel):
     thesis: Optional[str] = Field(None, description="One-paragraph overall synthesis.")
 
 
-def _get_llm() -> ChatGroq:
-    return ChatGroq(model=ANALYST_MODEL, temperature=0)
+def _get_llm():
+    return get_chat_llm(ANALYST_MODEL, temperature=0)
 
 
 def _gather_context(report: ResearchReport) -> List[str]:
