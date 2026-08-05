@@ -42,7 +42,21 @@ _SCOPE = os.environ.get("IND_MONEY_OAUTH_SCOPE", "portfolio:read")
 
 
 class MCPAuthError(Exception):
-    """Raised when a valid IND Money access token cannot be obtained."""
+    """Raised when a valid IND Money access token cannot be obtained.
+
+    Base class covers *transient* failures too (network errors, 5xx), where the
+    stored credentials may still be good and a later retry can succeed.
+    """
+
+
+class MCPAuthInvalid(MCPAuthError):
+    """Raised when the stored credentials are *definitively* unusable.
+
+    Missing refresh token / client id, or the token endpoint rejecting the
+    refresh with a 4xx (e.g. ``invalid_grant``). Unlike a transient
+    :class:`MCPAuthError`, this means reconnecting is required — callers should
+    treat the session as logged out rather than retry.
+    """
 
 
 def _issuer_base() -> str:
@@ -156,19 +170,85 @@ class _Auth:
         self._static = None  # real OAuth tokens now own the chain
         self._persist()
 
-    def status(self) -> Dict[str, object]:
+    def _invalidate(self, *, clear_client: bool = False) -> None:
+        """Drop the stored tokens so status reports a truthful logged-out state.
+
+        Called when a refresh is definitively rejected (stale/revoked token) and
+        on explicit logout. ``clear_client`` also forgets the registered OAuth
+        client and deletes the on-disk cache (used by logout); a plain
+        invalidation keeps the client registration but zeroes the dead tokens.
+        """
+        self._access = None
+        self._refresh = None
+        self._expires_at = 0.0
+        self._static = None
+        if clear_client:
+            self._client_id = None
+            self._client_secret = None
+            self._scope = None
+            try:
+                _CACHE_FILE.unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001
+                pass
+        else:
+            self._persist()
+
+    def logout(self) -> None:
+        """Forget all IND Money credentials for this process and on disk.
+
+        Clears the in-memory tokens + client registration and removes the cache
+        file, then keeps ``_loaded`` set so the killed credentials are not
+        re-seeded from env / the Claude Code store until the next reconnect.
+        Note: a process restart will re-seed from ``IND_MONEY_OAUTH_*`` env vars
+        if those are set, since they are an explicit durable credential source.
+        """
         self.ensure_loaded()
-        if self._static:
-            return {"authenticated": True, "source": "static", "expires_at": None}
+        self._invalidate(clear_client=True)
+        self._loaded = True
+
+    def _describe(self) -> Dict[str, object]:
         now = time.time()
-        # Authenticated if we have a live access token or a refresh token to mint one.
-        authed = bool((self._access and self._expires_at - now > 60) or self._refresh)
+        if self._static:
+            return {"authenticated": True, "source": "static", "expires_at": None,
+                    "expires_in_sec": None}
+        authed = bool(self._access and self._expires_at - now > 60)
         return {
             "authenticated": authed,
             "source": "oauth" if authed else None,
             "expires_at": self._expires_at or None,
             "expires_in_sec": int(self._expires_at - now) if self._expires_at else None,
         }
+
+    async def status_verified(self) -> Dict[str, object]:
+        """Return a *truthful* auth status, refreshing an expired token if needed.
+
+        A live access token (or a static bearer) returns immediately with no
+        network call. If the access token is expired but a refresh token exists,
+        this actually attempts the refresh: success reports authenticated with
+        the new expiry; a definitive rejection clears the dead credentials and
+        reports logged out (so the UI never shows a false "connected" state); a
+        transient failure reports logged out but keeps the tokens for a retry.
+        """
+        self.ensure_loaded()
+        if self._static:
+            return self._describe()
+        if self._access and self._expires_at - time.time() > 60:
+            return self._describe()
+        # Access token missing/expired — verify we can actually mint one.
+        try:
+            await self.get_token()
+        except MCPAuthInvalid:
+            # Clear the dead credentials once; skip the disk write if already empty
+            # (avoids rewriting the cache on every logged-out status poll).
+            if self._access or self._refresh or self._static:
+                self._invalidate()
+            return {"authenticated": False, "source": None, "expires_at": None,
+                    "expires_in_sec": None}
+        except MCPAuthError:
+            # Transient (network/5xx): keep creds, but report the truth for now.
+            return {"authenticated": False, "source": None, "expires_at": None,
+                    "expires_in_sec": None}
+        return self._describe()
 
     async def get_token(self) -> str:
         if self._static:
@@ -183,7 +263,7 @@ class _Auth:
 
     async def _refresh_token(self) -> str:
         if not self._refresh or not self._client_id:
-            raise MCPAuthError(
+            raise MCPAuthInvalid(
                 "Not authenticated with IND Money. Use the Connect button, authenticate "
                 "the 'indmoney' MCP in Claude Code, or set IND_MONEY_OAUTH_* env vars."
             )
@@ -205,7 +285,10 @@ class _Auth:
             raise MCPAuthError(f"IND Money token refresh request failed: {exc}")
 
         if resp.status_code != 200:
-            raise MCPAuthError(
+            # 4xx = the refresh token itself is bad/revoked -> definitive; the
+            # caller must reconnect. 5xx = server hiccup -> transient, retryable.
+            err_cls = MCPAuthInvalid if 400 <= resp.status_code < 500 else MCPAuthError
+            raise err_cls(
                 f"IND Money token refresh failed ({resp.status_code}): {resp.text[:200]}. "
                 "Re-connect via the Connect button."
             )
@@ -229,8 +312,19 @@ async def get_access_token() -> str:
 
 
 async def auth_status() -> Dict[str, object]:
-    """Return whether the backend is authenticated with IND Money."""
-    return _auth.status()
+    """Return whether the backend is *actually* authenticated with IND Money.
+
+    Verifies the token (refreshing an expired one) rather than trusting the mere
+    presence of a refresh token, so an expired/revoked session reports as logged
+    out instead of a false "connected".
+    """
+    return await _auth.status_verified()
+
+
+async def logout() -> Dict[str, object]:
+    """Disconnect: forget all stored IND Money credentials. Returns the status."""
+    _auth.logout()
+    return {"authenticated": False}
 
 
 # --------------------------------------------------------------------------- #

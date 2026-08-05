@@ -192,6 +192,12 @@ export async function startAuthLogin(): Promise<string> {
   return data.authorization_url as string;
 }
 
+/** POST /auth/logout — disconnect the backend from IND Money. */
+export async function logoutAuth(): Promise<void> {
+  const response = await fetch(`${API_BASE}/auth/logout`, { method: "POST" });
+  if (!response.ok) throw new Error(`Logout failed (${response.status}).`);
+}
+
 export interface WatchlistItem {
   symbol: string;
   run_id?: string;

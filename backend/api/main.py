@@ -41,6 +41,7 @@ from tools.ind_money_auth import (  # noqa: E402
     auth_status,
     begin_login,
     complete_login,
+    logout,
 )
 
 # Where IND Money redirects after login. Must be reachable in the browser and
@@ -224,6 +225,12 @@ async def auth_login_endpoint() -> Dict[str, str]:
     except MCPAuthError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     return {"authorization_url": url}
+
+
+@app.post("/auth/logout")
+async def auth_logout_endpoint() -> Dict[str, object]:
+    """Disconnect from IND Money — forget the stored tokens for this backend."""
+    return await logout()
 
 
 @app.get("/auth/callback", response_class=HTMLResponse)
