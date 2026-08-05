@@ -56,8 +56,6 @@ export function AuthButton() {
     }
   }
 
-  if (authed === null) return null; // unknown until first check
-
   if (authed) {
     return (
       <span className="pill pill-pass" title="Backend is authenticated with IND Money">
@@ -67,14 +65,23 @@ export function AuthButton() {
     );
   }
 
+  // While the first status check is in flight (authed === null) we still render
+  // the Connect button — disabled with a spinner — so it is always visible on
+  // the home page even if the backend is slow/cold-starting.
+  const checking = authed === null;
+
   return (
     <button
       onClick={connect}
-      disabled={busy}
+      disabled={busy || checking}
       className="pill pill-flag transition hover:brightness-125 disabled:opacity-60"
       title="Authenticate the backend with IND Money"
     >
-      {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <KeyRound className="h-3 w-3" />}
+      {busy || checking ? (
+        <Loader2 className="h-3 w-3 animate-spin" />
+      ) : (
+        <KeyRound className="h-3 w-3" />
+      )}
       Connect IND Money
     </button>
   );
