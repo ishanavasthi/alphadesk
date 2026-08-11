@@ -84,7 +84,8 @@ interface StreamHandlers {
   onStart?: (e: { run_id: string; status: string }) => void;
   onUpdate?: (e: AgentUpdate) => void;
   onComplete?: (e: CompleteEvent) => void;
-  onError?: (message: string) => void;
+  /** status is the HTTP code when the request itself was rejected (e.g. 409 = not connected). */
+  onError?: (message: string, status?: number) => void;
 }
 
 /**
@@ -112,7 +113,14 @@ export async function streamAnalyze(
   }
 
   if (!response.ok || !response.body) {
-    handlers.onError?.(`Request failed (${response.status}).`);
+    // FastAPI puts the reason in `detail` — pass it through instead of a bare code.
+    let detail = "";
+    try {
+      detail = ((await response.json()) as { detail?: string }).detail ?? "";
+    } catch {
+      // non-JSON body (proxy error page); fall back to the status code
+    }
+    handlers.onError?.(detail || `Request failed (${response.status}).`, response.status);
     return;
   }
 

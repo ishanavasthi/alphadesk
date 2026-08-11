@@ -259,7 +259,21 @@ async def analyze(body: AnalyzeRequest) -> StreamingResponse:
     recommendations and risk assessments. If anything passed risk, the run pauses
     at the human-in-the-loop gate and the event includes an ``action_id`` to pass
     to /approve.
+
+    Refuses with 409 when IND Money is not connected: every agent downstream of
+    the Scanner is fed by the MCP, so an unauthenticated run can only produce an
+    empty "0 candidates" pipeline that looks like a real (but useless) result.
     """
+    status_now = await auth_status()
+    if not status_now.get("authenticated"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "IND Money is not connected. Connect IND Money first - the "
+                "scanner has no market data without it."
+            ),
+        )
+
     run_uuid = uuid.uuid4()
     run_id = str(run_uuid)
     _RUNS[run_id] = {

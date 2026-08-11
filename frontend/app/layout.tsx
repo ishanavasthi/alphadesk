@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { Inter, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
+import { AuthProvider } from "@/components/AuthProvider";
 import { TopBar } from "@/components/TopBar";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
@@ -23,8 +24,10 @@ export default function RootLayout({
   return (
     <html lang="en" className={`dark ${inter.variable} ${mono.variable}`}>
       <body className="min-h-screen font-sans antialiased">
-        <TopBar />
-        {children}
+        <AuthProvider>
+          <TopBar />
+          {children}
+        </AuthProvider>
       </body>
     </html>
   );

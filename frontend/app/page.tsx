@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, KeyRound, Loader2, Plug } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/components/AuthProvider";
 import { ResultsDashboard } from "@/components/ResultsDashboard";
 
 const SAMPLES = [
@@ -16,10 +17,16 @@ const PIPELINE = ["SCAN", "RESEARCH", "ANALYSE", "RISK", "EXECUTE"];
 export default function Home() {
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState<string | null>(null);
+  const { authed, busy, connect } = useAuth();
+
+  // Every agent is fed by the IND Money MCP, so a query run while logged out can
+  // only return an empty "0 candidates" pipeline. Gate the form instead.
+  const connected = authed === true;
+  const checking = authed === null;
 
   function run(q: string) {
     const trimmed = q.trim();
-    if (trimmed) setSubmitted(trimmed);
+    if (trimmed && connected) setSubmitted(trimmed);
   }
 
   if (submitted) {
@@ -65,15 +72,51 @@ export default function Home() {
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="describe what you're hunting for…"
+              disabled={!connected}
+              placeholder={
+                connected
+                  ? "describe what you're hunting for…"
+                  : "connect IND Money to run a query…"
+              }
               className="min-w-0 flex-1 bg-transparent font-mono text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none"
             />
-            <Button type="submit" size="sm" disabled={!query.trim()}>
+            <Button type="submit" size="sm" disabled={!query.trim() || !connected}>
               Run
               <ArrowRight />
             </Button>
           </div>
         </form>
+
+        {/* Connection gate — the desk has no market data until IND Money is linked */}
+        {!connected && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border border-border border-l-2 border-l-flag bg-card p-3">
+            <div className="flex items-start gap-2.5">
+              <span className="text-flag">
+                {checking ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Plug className="h-4 w-4" />
+                )}
+              </span>
+              <div>
+                <div className="eyebrow text-flag">
+                  {checking ? "Checking IND Money connection" : "IND Money not connected"}
+                </div>
+                <div className="mt-0.5 text-[0.8rem] text-muted-foreground">
+                  {checking
+                    ? "Confirming the backend still holds a valid session…"
+                    : "Every agent reads NSE data through the IND Money MCP. Connect it first, or the scan returns 0 candidates."}
+                </div>
+              </div>
+            </div>
+            {!checking && (
+              <Button size="sm" onClick={connect} disabled={busy}>
+                {busy ? <Loader2 className="animate-spin" /> : <KeyRound />}
+                Connect IND Money
+              </Button>
+            )}
+          </div>
+        )}
 
         {/* Sample queries */}
         <div className="mt-3 flex flex-wrap gap-2">
@@ -81,7 +124,8 @@ export default function Home() {
             <button
               key={s}
               onClick={() => run(s)}
-              className="rounded-sm border border-border bg-secondary/40 px-2.5 py-1 text-left font-mono text-[0.7rem] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+              disabled={!connected}
+              className="rounded-sm border border-border bg-secondary/40 px-2.5 py-1 text-left font-mono text-[0.7rem] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border disabled:hover:text-muted-foreground"
             >
               {s}
             </button>

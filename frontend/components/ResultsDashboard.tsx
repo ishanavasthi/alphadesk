@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import { ArrowLeft, AlertTriangle, CheckCircle2, ShieldCheck } from "lucide-react";
+import { ArrowLeft, AlertTriangle, CheckCircle2, KeyRound, Loader2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/components/AuthProvider";
 import { AgentStepCard, type StageStatus } from "@/components/AgentStepCard";
 import { RecommendationCard } from "@/components/RecommendationCard";
 import { ApprovalModal } from "@/components/ApprovalModal";
@@ -36,6 +37,9 @@ export function ResultsDashboard({ query, onReset }: { query: string; onReset: (
   const [actionId, setActionId] = useState<string | null>(null);
   const [status, setStatus] = useState<RunStatus>("running");
   const [error, setError] = useState<string | null>(null);
+  // 409 from /analyze means the backend lost its IND Money session mid-session.
+  const [needsAuth, setNeedsAuth] = useState(false);
+  const { busy: authBusy, connect } = useAuth();
   const [rejectionReason, setRejectionReason] = useState<string | null>(null);
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
@@ -52,6 +56,7 @@ export function ResultsDashboard({ query, onReset }: { query: string; onReset: (
     setRejectionReason(null);
     setWatchlist([]);
     setError(null);
+    setNeedsAuth(false);
     setStatus("running");
     setModalOpen(false);
     setStages((s) => ({ ...s, scanner: "active" }));
@@ -101,9 +106,19 @@ export function ResultsDashboard({ query, onReset }: { query: string; onReset: (
             setStages((s) => ({ ...s, execution: "skipped" }));
           }
         },
-        onError: (msg) => {
+        onError: (msg, httpStatus) => {
           setError(msg);
+          setNeedsAuth(httpStatus === 409);
           setStatus("error");
+          // Don't leave the rail spinning on a stage that will never run.
+          setStages((prev) =>
+            Object.fromEntries(
+              Object.entries(prev).map(([k, v]) => [
+                k,
+                v === "done" ? v : ("skipped" as StageStatus),
+              ]),
+            ),
+          );
         },
       },
       controller.signal,
@@ -174,7 +189,19 @@ export function ResultsDashboard({ query, onReset }: { query: string; onReset: (
         {/* Results */}
         <section className="space-y-4">
           {error && (
-            <Banner tone="down" icon={<AlertTriangle className="h-4 w-4" />} title="Run failed">
+            <Banner
+              tone="down"
+              icon={<AlertTriangle className="h-4 w-4" />}
+              title={needsAuth ? "IND Money not connected" : "Run failed"}
+              action={
+                needsAuth ? (
+                  <Button size="sm" onClick={connect} disabled={authBusy}>
+                    {authBusy ? <Loader2 className="animate-spin" /> : <KeyRound />}
+                    Connect
+                  </Button>
+                ) : undefined
+              }
+            >
               {error}
             </Banner>
           )}
