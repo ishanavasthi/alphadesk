@@ -14,6 +14,7 @@ runs on Groq. The frontend is a dark, Bloomberg-terminal-style Next.js app.
 ## Table of contents
 
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [Architecture](#architecture)
 - [The agent pipeline](#the-agent-pipeline)
 - [Human in the loop and approval](#human-in-the-loop-and-approval)
@@ -49,6 +50,30 @@ runs on Groq. The frontend is a dark, Bloomberg-terminal-style Next.js app.
 - Every analysis is persisted server side and reachable at a shareable URL, so a
   page refresh does not lose the results.
 - LangSmith tracing on by default for observability.
+
+## Screenshots
+
+Both shots are real runs of the pipeline against live IND Money market data,
+captured from the run pages at `/a/<run_id>`.
+
+### Human approval gate
+
+Query: `find me momentum stocks in IT sector`. All five candidates cleared the
+risk guardrails, so the run pauses at `awaiting_approval` and nothing reaches the
+paper watchlist until **Review & Approve** is clicked. Note the mix of `BUY`/`PASS`
+verdicts and `HOLD`/`FLAG` for the two names that landed in the 0.70-0.75
+confidence band.
+
+![AlphaDesk run awaiting human approval: five IT-sector momentum candidates with bull and bear theses, catalysts, key risks, and a Review and Approve action](docs/screenshots/run-it-sector.png)
+
+### Risk guardrails rejecting a run
+
+Query: `oversold pharma large-caps with a catalyst`. Every candidate came back
+under the 0.70 confidence floor, so the RiskManager rejected all five with
+`confidence_below_threshold` and the run ends without reaching the Execution
+node.
+
+![AlphaDesk run rejected by risk guardrails: five candidates all below the confidence threshold, each card showing why it was rejected](docs/screenshots/run-pharma.png)
 
 ## Architecture
 
