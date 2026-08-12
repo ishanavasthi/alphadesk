@@ -72,6 +72,38 @@ export interface AnalysisPayload {
   created_at?: string;
 }
 
+/**
+ * GET / — cheap liveness ping. Resolves true once the backend answers.
+ *
+ * The backend runs on a free Hugging Face Space that sleeps when idle, and the
+ * first request after a sleep only *starts* the container (~1 min of cold
+ * start) while everything in flight fails. Poll the root route until it answers
+ * so the rest of the app can wait instead of rendering a false "disconnected".
+ */
+export async function wakeBackend(
+  { attempts = 24, intervalMs = 5000, signal }: WakeOptions = {},
+): Promise<boolean> {
+  for (let i = 0; i < attempts; i += 1) {
+    if (signal?.aborted) return false;
+    try {
+      const response = await fetch(`${API_BASE}/`, { cache: "no-store", signal });
+      if (response.ok) return true;
+    } catch {
+      // Network error while the Space boots — fall through and retry.
+    }
+    if (i < attempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+  return false;
+}
+
+export interface WakeOptions {
+  attempts?: number;
+  intervalMs?: number;
+  signal?: AbortSignal;
+}
+
 /** GET /analysis/{id} — full stored analysis for the /a/<id> view. */
 export async function getAnalysis(runId: string): Promise<AnalysisPayload> {
   const response = await fetch(`${API_BASE}/analysis/${encodeURIComponent(runId)}`);

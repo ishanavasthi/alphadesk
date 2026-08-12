@@ -4,7 +4,7 @@ import { AlertTriangle, KeyRound, Loader2, LogOut, ShieldCheck } from "lucide-re
 import { useAuth } from "@/components/AuthProvider";
 
 export function AuthButton() {
-  const { authed, busy, error, connect, disconnect } = useAuth();
+  const { authed, waking, busy, error, connect, disconnect } = useAuth();
 
   if (authed) {
     return (
@@ -30,6 +30,11 @@ export function AuthButton() {
   // the Connect button — disabled with a spinner — so it is always visible on
   // the home page even if the backend is slow/cold-starting.
   const checking = authed === null;
+  const label = waking
+    ? "Waking backend..."
+    : error
+      ? "Connect failed - retry"
+      : "Connect IND Money";
 
   return (
     <button
@@ -38,7 +43,11 @@ export function AuthButton() {
       className={`pill transition hover:brightness-125 disabled:opacity-60 ${
         error ? "pill-reject" : "pill-flag"
       }`}
-      title={error ?? "Authenticate the backend with IND Money"}
+      title={
+        waking
+          ? "Backend is cold-starting - this can take up to a minute"
+          : (error ?? "Authenticate the backend with IND Money")
+      }
     >
       {busy || checking ? (
         <Loader2 className="h-3 w-3 animate-spin" />
@@ -47,7 +56,7 @@ export function AuthButton() {
       ) : (
         <KeyRound className="h-3 w-3" />
       )}
-      {error ? "Connect failed - retry" : "Connect IND Money"}
+      {label}
     </button>
   );
 }

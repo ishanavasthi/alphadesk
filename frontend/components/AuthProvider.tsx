@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { getAuthStatus, logoutAuth, startAuthLogin } from "@/lib/api";
+import { getAuthStatus, logoutAuth, startAuthLogin, wakeBackend } from "@/lib/api";
 
 /** Turn a fetch/HTTP failure into something a user can act on. */
 function describe(err: unknown): string {
@@ -25,6 +25,8 @@ function describe(err: unknown): string {
 interface AuthContextValue {
   /** null while the first status check is in flight. */
   authed: boolean | null;
+  /** True while we are pinging a cold/sleeping backend back into service. */
+  waking: boolean;
   busy: boolean;
   error: string | null;
   connect: () => Promise<void>;
@@ -42,6 +44,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
+  const [waking, setWaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -63,9 +66,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Warm-up ping. The backend sleeps when idle (free Hugging Face Space), and
+  // the first request after a sleep only kicks off a ~1 min cold start. Rather
+  // than showing a false "disconnected", keep pinging until it answers.
   useEffect(() => {
-    refresh();
-    return stopPolling;
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const s = await getAuthStatus();
+        setAuthed(s.authenticated);
+      } catch {
+        setWaking(true);
+        const up = await wakeBackend({ signal: controller.signal });
+        if (controller.signal.aborted) return;
+        setWaking(false);
+        if (up) await refresh();
+        else setAuthed(false);
+      }
+    })();
+    return () => {
+      controller.abort();
+      stopPolling();
+    };
   }, [refresh, stopPolling]);
 
   const connect = useCallback(async () => {
@@ -119,7 +141,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [busy]);
 
   return (
-    <AuthContext.Provider value={{ authed, busy, error, connect, disconnect, refresh }}>
+    <AuthContext.Provider value={{ authed, waking, busy, error, connect, disconnect, refresh }}>
       {children}
     </AuthContext.Provider>
   );

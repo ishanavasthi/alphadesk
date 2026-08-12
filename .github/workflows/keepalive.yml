@@ -1,0 +1,46 @@
+# Keeps the Hugging Face Space awake. Free CPU Spaces sleep after ~48h idle and
+# only wake on a request to the Space itself, so a scheduled ping is the only
+# way to keep cold starts off the demo path.
+#
+# Set the repo variable BACKEND_URL (Settings -> Secrets and variables ->
+# Actions -> Variables) to the Space root, e.g.
+#   https://<user>-alphadesk.hf.space
+# The workflow is a no-op until that variable exists.
+#
+# Note: GitHub disables scheduled workflows in repos with no activity for 60
+# days; re-enable from the Actions tab if that happens.
+name: keepalive
+
+on:
+  schedule:
+    # Every 6 hours. Cron on GitHub is UTC and best-effort (can run late).
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Ping backend until awake
+        env:
+          BACKEND_URL: ${{ vars.BACKEND_URL }}
+        run: |
+          if [ -z "$BACKEND_URL" ]; then
+            echo "::warning::BACKEND_URL repo variable is not set - nothing to ping."
+            exit 0
+          fi
+          url="${BACKEND_URL%/}/"
+          # A sleeping Space answers non-200 while the container boots, so retry
+          # for a few minutes rather than treating the first response as final.
+          for attempt in $(seq 1 20); do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -m 30 "$url" || echo 000)
+            echo "attempt $attempt: HTTP $code"
+            if [ "$code" = "200" ]; then
+              echo "Backend awake."
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::Backend did not return 200 after ~5 minutes ($url)."
+          exit 1
