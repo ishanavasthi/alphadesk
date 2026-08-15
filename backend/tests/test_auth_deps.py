@@ -132,7 +132,8 @@ def jwks_server(
     monkeypatch.setattr(PyJWKClient, "fetch_data", server.fetch_data)
     monkeypatch.setenv(deps.JWKS_URL_ENV, JWKS_URL)
     monkeypatch.setenv(deps.ISSUER_ENV, ISSUER)
-    monkeypatch.delenv(deps.AUTHORIZED_PARTIES_ENV, raising=False)
+    # F3 made the allow-list mandatory, so the baseline fixture configures it.
+    monkeypatch.setenv(deps.AUTHORIZED_PARTIES_ENV, ORIGIN)
     yield server
 
 
@@ -298,13 +299,19 @@ def test_garbage_is_401(jwks_server: _JwksServer) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Authorized parties (azp) — off by default, enforced when configured
+# Authorized parties (azp) — MANDATORY as of F3
 # --------------------------------------------------------------------------- #
-def test_azp_is_not_checked_when_unconfigured(
-    jwks_server: _JwksServer, signing_key: rsa.RSAPrivateKey
+def test_unconfigured_azp_is_503_not_a_silently_skipped_check(
+    jwks_server: _JwksServer, signing_key: rsa.RSAPrivateKey, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    token = _sign(signing_key, _claims(azp="https://somewhere-else.example"))
-    assert deps.verify_token(token)["sub"] == USER_ID
+    """F2 shipped this as "checked when set". A check you can switch off by
+    forgetting an env var is not a check — so an unset allow-list is now a
+    configuration error, and a *valid* token gets 503 rather than a pass."""
+    monkeypatch.delenv(deps.AUTHORIZED_PARTIES_ENV, raising=False)
+    with pytest.raises(Exception) as excinfo:
+        deps.verify_token(_sign(signing_key, _claims()))
+    assert excinfo.value.status_code == 503  # type: ignore[attr-defined]
+    assert deps.AUTHORIZED_PARTIES_ENV in str(excinfo.value.detail)  # type: ignore[attr-defined]
 
 
 def test_wrong_azp_is_401_when_configured(
@@ -345,7 +352,10 @@ def test_an_unreachable_jwks_endpoint_is_503_not_401(
     assert excinfo.value.status_code == 503  # type: ignore[attr-defined]
 
 
-@pytest.mark.parametrize("missing", [deps.JWKS_URL_ENV, deps.ISSUER_ENV])
+@pytest.mark.parametrize(
+    "missing",
+    [deps.JWKS_URL_ENV, deps.ISSUER_ENV, deps.AUTHORIZED_PARTIES_ENV],
+)
 def test_unconfigured_clerk_is_503_not_401(
     jwks_server: _JwksServer,
     signing_key: rsa.RSAPrivateKey,
