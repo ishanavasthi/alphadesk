@@ -9,6 +9,14 @@ langgraph==1.2.9
 langchain-groq==1.1.3
 langchain-openai==1.3.5
 langsmith==0.10.3
+# langchain-core is a *transitive* dep of the three above, pinned anyway (F1):
+# graph/portfolio_config.py suppresses LangSmith tracing for the portfolio
+# graph by leaning on a langchain-core internal, so an unpinned rebuild could
+# change that behaviour with zero code change — it already resolved 1.5.5 in
+# the image while the dev venv had 1.4.9. Bumping it means re-running
+# backend/tests/test_portfolio_config.py; the Dockerfile also gates the build
+# on tests/check_tracing_in_image.py.
+langchain-core==1.5.5
 fastapi==0.139.0
 uvicorn==0.51.0
 pydantic==2.13.4

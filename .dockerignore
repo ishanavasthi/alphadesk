@@ -1,0 +1,61 @@
+# Keep the build context — and therefore the image — free of secrets and junk.
+#
+# The Dockerfile does `COPY backend/ ./backend/`, which takes *everything* in
+# that directory. On a developer machine that includes backend/.env (now
+# carrying TOKEN_ENCRYPTION_KEY and GROQ_API_KEY) and the IND Money OAuth token
+# cache. Both are gitignored, so a CI build from a clean checkout never saw
+# them — but a local `docker build` would bake them straight into a layer.
+# This file is what stops that.
+
+# --- secrets -------------------------------------------------------------
+**/.env
+**/.env.*
+!**/.env.example
+**/*.env
+!**/*.env.example
+**/.ind_money_token.json
+**/*.pem
+**/*.key
+**/id_rsa*
+
+# --- vcs / tooling state --------------------------------------------------
+.git
+.gitignore
+.github
+.claude
+.agents
+.temp
+.superpowers
+
+# --- python ---------------------------------------------------------------
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.coverage
+**/htmlcov
+.venv
+venv
+env
+ENV
+build
+dist
+**/*.egg-info
+
+# --- frontend (never enters the backend image) ----------------------------
+frontend
+**/node_modules
+**/.next
+
+# --- RAG corpus + vector store (dormant since C1; not copied anyway) -------
+data
+
+# --- docs / plans ---------------------------------------------------------
+docs
+*.md
+!README.md
+
+# --- os junk --------------------------------------------------------------
+**/.DS_Store
+**/Thumbs.db
