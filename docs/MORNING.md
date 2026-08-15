@@ -5,18 +5,19 @@ bottom of each section. (No secrets in this file — it is committed.)
 
 ## Needs your HANDS (blocking bits of wiring)
 
-1. **S1 wiring** (runbook `docs/TESTING/S1.md` §7): Neon signup → paste/set
-   `DATABASE_URL` + `CRON_SECRET` on the HF Space, `gh secret set CRON_SECRET`,
-   one `alembic upgrade head` against Neon. Until then the nightly snapshot
-   workflow goes honestly red (or disable it).
+1. ~~S1 wiring~~ **DONE overnight** — Neon migrated (0001→0003, `alembic
+   check` clean), `DATABASE_URL` + `CRON_SECRET` set on the Space (HF API),
+   `CRON_SECRET` set as a GitHub secret, local env updated. A manual
+   workflow run was fired to validate the chain (expect green with
+   `skipped: 1` while the IND link is down).
 2. **IND Money re-login** — your link is revoked at the source again (tokens
    are dying server-side within hours; F3 makes links durable). Needed for:
    nightly captures, F3's real-link verification. Ask me for a login URL.
-3. **Clerk application** — create at clerk.com, enable **Waitlist** mode,
-   then set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` + `CLERK_SECRET_KEY`
-   (frontend env) and `CLERK_JWKS_URL` + `CLERK_ISSUER` (backend env).
-   ⚠️ Flag-on with placeholder keys builds but is a broken site in a real
-   browser (Clerk dev-browser handshake) — real keys or flag stays off.
+3. ~~Clerk application~~ **mostly DONE overnight** — CLI authenticated, app
+   `leading-sheepdog-6215` linked, real keys in `frontend/.env.local` +
+   backend env (never committed). ONE dashboard click left: **enable
+   Waitlist mode** (Configure → Restrictions → Sign-up mode → Waitlist) —
+   not exposed via API. Needed before the L1 flag flip, not before.
 4. **OpenAI provider-side budget cap** (before A1 is used in anger): set a
    hard monthly limit in the OpenAI dashboard — the one control an app bug
    cannot bypass. App-side ceilings ship in A1 code.
