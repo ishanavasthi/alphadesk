@@ -155,7 +155,7 @@ extensible so they slot in without a refactor.
 | Observability | **Structured logging only.** No third-party error tracking in v2 — with fewer than ten invited users you can ask them directly, and Sentry would become a third subprocessor handling financial request context. |
 | RAG | **Unplugged, not deleted.** `data/nse_docs` is empty, so it has been inert in production regardless. See C1. |
 | Charts | Recharts (not currently a dependency — added in D1). D0's design choice may refine the treatment; shadcn/ui charts are Recharts-based, so the library survives either way. |
-| Dashboard design | **Chosen at the D0 gate** from 4–5 complete Fable-built demos (shadcn/ui, Bloomberg-terminal, plus 2–3 distinct others). Until a demo is chosen and recorded (DECISION.md + §2 + memory), **no real dashboard frontend is written.** |
+| Dashboard design | **LOCKED 2026-08-16: the shadcn/ui direction** (zinc base, blue-600 accent, radius 0.5rem; real shadcn/ui + Tailwind + Recharts). Full contract in `docs/design/DECISION.md`; reference pages `a-shadcn` + `a2-overview` + `a3-insights` + `a4-shell`; rejected demos in `docs/design/rejected/`. |
 
 ## 3. Architecture spine
 

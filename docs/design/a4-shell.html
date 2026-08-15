@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlphaDesk — app shell states (shadcn)</title>
+<link rel="stylesheet" href="shadcn.css">
+<style>
+  .sheet{grid-template-columns:1fr 1fr;gap:20px}
+  .frame{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--card)}
+  .frame .cap{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--faint);padding:8px 14px;border-bottom:1px solid var(--border);background:#fafafa;
+    display:flex;gap:8px;align-items:center}
+  .frame .cap .route{font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);
+    font-family:ui-monospace,Menlo,monospace;font-size:11px}
+  .frame .body{padding:18px}
+  .hero{padding:34px 22px;text-align:center}
+  .hero h2{font-size:24px;font-weight:700;letter-spacing:-.03em;line-height:1.2;margin-bottom:8px}
+  .hero p{font-size:13.5px;color:var(--muted);max-width:400px;margin:0 auto 18px}
+  .demo-banner{background:var(--warn-bg);border-bottom:1px solid var(--warn-bd);
+    color:var(--warn-ink);font-size:12.5px;font-weight:500;padding:8px 14px;
+    display:flex;gap:8px;align-items:center}
+  .gate{ text-align:center;padding:26px 20px}
+  .gate .glyph{width:44px;height:44px;border-radius:10px;background:#eff6ff;color:var(--accent);
+    display:grid;place-items:center;font-size:20px;margin:0 auto 12px}
+  .gate h2{font-size:17px;font-weight:600;margin-bottom:6px}
+  .gate p{font-size:13px;color:var(--muted);margin-bottom:14px}
+  .consent{max-width:330px;margin:0 auto 16px;text-align:left;font-size:12.5px;color:var(--muted)}
+  .consent li{display:flex;gap:8px;padding:4px 0}
+  .consent li::before{content:"✓";color:var(--good);font-weight:700}
+  .consent li.no::before{content:"✕";color:var(--bad)}
+  .menu{max-width:260px;border:1px solid var(--border);border-radius:8px;
+    box-shadow:0 4px 16px rgba(0,0,0,.08);overflow:hidden;background:var(--card);margin:0 auto}
+  .menu .mh{padding:10px 14px;border-bottom:1px solid var(--border)}
+  .menu .mh .n{font-size:13px;font-weight:600}
+  .menu .mh .e{font-size:11.5px;color:var(--faint)}
+  .menu .mi{padding:9px 14px;font-size:13px;color:var(--ink);display:flex;gap:8px;align-items:center}
+  .menu .mi:hover{background:#fafafa}
+  .menu .sep{border-top:1px solid var(--border)}
+  .menu .mi.danger{color:var(--bad)}
+  .menu .mi .k{margin-left:auto;font-size:11px;color:var(--faint)}
+  .labcard .lh{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .labcard h2{font-size:15px;font-weight:600}
+  .labcard p{font-size:12.5px;color:var(--muted);margin-bottom:14px;line-height:1.6}
+  .runrow{display:flex;gap:8px}
+  .runrow input{flex:1;border:1px solid var(--border);border-radius:6px;padding:7px 10px;
+    font:13px inherit;color:var(--ink);background:var(--card)}
+  .runrow input::placeholder{color:var(--faint)}
+  @media (max-width:840px){.sheet{grid-template-columns:1fr}}
+  @media (max-width:520px){.shell{padding:0 14px 48px}}
+</style></head>
+<body>
+<div class="shell">
+  <header class="top">
+    <span class="logo">alpha<b>Desk</b></span>
+    <span class="crumb">/ Design · app-shell states</span>
+    <span class="spacer"></span>
+    <span class="chip">Static mock — nothing is wired</span>
+  </header>
+
+  <h1>App shell &amp; states</h1>
+  <div class="sub">The chrome the dashboard lives in — one frame per surface, all in the locked shadcn language</div>
+
+  <div class="grid sheet">
+
+    <div class="frame">
+      <div class="cap">Public landing <span class="route">/</span></div>
+      <div class="hero">
+        <h2>Your whole portfolio,<br>one honest dashboard.</h2>
+        <p>Link your IND Money account and see net worth, allocation and
+        history — computed, verified, and narrated. Nothing here is
+        investment advice.</p>
+        <span class="btnrow" style="justify-content:center">
+          <span class="btn accent">Try the live demo</span>
+          <span class="btn outline">Join the waitlist</span>
+        </span>
+      </div>
+    </div>
+
+    <div class="frame">
+      <div class="cap">Demo mode <span class="route">/demo</span></div>
+      <div class="demo-banner">▲ Sample data — this is a demonstration with
+        invented holdings. Nothing on this page is real.</div>
+      <div class="body">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px">
+          <div><div style="font-size:12px;color:var(--muted)">Net worth</div>
+          <div style="font-size:22px;font-weight:600">₹10,07,655</div></div>
+          <span class="btn primary sm">Get your own — join the waitlist</span>
+        </div>
+        <div class="bars">
+          <div class="row"><div class="lbl">Indian stocks</div>
+            <div class="track"><div class="fill" style="width:100%"></div></div>
+            <div class="val">₹3,23,905 · 28.1%</div></div>
+          <div class="row"><div class="lbl">Mutual funds</div>
+            <div class="track"><div class="fill" style="width:86%"></div></div>
+            <div class="val">₹2,78,410 · 24.2%</div></div>
+          <div class="row"><div class="lbl">Fixed deposits</div>
+            <div class="track"><div class="fill" style="width:77%"></div></div>
+            <div class="val">₹2,50,000 · 21.7%</div></div>
+        </div>
+        <div class="note" style="margin-top:10px">The banner stays pinned on every scroll position —
+          a screenshot of fake net worth without context would be genuinely misleading.</div>
+      </div>
+    </div>
+
+    <div class="frame">
+      <div class="cap">Connect gate <span class="route">/ · signed in, unlinked</span></div>
+      <div class="gate">
+        <div class="glyph">⛓</div>
+        <h2>Link your IND Money account</h2>
+        <p>Read-only access, revocable any time. Before you’re redirected,
+        here is exactly what AlphaDesk will read:</p>
+        <ul class="consent">
+          <li>Portfolio holdings, values and SIPs</li>
+          <li>Net-worth totals for daily snapshots</li>
+          <li class="no">Never order placement — the broker layer cannot trade</li>
+          <li class="no">Never your credentials — OAuth only, tokens encrypted</li>
+        </ul>
+        <span class="btnrow" style="justify-content:center">
+          <span class="btn accent">Continue to IND Money →</span>
+          <span class="btn ghost">Not now</span>
+        </span>
+      </div>
+    </div>
+
+    <div class="frame">
+      <div class="cap">Lab entry <span class="route">/lab</span></div>
+      <div class="body labcard">
+        <div class="lh"><h2>Research desk</h2>
+          <span class="badge lab">Lab · simulation</span></div>
+        <p>The multi-agent desk scans NSE movers, writes analyst reports and
+        runs risk guardrails against a <b>paper</b> watchlist. It is a
+        simulation — its picks are never shown next to your real holdings,
+        and it never places orders.</p>
+        <div class="runrow">
+          <input placeholder="e.g. IT sector momentum" disabled>
+          <span class="btn primary">Run pipeline</span>
+        </div>
+        <div class="note" style="margin-top:10px">Runs are live simulations and aren’t saved ·
+          the paper watchlist persists to your account</div>
+      </div>
+    </div>
+
+    <div class="frame">
+      <div class="cap">Empty portfolio <span class="route">/portfolio · linked, no data yet</span></div>
+      <div class="body">
+        <div class="empty" style="margin:8px 0">
+          <span class="ico">◌</span>
+          <span><b>Nothing to show yet.</b> Your account is linked but the first
+          fetch hasn’t completed. This usually takes under a minute —
+          the first snapshot is captured tonight at 23:45 IST.</span>
+        </div>
+        <div style="margin-top:12px" class="btnrow">
+          <span class="btn outline sm"><span class="ico">↺</span> Fetch now</span>
+          <span class="btn ghost sm">What gets read?</span>
+        </div>
+        <div style="margin-top:16px">
+          <div class="skel" style="width:70%;margin-bottom:8px"></div>
+          <div class="skel" style="width:50%;margin-bottom:8px"></div>
+          <div class="skel" style="width:62%"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="frame">
+      <div class="cap">Account menu <span class="route">top bar · signed in</span></div>
+      <div class="body" style="background:#fafafa;padding:26px">
+        <div class="menu">
+          <div class="mh"><div class="n">Ishan Avasthi</div>
+            <div class="e">operator@example.com</div></div>
+          <div class="mi">Portfolio <span class="k">⌘P</span></div>
+          <div class="mi">Insights</div>
+          <div class="mi">Research desk <span class="badge lab" style="margin-left:6px">Lab</span></div>
+          <div class="sep"></div>
+          <div class="mi">Linked accounts <span class="k">IND Money ·</span></div>
+          <div class="mi">Privacy &amp; terms</div>
+          <div class="sep"></div>
+          <div class="mi danger">Delete my data…</div>
+          <div class="mi">Sign out</div>
+        </div>
+        <div class="note" style="text-align:center;margin-top:12px">“Delete my data” revokes the broker
+          token upstream, then removes every row — the DPDP obligation, one click deep.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <footer class="foot">
+    <span class="dot"></span>
+    <span>Synthetic demo data · static states sheet for the D0 record</span>
+    <span style="flex:1"></span>
+    <span>Privacy</span><span>Terms</span>
+  </footer>
+</div>
+</body></html>
