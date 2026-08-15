@@ -2,7 +2,7 @@
   "mf": [
     {
       "external_id": "DEMO-SIP-MF-0001",
-      "name": "Demo Bluechip Equity Fund",
+      "name": "Demo Alpha Largecap Fund",
       "amount": 10000.0,
       "frequency": "monthly",
       "next_execution_at": "2099-01-05T00:00:00+05:30",

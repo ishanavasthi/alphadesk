@@ -76,25 +76,25 @@
   ],
   "by_sector": [
     {
-      "label": "Demo Industrials",
+      "label": "Demo Sector Alpha",
       "invested_amount": 195000.0,
       "current_value": 222780.0,
       "weight_pct": 34.6
     },
     {
-      "label": "Demo Logistics",
+      "label": "Demo Sector Beta",
       "invested_amount": 88000.0,
       "current_value": 100512.5,
       "weight_pct": 15.6
     },
     {
-      "label": "Demo Technology",
+      "label": "Demo Sector Gamma",
       "invested_amount": 96000.0,
       "current_value": 107590.0,
       "weight_pct": 16.7
     },
     {
-      "label": "Demo Diversified",
+      "label": "Demo Sector Delta",
       "invested_amount": 258000.0,
       "current_value": 278410.0,
       "weight_pct": 43.2
