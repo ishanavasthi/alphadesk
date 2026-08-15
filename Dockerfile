@@ -10,23 +10,18 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# System deps for chromadb / onnxruntime.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
- && rm -rf /var/lib/apt/lists/*
-
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# App code + RAG corpus (data/nse_docs -> data/chroma_db at project root).
+# App code only. RAG is unplugged in v2, so the image carries no corpus and no
+# vector store: chromadb is not installed and rag/retriever.py returns an empty
+# context. To re-enable RAG: put chromadb/pypdf/langchain-text-splitters back in
+# requirements.txt, restore `COPY data/ ./data/` and a
+# `RUN cd backend && python -m rag.ingest || true` step here, and add PDFs to
+# data/nse_docs. (Re-adds build-essential + the onnxruntime download.)
 COPY backend/ ./backend/
-COPY data/ ./data/
 
-# Bake the ChromaDB index into the image (downloads the ONNX embed model once,
-# at build time). Harmless no-op if data/nse_docs is empty.
-RUN cd backend && python -m rag.ingest || true
-
-# Writable dirs for the non-root HF user (token cache + chroma + model cache).
+# Writable dirs for the non-root HF user (token cache + model cache).
 RUN mkdir -p /app/.cache && chmod -R 777 /app
 
 EXPOSE 7860

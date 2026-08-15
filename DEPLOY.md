@@ -34,16 +34,17 @@ public backend URL, not the Vercel URL.
 ### 1b. Push the code
 
 The repo root already has a `Dockerfile` (serves `api.main:app` on port 7860).
-Push backend + Dockerfile + data to the Space repo:
+Push backend + Dockerfile to the Space repo:
 
 ```bash
 git remote add space https://huggingface.co/spaces/<user>/alphadesk
 git push space main
 ```
 
-The Dockerfile copies `backend/` and `data/`, installs `requirements.txt`, and
-bakes the ChromaDB index at build time (`python -m rag.ingest`). RAG works with
-no extra steps. Empty `data/nse_docs` is fine - ingest is a no-op.
+The Dockerfile copies `backend/` and installs `requirements.txt` - that is all.
+RAG is unplugged as of v2: no `data/` copy, no chromadb, no ingest step, and no
+apt layer, which keeps the image small and the build fast. See the README's
+"RAG (dormant)" section for the re-enable path.
 
 ### 1c. Backend env vars (Space -> Settings -> Variables and secrets)
 

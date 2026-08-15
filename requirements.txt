@@ -1,16 +1,20 @@
-langgraph
-langchain-groq
-langchain-openai
-langsmith
-fastapi
-uvicorn
-chromadb
-langchain-text-splitters
-pypdf
-pydantic
+# Top-level dependencies only, every one pinned. Transitive deps resolve from
+# these. Bumping a version is a deliberate commit, never an incidental rebuild.
+#
+# RAG is unplugged in v2: chromadb, pypdf and langchain-text-splitters are NOT
+# installed. They are imported only under backend/rag/, and rag/retriever.py
+# degrades to an empty context when chromadb is missing. To re-enable RAG, add
+# chromadb / pypdf / langchain-text-splitters back here (see docs/SPECS/C1.md).
+langgraph==1.2.9
+langchain-groq==1.1.3
+langchain-openai==1.3.5
+langsmith==0.10.3
+fastapi==0.139.0
+uvicorn==0.51.0
+pydantic==2.13.4
 # Pinned: mcp 2.0.0 removed mcp.client.streamable_http.streamablehttp_client,
 # which tools/ind_money.py imports. Unpinned, a rebuild installs 2.x and the
 # app dies at import. 1.28.1 is the version verified working.
 mcp==1.28.1
-httpx
-python-dotenv
+httpx==0.28.1
+python-dotenv==1.2.2

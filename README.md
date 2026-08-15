@@ -22,12 +22,12 @@ runs on Groq. The frontend is a dark, Bloomberg-terminal-style Next.js app.
 ## Table of contents
 
 - [Features](#features)
-- [Screenshots](#screenshots)
 - [Architecture](#architecture)
 - [The agent pipeline](#the-agent-pipeline)
 - [Human in the loop and approval](#human-in-the-loop-and-approval)
 - [IND Money MCP and OAuth](#ind-money-mcp-and-oauth)
 - [Shared state model](#shared-state-model)
+- [RAG (dormant)](#rag-dormant)
 - [Tech stack](#tech-stack)
 - [Project structure](#project-structure)
 - [API reference](#api-reference)
@@ -50,38 +50,16 @@ runs on Groq. The frontend is a dark, Bloomberg-terminal-style Next.js app.
   approval gate before anything reaches the watchlist.
 - Paper watchlist maintained inside AlphaDesk, since the IND Money MCP is read
   only and cannot modify real broker watchlists.
-- Retrieval augmented generation over NSE filing PDFs using ChromaDB with a local
-  ONNX MiniLM embedding model (no torch, no paid embedding API).
+- A retrieval augmented generation path over NSE filing PDFs (ChromaDB + a local
+  ONNX MiniLM embedding model). Dormant in v2: the corpus is empty and chromadb
+  is not installed, so the Analyst runs with no filing context. See
+  [RAG (dormant)](#rag-dormant).
 - Full OAuth support for the IND Money MCP, including an in app "Connect" button
   that runs the authorization code plus PKCE flow with dynamic client
   registration.
 - Every analysis is persisted server side and reachable at a shareable URL, so a
   page refresh does not lose the results.
 - LangSmith tracing on by default for observability.
-
-## Screenshots
-
-Both shots are real runs of the pipeline against live IND Money market data,
-captured from the run pages at `/a/<run_id>`.
-
-### Human approval gate
-
-Query: `find me momentum stocks in IT sector`. All five candidates cleared the
-risk guardrails, so the run pauses at `awaiting_approval` and nothing reaches the
-paper watchlist until **Review & Approve** is clicked. Note the mix of `BUY`/`PASS`
-verdicts and `HOLD`/`FLAG` for the two names that landed in the 0.70-0.75
-confidence band.
-
-![AlphaDesk run awaiting human approval: five IT-sector momentum candidates with bull and bear theses, catalysts, key risks, and a Review and Approve action](docs/screenshots/run-it-sector.png)
-
-### Risk guardrails rejecting a run
-
-Query: `oversold pharma large-caps with a catalyst`. Every candidate came back
-under the 0.70 confidence floor, so the RiskManager rejected all five with
-`confidence_below_threshold` and the run ends without reaching the Execution
-node.
-
-![AlphaDesk run rejected by risk guardrails: five candidates all below the confidence threshold, each card showing why it was rejected](docs/screenshots/run-pharma.png)
 
 ## Architecture
 
@@ -95,7 +73,7 @@ flowchart LR
     API[REST plus SSE API]
     Graph[LangGraph Pipeline]
     Auth[OAuth Token Manager]
-    RAG[ChromaDB Retriever]
+    RAG[RAG Retriever - dormant]
     Store[In-memory run and watchlist store]
   end
 
@@ -108,7 +86,7 @@ flowchart LR
   UI -->|SSE and REST| API
   API --> Graph
   API --> Store
-  Graph --> RAG
+  Graph -.->|no filing corpus in v2| RAG
   Graph -->|tool calls| MCP
   Graph -->|LLM calls| Groq
   Auth -->|bearer token| MCP
@@ -118,7 +96,8 @@ flowchart LR
 
 The browser talks only to the FastAPI backend. The backend runs the LangGraph
 pipeline, calls the IND Money MCP for market data (authenticated by the OAuth
-manager), calls Groq for reasoning, and queries ChromaDB for filing context.
+manager), and calls Groq for reasoning. The RAG retriever is wired into the
+Analyst but dormant — see [RAG (dormant)](#rag-dormant).
 
 ## The agent pipeline
 
@@ -147,7 +126,7 @@ adds its output, and returns the state.
 | ----- | ----- | -------------- | --------------- |
 | Scanner | llama-3.1-8b-instant | Read query intent, scan movers by category and resolve named tickers | get_indian_stocks_movers, lookup_ind_keys, get_indian_stocks_details |
 | Research | llama-3.1-8b-instant | Deep dive per candidate, compile fundamentals and options notes | get_indian_stocks_details, get_indian_stocks_option_chain, get_indian_stocks_greeks_history |
-| Analyst | llama-3.3-70b-versatile | Synthesize bull and bear thesis, target, confidence, risks, catalysts | RAG retriever |
+| Analyst | llama-3.3-70b-versatile | Synthesize bull and bear thesis, target, confidence, risks, catalysts | RAG retriever (dormant, returns no context) |
 | RiskManager | llama-3.3-70b-versatile | Enforce guardrails, assign PASS, FLAG, or REJECT | pure logic on state, LLM for notes |
 | Execution | none | Stage approved stocks into the paper watchlist behind the human gate | none |
 
@@ -306,14 +285,41 @@ classDiagram
 are constrained values: action is one of buy, hold, or avoid; decision is one of
 PASS, FLAG, or REJECT.
 
+## RAG (dormant)
+
+AlphaDesk ships a retrieval path over NSE filing PDFs, but **it is unplugged as
+of v2** and the Analyst produces its reports without any filing context:
+
+- `data/nse_docs/` is empty — there is no filing corpus in the repo.
+- `chromadb`, `pypdf` and `langchain-text-splitters` are not in
+  `requirements.txt` and are not installed in the Docker image.
+- The code stays in place: `backend/rag/ingest.py` (chunk and embed PDFs) and
+  `backend/rag/retriever.py` (semantic search). The retriever degrades
+  gracefully — a missing chromadb or an un-ingested collection makes
+  `get_relevant_context()` return `[]`, so the Analyst is unaffected.
+
+Dropping it kept the image small: no `build-essential` apt layer, no
+onnxruntime download, no index baked at build time.
+
+To re-enable RAG:
+
+1. Add `chromadb`, `pypdf` and `langchain-text-splitters` back to
+   `requirements.txt` (pinned, like every other dependency).
+2. Put PDFs into `data/nse_docs/`.
+3. Run `cd backend && python -m rag.ingest` to build `data/chroma_db/`.
+4. For the Docker image, restore the `build-essential` apt layer, the
+   `COPY data/ ./data/` line, and the `RUN cd backend && python -m rag.ingest`
+   step (see `docs/SPECS/C1.md`).
+
 ## Tech stack
 
-- Backend: Python 3.11 or newer, LangGraph, FastAPI, ChromaDB, httpx, Pydantic.
+- Backend: Python 3.11 or newer, LangGraph, FastAPI, httpx, Pydantic.
 - LLM: Groq via langchain-groq by default. Set `OPENAI_BASE_URL`,
   `OPENAI_COMPATIBLE_MODEL`, and `OPENAI_API_KEY` to use an OpenAI-compatible
   endpoint instead.
 - Market data: IND Money MCP server, accessed with the `mcp` Python SDK.
-- RAG: ChromaDB with the built in ONNX MiniLM embedding function.
+- RAG: ChromaDB with the built in ONNX MiniLM embedding function — code present
+  but dormant, not installed. See [RAG (dormant)](#rag-dormant).
 - Frontend: Next.js 15, TypeScript, Tailwind CSS, shadcn/ui (new-york), lucide
   icons.
 - Observability: LangSmith.
@@ -328,7 +334,7 @@ alphadesk/
 │   ├── agents/
 │   │   ├── scanner.py          # query intent, market scan, candidate selection
 │   │   ├── research.py         # per candidate deep dive
-│   │   ├── analyst.py          # structured recommendation with RAG context
+│   │   ├── analyst.py          # structured recommendation (RAG context dormant)
 │   │   ├── risk_manager.py     # guardrail enforcement, PASS / FLAG / REJECT
 │   │   └── execution.py        # human gated paper watchlist staging
 │   ├── tools/
@@ -340,7 +346,7 @@ alphadesk/
 │   ├── graph/
 │   │   ├── state.py            # PortfolioState and nested Pydantic models
 │   │   └── graph.py            # nodes, edges, conditional routing, HiTL gate
-│   ├── rag/
+│   ├── rag/                    # dormant in v2, see "RAG (dormant)"
 │   │   ├── ingest.py           # load and chunk NSE PDFs into ChromaDB
 │   │   └── retriever.py        # semantic search over the nse_filings collection
 │   ├── api/
@@ -357,12 +363,12 @@ alphadesk/
 │   └── lib/
 │       ├── api.ts              # typed SSE and REST client
 │       └── utils.ts
-└── data/
+└── data/                       # RAG only; empty in v2 and not copied into the image
     └── nse_docs/               # PDFs for RAG ingestion
 ```
 
-The ChromaDB vector store and the OAuth token cache are written under `data/` and
-`backend/` at runtime and are git ignored.
+The OAuth token cache is written under `backend/` at runtime and is git ignored,
+as is the ChromaDB vector store under `data/` if RAG is ever re-enabled.
 
 ## API reference
 
@@ -424,11 +430,8 @@ pip install -r requirements.txt
 
 cp backend/.env.example backend/.env   # then fill in the values
 
-# optional: ingest NSE PDFs placed in data/nse_docs into ChromaDB
-cd backend
-python -m rag.ingest
-
 # run the API
+cd backend
 uvicorn api.main:app --reload --port 8000
 ```
 
@@ -521,7 +524,9 @@ in the paper watchlist. No orders are placed.
 - Run history, the paper watchlist, and stored analyses live in memory on the
   backend. They survive a browser refresh but not a backend restart. Swap the in
   memory stores for a file or database to make them durable.
-- Scanned or image only PDFs are not parsed for RAG, since extraction is text
-  based with no OCR.
+- RAG is dormant: the filing corpus is empty and chromadb is not installed, so
+  the Analyst reasons from market data alone. See [RAG (dormant)](#rag-dormant).
+  (When re-enabled, scanned or image only PDFs are still skipped — extraction is
+  text based with no OCR.)
 - The MemorySaver checkpointer is in process. Use a persistent checkpointer for a
   production deployment.
