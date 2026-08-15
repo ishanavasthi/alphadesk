@@ -452,6 +452,13 @@ class IndMoneyConnector(PortfolioConnector):
         except MCPAuthError:
             return LinkHealth.NEEDS_RELINK
 
+        if status.get("undecryptable"):
+            # A stored link the server can no longer decrypt (rotated or lost
+            # `TOKEN_ENCRYPTION_KEY`). Not REVOKED — nobody revoked anything —
+            # and emphatically not a crash: re-linking is the fix, which is
+            # exactly what NEEDS_RELINK tells the dashboard to offer.
+            return LinkHealth.NEEDS_RELINK
+
         if status.get("revoked"):
             self._revoked = True
             return LinkHealth.REVOKED

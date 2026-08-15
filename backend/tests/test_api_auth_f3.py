@@ -19,6 +19,7 @@ Three properties are pinned here and nowhere else:
 
 from __future__ import annotations
 
+import re
 from contextlib import suppress
 from decimal import Decimal
 from typing import Any, Iterator, Optional
@@ -129,6 +130,7 @@ async def test_an_anonymous_caller_learns_nothing_about_anyone(
         "expires_at": None,
         "expires_in_sec": None,
         "revoked": False,
+        "undecryptable": False,
         "user_id": None,
     }
 
@@ -337,3 +339,102 @@ async def test_the_callback_error_page_never_echoes_the_broker(
     landed = await client.get(f"/auth/callback?code=a&state={state}")
     assert "nope" not in landed.text
     assert "400" not in landed.text
+
+
+# --------------------------------------------------------------------------- #
+# The callback page renders attacker input as text, never as markup
+# --------------------------------------------------------------------------- #
+def _tags(body: str) -> list[str]:
+    """Every HTML tag in a document, in order — the page's structure."""
+    return re.findall(r"<[a-zA-Z/!][^>]*>", body)
+
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "<script>alert(1)</script>",
+        "\"><img src=x onerror=alert(1)>",
+        "</div><svg/onload=alert(1)>",
+    ],
+)
+async def test_the_callback_error_is_escaped_not_reflected(
+    client: Any, payload: str
+) -> None:
+    """Reflected XSS on the backend origin — the origin that serves this OAuth
+    callback and, in single-tenant dev, holds the session that can link a broker
+    account.
+
+    `?error=` is entirely attacker-chosen: the URL is one an attacker can hand
+    somebody, and the backend used to interpolate it into the page unescaped.
+    The sibling branch (a failed token exchange) had already been hardened to
+    stop echoing the broker; this one had not, which is exactly the shape of bug
+    per-call-site escaping produces. `_auth_html` now escapes everything.
+    """
+    response = await client.get("/auth/callback", params={"error": payload})
+    control = await client.get("/auth/callback", params={"error": "plain text"})
+
+    assert response.status_code == 200
+    body = response.text
+    assert payload not in body, "the raw payload must not survive into the page"
+    # The real question is structural: did the payload add any markup? Comparing
+    # the tag inventory against a benign render answers it without a substring
+    # blocklist, which would keep passing for whatever trick is not on the list.
+    assert _tags(body) == _tags(control.text)
+    # It is still *shown* — as text.
+    assert "&lt;" in body
+
+
+async def test_every_callback_branch_escapes(client: Any) -> None:
+    """Not just `?error=`: the escape lives in the renderer, so a future branch
+    that forgets is not a new vulnerability."""
+    hostile = "<b>x</b>"
+    for params in (
+        {"error": hostile},
+        {"code": hostile},  # missing state -> the "missing" branch
+        {"code": "x", "state": hostile},  # unknown state -> the state branch
+    ):
+        body = (await client.get("/auth/callback", params=params)).text
+        assert "<b>x</b>" not in body
+
+
+# --------------------------------------------------------------------------- #
+# The interim admin path has exactly one acceptance rule
+# --------------------------------------------------------------------------- #
+async def test_every_admin_site_goes_through_one_function(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unsetting `ALPHADESK_ADMIN_SECRET` must close **every** interim site.
+
+    That is the L1 removal story, and it only holds while there is one
+    acceptance rule. This card's review found a third site with its own inline
+    comparison, which no removal note mentioned — so the property is pinned:
+    with the secret unset, none of the three admits anyone.
+    """
+    app.dependency_overrides[connector_for_request] = lambda: StubConnector()
+    monkeypatch.delenv("ALPHADESK_ADMIN_SECRET", raising=False)
+
+    assert (await client.get("/portfolio/summary", headers=ADMIN)).status_code == 401
+    assert (await client.post("/auth/login", headers=ADMIN)).status_code == 401
+    # /auth/status never 401s — it answers for nobody instead.
+    assert (await client.get("/auth/status", headers=ADMIN)).json()["user_id"] is None
+
+
+async def test_auth_status_accepts_the_admin_header_while_the_flag_is_off(
+    client: Any
+) -> None:
+    """Ledgered, not accidental: `/auth/status` is a read, and the flag-off v1
+    page polls it with no session. It is in the L1 removal checklist with the
+    other two — see `docs/SPECS/F3.md` §5."""
+    body = (await client.get("/auth/status", headers=ADMIN)).json()
+    assert body["user_id"] == auth.LOCAL_USER_ID
+
+
+async def test_a_wrong_admin_secret_is_nobody_not_the_operator(client: Any) -> None:
+    body = (
+        await client.get(
+            "/auth/status", headers={"x-alphadesk-admin-secret": "wrong"}
+        )
+    ).json()
+    assert body["user_id"] is None
+    assert body["authenticated"] is False

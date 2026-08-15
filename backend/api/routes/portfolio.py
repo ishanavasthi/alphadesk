@@ -160,10 +160,14 @@ async def _admin_identity(supplied: Optional[str]) -> str:
 
 
 async def portfolio_identity(
-    # Declared before the session dependency on purpose: a bad token must 401
-    # before anything touches Postgres.
     authorization: Optional[str] = Header(default=None),
     x_alphadesk_admin_secret: Optional[str] = Header(default=None),
+    # `optional_session` is the *lazy* session dependency: it yields None when
+    # `DATABASE_URL` is unset and otherwise hands over a session object without
+    # connecting, so resolving it before the token costs nothing and cannot
+    # 500. (`api.deps.current_user` needs the stricter ordering — it depends on
+    # `async_session`, which raises on an unconfigured database — and gets it by
+    # depending on `verified_claims` ahead of the session.)
     session: Optional[AsyncSession] = Depends(optional_session),
 ) -> str:
     """The user these routes serve: a verified Clerk id, or the interim operator.

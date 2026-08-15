@@ -37,7 +37,10 @@ dynamic client registration. Two things changed with F3:
    (`docs/ind_money_payloads.md` §Q5), so the ``client_id``/``client_secret``
    minted for a user are stored on their link row and reused on re-link;
    a fresh registration happens only when there is no stored client, when the
-   redirect URI has changed, or when the stored client is rejected.
+   redirect URI has changed, or when the stored client is **rejected** — a
+   token-endpoint `invalid_client` clears the stored registration
+   (`AuthStore.forget_client`) so the next press of Connect re-registers
+   instead of looping through the same rejection forever.
 
 Unlink revokes: ``AuthStore.logout()`` calls the discovery document's
 ``revocation_endpoint`` for the refresh token *before* deleting the row. RFC
@@ -78,10 +81,11 @@ from typing import Any, Dict, Optional, Tuple
 import httpx
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
+from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.crypto import decrypt_optional, encrypt_optional
+from db.crypto import TokenEncryptionError, decrypt_optional, encrypt_optional
 from db.models import BrokerLink, OAuthPending, User, utcnow
 
 log = logging.getLogger(__name__)
@@ -212,6 +216,33 @@ async def ensure_user_row(session: AsyncSession, user_id: str) -> None:
     await session.commit()
 
 
+#: OAuth 2.0 error codes that mean "the *client* is the problem", not the grant
+#: (RFC 6749 §5.2). `unauthorized_client` is included because this server's
+#: exact vocabulary is unverified and both readings point at the same recovery.
+_CLIENT_ERROR_CODES = ("invalid_client", "unauthorized_client")
+
+
+def _is_invalid_client(resp: httpx.Response) -> bool:
+    """Whether a token-endpoint failure blames the registered client.
+
+    RFC 6749 puts the code in a JSON `error` field, but a 401 on the token
+    endpoint is *defined* as a client-authentication failure, so that alone
+    counts. A body that is not JSON at all falls back to a substring check
+    rather than throwing away the signal.
+    """
+    if resp.status_code == 401:
+        return True
+    if not 400 <= resp.status_code < 500:
+        return False
+    try:
+        body = resp.json()
+    except Exception:  # noqa: BLE001 - not every error body is JSON
+        return any(code in resp.text for code in _CLIENT_ERROR_CODES)
+    if isinstance(body, dict):
+        return str(body.get("error") or "") in _CLIENT_ERROR_CODES
+    return False
+
+
 def _epoch(value: Optional[datetime]) -> float:
     if value is None:
         return 0.0
@@ -238,10 +269,28 @@ _locks: Dict[Tuple[str, str], asyncio.Lock] = {}
 #: of costing a DB read + Fernet decrypt on every MCP call.
 _stores: Dict[Tuple[str, str], "AuthStore"] = {}
 
+#: Ceiling on both caches. They hold **decrypted** tokens, so an unbounded one
+#: is not merely a leak — it is a growing pile of plaintext credentials in a
+#: long-lived process, and it also keeps serving a `"local"` store that adoption
+#: has since moved out from under. On overflow both are dropped wholesale: the
+#: cost is one DB read plus a decrypt per active user, and an LRU here would be
+#: machinery guarding something already cheap and already idempotent.
+_CACHE_MAX = 1000
+
+
+def _evict_if_full() -> None:
+    if len(_stores) >= _CACHE_MAX or len(_locks) >= _CACHE_MAX:
+        # Locks go together with the stores: a lock kept for a store that no
+        # longer exists protects nothing, and one dropped while its store lives
+        # on would let two refreshes race.
+        _stores.clear()
+        _locks.clear()
+
 
 def _lock_for(key: Tuple[str, str]) -> asyncio.Lock:
     lock = _locks.get(key)
     if lock is None:
+        _evict_if_full()
         lock = asyncio.Lock()
         _locks[key] = lock
     return lock
@@ -281,6 +330,9 @@ class AuthStore:
         #: status poll report `LinkHealth.REVOKED` instead of the softer
         #: "needs relink" (the M1/S1 carry).
         self._revoked = False
+        #: Set when a link row exists but `TOKEN_ENCRYPTION_KEY` cannot read it.
+        #: Distinct from `_revoked`: nothing was revoked, we just lost the key.
+        self._undecryptable = False
 
     # ------------------------------------------------------------- factories
     @classmethod
@@ -289,6 +341,7 @@ class AuthStore:
         key = (user_id, source)
         store = _stores.get(key)
         if store is None:
+            _evict_if_full()
             store = cls(user_id, source)
             _stores[key] = store
         return store
@@ -315,6 +368,7 @@ class AuthStore:
     async def _load(self) -> None:
         """Fill this store from the DB row, then (dev only) the ambient sources."""
         local_dev = self._is_local_dev()
+        self._undecryptable = False
         self._static = (os.environ.get("IND_MONEY_MCP_TOKEN") or None) if local_dev else None
 
         row = await self._read_row()
@@ -352,15 +406,44 @@ class AuthStore:
         return result.scalars().first()
 
     def _hydrate_from_row(self, row: BrokerLink) -> None:
-        self._access = decrypt_optional(row.access_token_enc)
-        self._refresh = decrypt_optional(row.refresh_token_enc)
+        """Fill this store from the link row, tolerating an unreadable one.
+
+        A `TOKEN_ENCRYPTION_KEY` that was rotated or lost makes every stored
+        credential undecryptable. That is a real operational state — the key is
+        an env var on a Space that anyone can edit — and it used to escape as a
+        bare `TokenEncryptionError` (a `RuntimeError`) from *every* endpoint
+        that touches a link: `/auth/status`, `/auth/login`, `/auth/logout` and
+        all of `/portfolio/*` answered **500**.
+
+        A 500 is both the wrong status and the wrong story. The link is not
+        broken at the source and the server is not confused about the request:
+        we simply cannot read what we stored, and the fix is to re-link. So the
+        row is treated as **unusable but present** — `needs_relink`, never
+        `revoked` (nobody revoked anything) and never a crash.
+        """
         self._expires_at = _epoch(row.expires_at)
         self._client_id = row.client_id
-        self._client_secret = decrypt_optional(row.client_secret_enc)
         self._redirect_uri = row.redirect_uri
         self._token_url = row.token_url or self._token_url
         self._scope = row.scope
         self._revoked = row.status == "revoked"
+        try:
+            self._access = decrypt_optional(row.access_token_enc)
+            self._refresh = decrypt_optional(row.refresh_token_enc)
+            self._client_secret = decrypt_optional(row.client_secret_enc)
+        except TokenEncryptionError:
+            log.warning(
+                "broker link for %s cannot be decrypted with the current "
+                "%s; treating it as needing a re-link",
+                self.user_id,
+                "TOKEN_ENCRYPTION_KEY",
+            )
+            self._undecryptable = True
+            self._access = self._refresh = self._client_secret = None
+            self._expires_at = 0.0
+            # The stored client cannot be used without its secret, so the next
+            # login registers a fresh one rather than failing at /token.
+            self._client_id = None
 
     def _hydrate_from_file(self) -> None:
         """Read `backend/.ind_money_token.json` — **single-tenant dev only**.
@@ -412,21 +495,18 @@ class AuthStore:
         async with _session() as session:
             if session is not None:
                 await ensure_user_row(session, self.user_id)
-                values = {
-                    "user_id": self.user_id,
-                    "source": self.source,
-                    "access_token_enc": encrypt_optional(self._access),
-                    "refresh_token_enc": encrypt_optional(self._refresh),
-                    "expires_at": _as_datetime(self._expires_at),
-                    "client_id": self._client_id,
-                    "client_secret_enc": encrypt_optional(self._client_secret),
-                    "redirect_uri": self._redirect_uri,
-                    "token_url": self._token_url,
-                    "scope": self._scope,
-                    "supports_refresh": bool(self._refresh),
-                    "status": status,
-                    "last_refresh_at": utcnow(),
-                }
+                try:
+                    values = self._encrypted_values(status)
+                except TokenEncryptionError as exc:
+                    # No key at all. Refusing loudly beats writing a row we
+                    # could never read back, and beats a 500 — every caller of
+                    # this treats MCPAuthError as "not linked right now".
+                    log.error("cannot persist a broker link: %s", type(exc).__name__)
+                    raise MCPAuthError(
+                        "This server cannot store broker credentials: "
+                        "TOKEN_ENCRYPTION_KEY is not set or is not a valid "
+                        "Fernet key."
+                    ) from exc
                 stmt = pg_insert(BrokerLink.__table__).values(
                     linked_at=utcnow(), **values
                 )
@@ -440,6 +520,29 @@ class AuthStore:
 
         if self._is_local_dev():
             self._persist_file()
+
+    def _encrypted_values(self, status: str) -> Dict[str, Any]:
+        """The row's column values, with every credential encrypted.
+
+        Raises :class:`db.crypto.TokenEncryptionError` when there is no usable
+        key — which is the one condition `_persist` has to turn into something
+        other than a 500.
+        """
+        return {
+            "user_id": self.user_id,
+            "source": self.source,
+            "access_token_enc": encrypt_optional(self._access),
+            "refresh_token_enc": encrypt_optional(self._refresh),
+            "expires_at": _as_datetime(self._expires_at),
+            "client_id": self._client_id,
+            "client_secret_enc": encrypt_optional(self._client_secret),
+            "redirect_uri": self._redirect_uri,
+            "token_url": self._token_url,
+            "scope": self._scope,
+            "supports_refresh": bool(self._refresh),
+            "status": status,
+            "last_refresh_at": utcnow(),
+        }
 
     def _persist_file(self) -> None:
         """Mirror to the dev file cache. Single-tenant local only.
@@ -495,6 +598,10 @@ class AuthStore:
             self._redirect_uri = redirect_uri
         self._static = None  # real OAuth tokens now own the chain
         self._revoked = False
+        # A fresh link replaces whatever could not be decrypted, so the row is
+        # readable again — otherwise re-linking, the advertised fix, would leave
+        # the store insisting it is broken for the rest of the process.
+        self._undecryptable = False
         await self._persist()
 
     async def _invalidate(self, *, clear_client: bool = False) -> None:
@@ -525,6 +632,42 @@ class AuthStore:
         else:
             self._revoked = True
             await self._persist(status="revoked")
+
+    async def forget_client(self) -> None:
+        """Drop the stored DCR client so the next login registers a fresh one.
+
+        This is the recovery half of "reuse the registered client" (C2 §Q5).
+        Reusing a client is right until the server stops accepting it — the
+        registration was deleted, the secret was rotated, the vendor expired it
+        — and at that point every login and every refresh fails identically
+        forever, because the same dead `client_id` is loaded from the row each
+        time. Clearing it converts a permanent failure into one extra
+        registration.
+
+        Deliberately does **not** touch the tokens: a rejected *client* says
+        nothing about whether the refresh token is still good, and the caller
+        may still be mid-flow.
+        """
+        log.warning(
+            "IND Money rejected the stored OAuth client for %s; it will be "
+            "re-registered on the next login",
+            self.user_id,
+        )
+        self._client_id = None
+        self._client_secret = None
+        self._redirect_uri = None
+        async with _session() as session:
+            if session is None:
+                return
+            await session.execute(
+                sa_update(BrokerLink)
+                .where(
+                    BrokerLink.user_id == self.user_id,
+                    BrokerLink.source == self.source,
+                )
+                .values(client_id=None, client_secret_enc=None, redirect_uri=None)
+            )
+            await session.commit()
 
     async def _delete_row(self) -> None:
         async with _session() as session:
@@ -578,6 +721,7 @@ class AuthStore:
                 "expires_at": None,
                 "expires_in_sec": None,
                 "revoked": False,
+                "undecryptable": False,
                 "user_id": self.user_id,
             }
         authed = bool(self._access and self._expires_at - now > _EXPIRY_SKEW_SECONDS)
@@ -587,6 +731,7 @@ class AuthStore:
             "expires_at": self._expires_at or None,
             "expires_in_sec": int(self._expires_at - now) if self._expires_at else None,
             "revoked": self._revoked,
+            "undecryptable": self._undecryptable,
             "user_id": self.user_id,
         }
 
@@ -596,6 +741,9 @@ class AuthStore:
             "source": None,
             "expires_at": None,
             "expires_in_sec": None,
+            #: A stored link we cannot decrypt. Never `revoked` — nothing was
+            #: revoked — and never a 500, which is what it used to be.
+            "undecryptable": self._undecryptable,
             # The M1/S1 carry: a *definitive* rejection has to survive the trip
             # out of this function. Reporting it as a plain `authenticated:
             # False` is what made `link_health` answer NEEDS_RELINK forever on
@@ -617,6 +765,11 @@ class AuthStore:
         await self.ensure_loaded()
         if self._static:
             return self._describe()
+        if self._undecryptable:
+            # There is nothing to verify and nothing to refresh: the row is
+            # there and unreadable. Say so, and do not overwrite it — the
+            # operator may still restore the old key.
+            return self._logged_out(revoked=False)
         if self._access and self._expires_at - time.time() > _EXPIRY_SKEW_SECONDS:
             return self._describe()
         # Access token missing/expired — verify we can actually mint one.
@@ -673,6 +826,11 @@ class AuthStore:
         if resp.status_code != 200:
             # 4xx = the refresh token itself is bad/revoked -> definitive; the
             # caller must reconnect. 5xx = server hiccup -> transient, retryable.
+            if _is_invalid_client(resp):
+                # The *client*, not the grant, is what the server rejected —
+                # the stored registration is dead. Forget it so the next login
+                # registers a new one instead of failing the same way forever.
+                await self.forget_client()
             err_cls = MCPAuthInvalid if 400 <= resp.status_code < 500 else MCPAuthError
             raise err_cls(
                 f"IND Money token refresh failed ({resp.status_code}). "
@@ -936,6 +1094,15 @@ async def _store_pending(
                 "your user id server-side."
             )
         await ensure_user_row(session, user_id)
+        try:
+            client_secret_enc = encrypt_optional(client_secret)
+        except TokenEncryptionError as exc:
+            # Same reasoning as `_persist`: refusing in words beats a 500, and
+            # beats storing a client secret we could never read back.
+            raise MCPAuthError(
+                "This server cannot store broker credentials: "
+                "TOKEN_ENCRYPTION_KEY is not set or is not a valid Fernet key."
+            ) from exc
         session.add(
             OAuthPending(
                 state=state,
@@ -944,7 +1111,7 @@ async def _store_pending(
                 verifier=verifier,
                 redirect_uri=redirect_uri,
                 client_id=client_id,
-                client_secret_enc=encrypt_optional(client_secret),
+                client_secret_enc=client_secret_enc,
                 token_url=token_url,
                 created_at=utcnow(),
             )
@@ -986,13 +1153,23 @@ async def _consume_pending(state: str) -> dict:
             await session.commit()
         if row is None:
             raise OAuthStateError("Unknown or already-used login state.")
+        try:
+            client_secret = decrypt_optional(row[5])
+        except TokenEncryptionError as exc:
+            # The key changed between /auth/login and /auth/callback. Rare, but
+            # a 500 here would be the least useful possible answer to "I just
+            # finished logging in".
+            raise MCPAuthError(
+                "This login cannot be completed: the server's encryption key "
+                "changed while it was in flight. Start the connection again."
+            ) from exc
         pend = {
             "user_id": row[0],
             "source": row[1],
             "verifier": row[2],
             "redirect_uri": row[3],
             "client_id": row[4],
-            "client_secret": decrypt_optional(row[5]),
+            "client_secret": client_secret,
             "token_url": row[6],
         }
         created = row[7]
@@ -1030,11 +1207,21 @@ async def complete_login(code: str, state: str) -> str:
             )
     except Exception as exc:  # noqa: BLE001
         raise MCPAuthError(f"Token exchange request failed: {exc}")
+    store = AuthStore.for_user(pend["user_id"], pend["source"])
     if resp.status_code != 200:
+        if _is_invalid_client(resp):
+            # The reused client is dead at the source. Forget it here so the
+            # user's *next* press of Connect registers a new one and succeeds,
+            # instead of looping through the same rejection.
+            await store.ensure_loaded()
+            await store.forget_client()
+            raise MCPAuthError(
+                "IND Money rejected this app's stored registration. It has been "
+                "cleared — press Connect again to re-register."
+            )
         raise MCPAuthError(f"Token exchange failed ({resp.status_code}).")
     tok = resp.json()
 
-    store = AuthStore.for_user(pend["user_id"], pend["source"])
     await store.set_tokens(
         tok.get("access_token"),
         tok.get("refresh_token"),

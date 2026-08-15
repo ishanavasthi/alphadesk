@@ -19,6 +19,7 @@ on via env (LANGCHAIN_TRACING_V2); it is never disabled here.
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import os
 import secrets
@@ -221,6 +222,16 @@ async def root() -> Dict[str, str]:
 
 
 def _auth_html(message: str, ok: bool = False) -> HTMLResponse:
+    """The one page `/auth/callback` ever renders.
+
+    ``message`` is **always** HTML-escaped here rather than at the call sites.
+    One of those call sites echoed an attacker-controlled query parameter
+    (`?error=<script>…`) straight into the document — a reflected XSS on the
+    backend origin, which is the origin that serves this OAuth callback. Escaping
+    per-caller is a rule that has to be remembered every time somebody adds a
+    branch; escaping here is a rule that cannot be forgotten.
+    """
+    message = html.escape(message)
     color = "#16c784" if ok else "#e5484d"
     mark = "✓" if ok else "✕"
     return HTMLResponse(
@@ -235,31 +246,46 @@ display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
     )
 
 
+def admin_secret_accepted(x_alphadesk_admin_secret: Optional[str]) -> bool:
+    """**INTERIM (C0). The single place an admin header is ever accepted.**
+
+    Every other site that honours `x-alphadesk-admin-secret` calls this. That is
+    the point: this card's review found the acceptance logic had quietly grown a
+    *third* copy — an inline `compare_digest` in `_status_identity` that no
+    removal note mentioned — and a removal note that misses a site is how an
+    interim gate outlives the release that was supposed to delete it.
+
+    Fail-closed: an unset `ALPHADESK_ADMIN_SECRET` accepts nothing, so unsetting
+    it on the Space is by itself enough to close every one of those sites.
+
+    **The full removal checklist lives in `docs/SPECS/F3.md` §5 and must list
+    every caller of this function.** At card L1: delete this, its three callers,
+    and `frontend/lib/api.ts`'s `ADMIN_SECRET`.
+    """
+    if single_tenant_mode():
+        return True
+    expected = os.environ.get("ALPHADESK_ADMIN_SECRET") or ""
+    supplied = x_alphadesk_admin_secret or ""
+    if not expected or not supplied:
+        return False
+    return secrets.compare_digest(
+        supplied.encode("latin-1", "replace"), expected.encode("utf-8")
+    )
+
+
 def _require_admin(
     x_alphadesk_admin_secret: Optional[str] = Header(default=None),
 ) -> None:
-    """Interim C0 gate on connect/disconnect until per-user auth lands (V2 F3).
+    """INTERIM (C0) — raise 401 unless the admin header is accepted.
 
-    The IND Money link is still a process-wide singleton, so whoever can reach
-    /auth/login links their account to the whole server and whoever can reach
-    /auth/logout severs it for everyone. Until F3 makes links per-user, both are
-    operator-only actions guarded by the ``ALPHADESK_ADMIN_SECRET`` shared
-    secret (sent as the ``x-alphadesk-admin-secret`` header). Fail-closed: with
-    the secret unset, the endpoints are locked rather than open. Single-tenant
-    dev mode (``ALPHADESK_SINGLE_TENANT=1``, local only) bypasses the gate so
-    the in-app Connect button keeps working on the operator's machine.
+    Kept as the raising wrapper because FastAPI dependencies want one. Single-
+    tenant dev mode (``ALPHADESK_SINGLE_TENANT=1``, local only) passes, so the
+    in-app Connect button keeps working on the operator's machine.
     """
-    if single_tenant_mode():
-        return
-    expected = os.environ.get("ALPHADESK_ADMIN_SECRET") or ""
-    supplied = x_alphadesk_admin_secret or ""
-    if not expected or not supplied or not secrets.compare_digest(supplied, expected):
+    if not admin_secret_accepted(x_alphadesk_admin_secret):
         raise HTTPException(
             status_code=401,
-            detail=(
-                "Connecting or disconnecting IND Money is an operator-only "
-                "action on this deployment."
-            ),
+            detail="This is an operator-only action on this deployment.",
         )
 
 
@@ -294,12 +320,20 @@ async def _status_identity(
 ) -> Optional[str]:
     """Whose link status to report, or None for "nobody in particular".
 
-    Reading is softer than writing, so this one does fall back to the interim
-    admin identity — the v1 research page polls it with no session while
-    `NEXT_PUBLIC_AUTH_ENABLED` is off. What it will not do is answer for a user
-    it cannot name: an anonymous caller now gets a flat "not connected" instead
-    of a truthful readout of *someone else's* link, which is what this endpoint
-    used to hand to the whole internet.
+    **This is the third interim admin-header site, and it is deliberate.** The
+    brief made `/auth/login` and `/auth/logout` JWT-only because those *write* a
+    link, and a link made under a shared secret has no owner. `/auth/status` is
+    a read, and the v1 research page polls it with no session while
+    `NEXT_PUBLIC_AUTH_ENABLED` is off — so it accepts the admin header, reports
+    the operator's own link, and is listed in the L1 removal checklist
+    (`docs/SPECS/F3.md` §5) alongside the other two. Acceptance goes through
+    :func:`admin_secret_accepted` like everything else; there is no second copy
+    of the comparison here any more.
+
+    What it will not do is answer for a user it cannot name: an anonymous caller
+    gets a flat "not connected" instead of a truthful readout of *someone
+    else's* link, which is what this endpoint used to hand to the whole
+    internet.
 
     It registers the identity like every other authenticated entry point.
     That matters more here than it looks: a browser that has just signed in
@@ -312,11 +346,7 @@ async def _status_identity(
         if session is None:
             return str(claims["sub"])
         return await register_identity(session, claims)
-    if single_tenant_mode():
-        return LOCAL_USER_ID
-    expected = os.environ.get("ALPHADESK_ADMIN_SECRET") or ""
-    supplied = x_alphadesk_admin_secret or ""
-    if expected and supplied and secrets.compare_digest(supplied, expected):
+    if admin_secret_accepted(x_alphadesk_admin_secret):
         from services.adoption import admin_identity
 
         return await admin_identity()
@@ -335,6 +365,7 @@ async def auth_status_endpoint(
             "expires_at": None,
             "expires_in_sec": None,
             "revoked": False,
+            "undecryptable": False,
             "user_id": None,
         }
     return await auth_status(user_id)
@@ -404,6 +435,15 @@ async def analyze(body: AnalyzeRequest) -> StreamingResponse:
     Refuses with 409 when IND Money is not connected: every agent downstream of
     the Scanner is fed by the MCP, so an unauthenticated run can only produce an
     empty "0 candidates" pipeline that looks like a real (but useless) result.
+
+    **NOT per-user yet — card F4 owns this.** `/analyze` and the rest of the Lab
+    endpoints on this module are still ungated and still run on the *ambient*
+    identity (`ind_money_auth.ambient_user_id()`: the operator in production,
+    `"local"` in single-tenant dev — never "whoever linked first"). F3 stopped
+    short of them on purpose: threading a `user_id` through the graph, the
+    in-memory run registry and the paper watchlist is F4's whole job, and half
+    of it here would have been a second identity path to keep in sync. Ledgered
+    as REQUIRED in F4 and in the L1 ambient-removal checklist.
     """
     status_now = await auth_status()
     if not status_now.get("authenticated"):

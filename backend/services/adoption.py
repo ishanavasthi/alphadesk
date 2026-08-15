@@ -18,14 +18,26 @@ variable unset, adoption never runs at all.
 
 ## Where the email comes from
 
-A default Clerk session token carries **no** email claim (F2 §1), so the claim
-is checked first and the Clerk Backend API is the fallback — which needs
-``CLERK_SECRET_KEY``. Without either, adoption cannot establish who is signing
-in and therefore does not run. That is the correct failure direction: no
-adoption is a recoverable state (set the key, sign in again), a wrong adoption
-is not.
+**Only from the Clerk Backend API, and only if it is the verified primary
+address.** The token's `email` claim is used for exactly one thing: a cheap
+*negative* pre-filter. A claim that does not match the operator's address ends
+the check without a network call; a claim that *does* match proves nothing and
+still has to be confirmed.
 
-Whatever email is resolved is written back onto the ``users`` row, which is what
+That asymmetry is the whole security property. `deps.claim_email` reads whatever
+`email`-ish claim an instance's JWT template happens to put in the token, and a
+JWT template can be configured to emit an address the user typed and never
+verified. Trusting it would mean anyone who can add `operator@example.com` as an
+unverified secondary address to their own account inherits the operator's links
+and snapshots — and becomes :func:`operator_user_id`, which is the ambient and
+interim-admin identity as well. So the confirmation goes to Clerk, which is the
+only party that knows which address is primary and which is verified.
+
+The consequence is that adoption needs ``CLERK_SECRET_KEY``. Without it,
+adoption never runs — the correct failure direction: no adoption is a
+recoverable state (set the key, sign in again), a wrong adoption is not.
+
+The **verified** email is written back onto the ``users`` row, which is what
 later lets :func:`operator_user_id` answer "which Clerk id is the operator?"
 without another round-trip to Clerk.
 
@@ -41,10 +53,10 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Optional
+from typing import Any, Final, Optional
 
 import httpx
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import BrokerLink, SnapshotDay, User
@@ -88,17 +100,27 @@ def _same_email(a: Optional[str], b: Optional[str]) -> bool:
 # --------------------------------------------------------------------------- #
 # Resolving the signed-in user's verified primary email
 # --------------------------------------------------------------------------- #
-async def clerk_primary_email(user_id: str) -> Optional[str]:
-    """The user's **verified primary** email from the Clerk Backend API.
+#: Why a lookup produced no email. The distinction is not cosmetic: a
+#: *deterministic* "no" may be remembered for the process (see `_adopted`),
+#: while a *transient* one must be retried — otherwise one Clerk blip during
+#: the operator's first sign-in permanently prevents adoption.
+OK: Final = "ok"
+UNCONFIGURED: Final = "unconfigured"  # no CLERK_SECRET_KEY; free to retry
+UNAVAILABLE: Final = "unavailable"  # network / non-200; transient
+REFUSED: Final = "refused"  # Clerk answered, and the answer is no
 
-    Returns None when ``CLERK_SECRET_KEY`` is unset, when Clerk cannot be
-    reached, or when the primary address is not verified. Every one of those is
-    "we do not know who this is", and this function's only caller treats not
-    knowing as "do not adopt".
+
+async def clerk_lookup(user_id: str) -> tuple[Optional[str], str]:
+    """`(verified primary email, outcome)` from the Clerk Backend API.
+
+    The outcome is what the caller needs and a bare `None` cannot express:
+    "Clerk says this user's primary address is unverified" is a permanent no,
+    while "Clerk timed out" is a maybe, and remembering the second one as if it
+    were the first is how a transient blip turns into permanent data loss.
     """
     secret = (os.environ.get(CLERK_SECRET_ENV) or "").strip()
     if not secret:
-        return None
+        return None, UNCONFIGURED
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
@@ -107,11 +129,18 @@ async def clerk_primary_email(user_id: str) -> Optional[str]:
             )
     except Exception:  # noqa: BLE001 - Clerk being unreachable is not our caller's problem
         log.warning("adoption: could not reach the Clerk Backend API")
-        return None
+        return None, UNAVAILABLE
     if resp.status_code != 200:
         log.warning("adoption: Clerk user lookup returned %s", resp.status_code)
-        return None
-    return _primary_verified_email(resp.json())
+        # A 5xx or a rate limit is transient; a 4xx is Clerk telling us no.
+        return None, REFUSED if 400 <= resp.status_code < 500 else UNAVAILABLE
+    email = _primary_verified_email(resp.json())
+    return (email, OK) if email else (None, REFUSED)
+
+
+async def clerk_primary_email(user_id: str) -> Optional[str]:
+    """The user's verified primary email, or None. See :func:`clerk_lookup`."""
+    return (await clerk_lookup(user_id))[0]
 
 
 def _primary_verified_email(payload: Any) -> Optional[str]:
@@ -141,11 +170,24 @@ def _primary_verified_email(payload: Any) -> Optional[str]:
     return None
 
 
-async def resolve_email(user_id: str, claim_email: Optional[str]) -> Optional[str]:
-    """The signed-in user's email: the token's claim, else Clerk's own answer."""
-    if claim_email:
-        return claim_email
-    return await clerk_primary_email(user_id)
+async def resolve_operator_email(
+    user_id: str, claim_email: Optional[str], wanted: str
+) -> tuple[Optional[str], str]:
+    """Is this user the operator? `(verified email, outcome)`.
+
+    The token claim is a **negative pre-filter only**: a claim that disagrees
+    with `wanted` ends the check for free, and a claim that agrees is treated as
+    saying nothing at all. Confirmation always comes from Clerk, because a JWT
+    template can be configured to emit an address its owner never verified, and
+    an unverified secondary address is something any user can add to their own
+    account.
+    """
+    if claim_email and not _same_email(claim_email, wanted):
+        return None, REFUSED
+    email, outcome = await clerk_lookup(user_id)
+    if outcome != OK:
+        return None, outcome
+    return (email, OK) if _same_email(email, wanted) else (None, REFUSED)
 
 
 # --------------------------------------------------------------------------- #
@@ -194,20 +236,30 @@ async def maybe_adopt(
 ) -> Optional[dict[str, int]]:
     """Adopt the ``"local"`` data for ``user_id`` **iff** they are the operator.
 
-    Called once per process per user from `api.deps.current_user`. Returns None
-    when adoption is off, when this is not the operator, or when the user's
-    email could not be established — all of which are ordinary, silent outcomes
-    for every user who is not the one person named in the environment.
+    Called from `api.deps.register_identity`, so on every authenticated request
+    until this user has a settled answer. Returns None when adoption is off,
+    when this is not the operator, or when the answer could not be established —
+    ordinary, silent outcomes for everyone who is not the one person named in
+    the environment.
+
+    **Only a settled answer is remembered.** A Clerk outage or a missing
+    ``CLERK_SECRET_KEY`` leaves `_adopted` untouched, so the next request tries
+    again; caching those would let one bad minute during the operator's first
+    sign-in strand their entire snapshot history behind ``"local"`` for the life
+    of the process.
     """
     wanted = operator_email()
     if not wanted or user_id in _adopted:
         return None
 
-    email = await resolve_email(user_id, claim_email)
-    if not _same_email(email, wanted):
-        # Deliberately marked as handled: a non-operator must not cause a Clerk
-        # API lookup on every single request either.
-        _adopted.add(user_id)
+    email, outcome = await resolve_operator_email(user_id, claim_email, wanted)
+    if outcome != OK:
+        if outcome == REFUSED:
+            # Clerk answered and the answer is "not the operator". Settled, so
+            # remember it — a non-operator must not cost a Clerk lookup on every
+            # single request. `UNCONFIGURED`/`UNAVAILABLE` fall through
+            # uncached: neither is an answer about *this user*.
+            _adopted.add(user_id)
         return None
 
     await _record_email(session, user_id, email)
@@ -263,8 +315,16 @@ async def operator_user_id() -> Optional[str]:
     async with _session() as session:
         if session is None:
             return None
+        # `func.lower(...) == wanted`, not `ilike(wanted)`: LIKE treats `%` and
+        # `_` as wildcards, and `_` is legal in an email local part. With
+        # `ilike`, an `ALPHADESK_OPERATOR_EMAIL` of `ops_admin@example.com`
+        # would also match a signed-up `opsXadmin@example.com` — a stranger
+        # promoted to operator by a character nobody thought was special.
+        # `wanted` is already lowercased by `operator_email()`.
         result = await session.execute(
-            select(User.id).where(User.email.ilike(wanted)).order_by(User.created_at)
+            select(User.id)
+            .where(func.lower(User.email) == wanted)
+            .order_by(User.created_at)
         )
         found = result.scalars().first()
     _operator_id = found or False
@@ -291,10 +351,15 @@ __all__ = [
     "OPERATOR_EMAIL_ENV",
     "admin_identity",
     "adopt_local_data",
+    "OK",
+    "REFUSED",
+    "UNAVAILABLE",
+    "UNCONFIGURED",
+    "clerk_lookup",
     "clerk_primary_email",
     "maybe_adopt",
     "operator_email",
     "operator_user_id",
     "reset_adoption_cache",
-    "resolve_email",
+    "resolve_operator_email",
 ]

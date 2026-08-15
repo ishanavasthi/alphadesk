@@ -9,7 +9,7 @@ stubbed: the tokens this hands back go through real Fernet into real Postgres.
 
 from __future__ import annotations
 
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -39,11 +39,16 @@ class FakeBroker:
         self.calls: list[str] = []
         self.registrations = 0
         self.token_status = 200
+        self.token_body: dict | None = None
         self.revoke_status = 200
         self.access = "acc-1"
         self.refresh = "ref-1"
         self.expires_in = 3600
         self.last_token_form: dict[str, list[str]] = {}
+        #: Called (with no arguments) the moment `/revoke` is hit. The hook is
+        #: how an ordering test observes *when* revocation happened relative to
+        #: our own local delete — a count alone cannot tell the two orders apart.
+        self.on_revoke: Callable[[], None] | None = None
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = urlsplit(str(request.url)).path
@@ -63,6 +68,8 @@ class FakeBroker:
         if path == "/token":
             self.last_token_form = parse_qs(request.content.decode())
             if self.token_status != 200:
+                if self.token_body is not None:
+                    return httpx.Response(self.token_status, json=self.token_body)
                 return httpx.Response(self.token_status, text="nope")
             return httpx.Response(
                 200,
@@ -74,24 +81,10 @@ class FakeBroker:
                 },
             )
         if path == "/revoke":
+            if self.on_revoke is not None:
+                self.on_revoke()
             return httpx.Response(self.revoke_status, text="")
         return httpx.Response(404, text="unmapped")
-
-
-@pytest.fixture
-def broker(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeBroker]:
-    """Route every httpx call this module makes into :class:`FakeBroker`."""
-    fake = FakeBroker()
-    real_client = httpx.AsyncClient
-
-    def factory(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
-        kwargs["transport"] = httpx.MockTransport(fake.handler)
-        return real_client(*args, **kwargs)
-
-    monkeypatch.setattr(httpx, "AsyncClient", factory)
-    yield fake
-
-
 
 
 @pytest.fixture

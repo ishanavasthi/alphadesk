@@ -6,7 +6,11 @@ before identity existed is keyed on `user_id="local"`. The thing being prevented
 is the obvious cheap implementation — "give it to the first user who signs in" —
 which on a public deployment hands one stranger the operator's net worth.
 
-So the wrong-email cases here are not edge cases; they are the point.
+So the wrong-email cases here are not edge cases; they are the point. The
+sharpest one is `test_a_matching_claim_is_not_enough`: the token's `email` claim
+is whatever an instance's JWT template emits, which can be an address its owner
+typed and never verified — so a claim that *matches* the operator must still
+lose to Clerk's answer about the verified primary address.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Iterator
 
+import httpx
 import pytest
 from sqlalchemy import select, text
 
@@ -36,6 +41,66 @@ def clean_adoption(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     adoption.reset_adoption_cache()
     yield
     adoption.reset_adoption_cache()
+
+
+class FakeClerk:
+    """The Clerk Backend API's `GET /v1/users/{id}`, and nothing else.
+
+    Stubbed at the HTTP layer rather than by replacing `clerk_lookup`, so the
+    rule that actually carries the security weight — "primary, and verified" —
+    is exercised by every test here instead of being mocked away.
+    """
+
+    def __init__(self) -> None:
+        #: user_id -> (email, verified). Absent means Clerk 404s.
+        self.users: dict[str, tuple[str, bool]] = {}
+        self.status = 200
+        self.fail = False
+        self.calls = 0
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        self.calls += 1
+        if self.fail:
+            raise httpx.ConnectError("clerk is down")
+        if self.status != 200:
+            return httpx.Response(self.status, json={"errors": []})
+        user_id = str(request.url).rsplit("/", 1)[-1]
+        found = self.users.get(user_id)
+        if found is None:
+            return httpx.Response(404, json={"errors": []})
+        email, verified = found
+        return httpx.Response(
+            200,
+            json={
+                "id": user_id,
+                "primary_email_address_id": "idn_primary",
+                "email_addresses": [
+                    {
+                        "id": "idn_primary",
+                        "email_address": email,
+                        "verification": {
+                            "status": "verified" if verified else "unverified"
+                        },
+                    }
+                ],
+            },
+        )
+
+
+@pytest.fixture
+def clerk_api(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeClerk]:
+    fake = FakeClerk()
+    fake.users[OPERATOR_ID] = (OPERATOR_EMAIL, True)
+    fake.users[STRANGER_ID] = ("someone@else.com", True)
+    real_client = httpx.AsyncClient
+
+    def factory(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        kwargs["transport"] = httpx.MockTransport(fake.handler)
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    monkeypatch.setenv(adoption.CLERK_SECRET_ENV, "sk_test_not_a_real_key")
+    yield fake
 
 
 async def _seed_local(maker: Any) -> int:
@@ -88,7 +153,7 @@ async def _owner_of_days(maker: Any) -> list[str]:
 # The rule
 # --------------------------------------------------------------------------- #
 async def test_the_operator_adopts_the_local_history(
-    db_env: Any, monkeypatch: pytest.MonkeyPatch
+    db_env: Any, clerk_api: FakeClerk, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv(adoption.OPERATOR_EMAIL_ENV, OPERATOR_EMAIL)
     snapshot_id = await _seed_local(db_env)
@@ -143,12 +208,13 @@ async def test_a_different_email_never_adopts(
     assert await _owner_of_days(db_env) == [adoption.LOCAL_USER_ID]
 
 
-async def test_no_email_never_adopts(
+async def test_no_clerk_secret_never_adopts(
     db_env: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A session token with no email claim and no Clerk secret cannot identify
-    anybody, so nothing moves. Not knowing is a recoverable state; adopting on a
-    guess is not."""
+    """No `CLERK_SECRET_KEY` means nobody can be identified, so nothing moves.
+
+    Not knowing is a recoverable state (set the key, sign in again); adopting on
+    a guess is not."""
     monkeypatch.setenv(adoption.OPERATOR_EMAIL_ENV, OPERATOR_EMAIL)
     await _seed_local(db_env)
     await _users(db_env, OPERATOR_ID)
@@ -170,7 +236,7 @@ async def test_adoption_is_off_when_the_env_var_is_unset(
 
 
 async def test_email_match_ignores_case_and_whitespace(
-    db_env: Any, monkeypatch: pytest.MonkeyPatch
+    db_env: Any, clerk_api: FakeClerk, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv(adoption.OPERATOR_EMAIL_ENV, f"  {OPERATOR_EMAIL.upper()} ")
     await _seed_local(db_env)
@@ -216,6 +282,130 @@ async def test_the_signed_in_users_own_rows_are_never_overwritten(
     assert Decimal(kept) == Decimal("9999.00")
 
 
+async def test_a_matching_claim_is_not_enough(
+    db_env: Any, clerk_api: FakeClerk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**The hole this fix closes.**
+
+    A JWT template can be configured to put an address in the token that its
+    owner typed and never verified, and any user can add an unverified secondary
+    address to their own account. If a matching *claim* were sufficient, that
+    would be a self-service takeover of the operator's links and snapshots — and
+    of `operator_user_id`, which is also the ambient and interim-admin identity.
+    Clerk's answer about the verified primary address is what decides.
+    """
+    monkeypatch.setenv(adoption.OPERATOR_EMAIL_ENV, OPERATOR_EMAIL)
+    await _seed_local(db_env)
+    await _users(db_env, STRANGER_ID)
+    clerk_api.users[STRANGER_ID] = ("someone@else.com", True)
+
+    async with db_env() as session:
+        moved = await adoption.maybe_adopt(session, STRANGER_ID, OPERATOR_EMAIL)
+
+    assert moved is None
+    assert await _owner_of_days(db_env) == [adoption.LOCAL_USER_ID]
+    assert clerk_api.calls == 1, "a matching claim must still be confirmed"
+
+
+async def test_an_unverified_primary_address_never_adopts(
+    db_env: Any, clerk_api: FakeClerk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(adoption.OPERATOR_EMAIL_ENV, OPERATOR_EMAIL)
+    await _seed_local(db_env)
+    await _users(db_env, STRANGER_ID)
+    clerk_api.users[STRANGER_ID] = (OPERATOR_EMAIL, False)
+
+    async with db_env() as session:
+        assert await adoption.maybe_adopt(session, STRANGER_ID, OPERATOR_EMAIL) is None
+    assert await _owner_of_days(db_env) == [adoption.LOCAL_USER_ID]
+
+
+async def test_a_mismatched_claim_short_circuits_without_calling_clerk(
+    db_env: Any, clerk_api: FakeClerk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The claim's one legitimate job: a free *negative*."""
+    monkeypatch.setenv(adoption.OPERATOR_EMAIL_ENV, OPERATOR_EMAIL)
+    await _seed_local(db_env)
+    await _users(db_env, STRANGER_ID)
+
+    async with db_env() as session:
+        assert await adoption.maybe_adopt(session, STRANGER_ID, "no@thanks.com") is None
+    assert clerk_api.calls == 0
+
+
+async def test_a_clerk_outage_is_retried_not_remembered(
+    db_env: Any, clerk_api: FakeClerk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One bad minute must not cost the operator their history for good.
+
+    The negative cache exists so a non-operator does not trigger a Clerk lookup
+    on every request. Caching a *failure to reach Clerk* in it would mean a
+    transient blip during the operator's very first sign-in permanently prevents
+    adoption for the life of the process — and the process is a Space that can
+    stay up for weeks.
+    """
+    monkeypatch.setenv(adoption.OPERATOR_EMAIL_ENV, OPERATOR_EMAIL)
+    await _seed_local(db_env)
+    await _users(db_env, OPERATOR_ID)
+
+    clerk_api.fail = True
+    async with db_env() as session:
+        assert await adoption.maybe_adopt(session, OPERATOR_ID, None) is None
+    assert await _owner_of_days(db_env) == [adoption.LOCAL_USER_ID]
+
+    clerk_api.fail = False
+    async with db_env() as session:
+        moved = await adoption.maybe_adopt(session, OPERATOR_ID, None)
+    assert moved == {"broker_links": 1, "snapshot_days": 1}
+
+
+async def test_a_clerk_5xx_is_also_retried(
+    db_env: Any, clerk_api: FakeClerk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(adoption.OPERATOR_EMAIL_ENV, OPERATOR_EMAIL)
+    await _seed_local(db_env)
+    await _users(db_env, OPERATOR_ID)
+
+    clerk_api.status = 503
+    async with db_env() as session:
+        assert await adoption.maybe_adopt(session, OPERATOR_ID, None) is None
+
+    clerk_api.status = 200
+    async with db_env() as session:
+        assert await adoption.maybe_adopt(session, OPERATOR_ID, None)
+
+
+async def test_a_missing_secret_key_is_also_retried(
+    db_env: Any, clerk_api: FakeClerk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Setting the key without restarting the process must start working."""
+    monkeypatch.setenv(adoption.OPERATOR_EMAIL_ENV, OPERATOR_EMAIL)
+    monkeypatch.delenv(adoption.CLERK_SECRET_ENV, raising=False)
+    await _seed_local(db_env)
+    await _users(db_env, OPERATOR_ID)
+
+    async with db_env() as session:
+        assert await adoption.maybe_adopt(session, OPERATOR_ID, OPERATOR_EMAIL) is None
+
+    monkeypatch.setenv(adoption.CLERK_SECRET_ENV, "sk_test_not_a_real_key")
+    async with db_env() as session:
+        assert await adoption.maybe_adopt(session, OPERATOR_ID, OPERATOR_EMAIL)
+
+
+async def test_a_settled_no_is_remembered(
+    db_env: Any, clerk_api: FakeClerk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half: a non-operator must not cost a Clerk call per request."""
+    monkeypatch.setenv(adoption.OPERATOR_EMAIL_ENV, OPERATOR_EMAIL)
+    await _seed_local(db_env)
+    await _users(db_env, STRANGER_ID)
+
+    async with db_env() as session:
+        for _ in range(3):
+            assert await adoption.maybe_adopt(session, STRANGER_ID, None) is None
+    assert clerk_api.calls == 1
+
+
 # --------------------------------------------------------------------------- #
 # Who is the operator?
 # --------------------------------------------------------------------------- #
@@ -226,7 +416,7 @@ async def test_operator_user_id_is_none_without_the_env_var(db_env: Any) -> None
 
 
 async def test_admin_identity_follows_the_operator_after_sign_in(
-    db_env: Any, monkeypatch: pytest.MonkeyPatch
+    db_env: Any, clerk_api: FakeClerk, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Before sign-in the pre-F3 data is under `local`; after adoption it is
     under the Clerk id — and the interim admin path has to follow it, or the
@@ -260,6 +450,44 @@ async def test_a_stranger_never_becomes_the_admin_identity(
 
     assert await adoption.operator_user_id() is None
     assert await adoption.admin_identity() == adoption.LOCAL_USER_ID
+
+
+async def test_an_underscore_in_the_operator_email_is_not_a_wildcard(
+    db_env: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`ILIKE` treats `_` and `%` as wildcards, and `_` is legal in an email.
+
+    With `ilike`, an operator address of `ops_admin@example.com` also matches a
+    signed-up `opsXadmin@example.com` — and whoever owns that address becomes
+    `operator_user_id()`, which is the ambient identity *and* the identity every
+    interim admin-header request acts as.
+    """
+    monkeypatch.setenv(adoption.OPERATOR_EMAIL_ENV, "ops_admin@example.com")
+    await _users(db_env, STRANGER_ID)
+    async with db_env() as session:
+        await session.execute(
+            text("UPDATE users SET email = :e WHERE id = :u"),
+            {"e": "opsXadmin@example.com", "u": STRANGER_ID},
+        )
+        await session.commit()
+
+    assert await adoption.operator_user_id() is None
+    assert await adoption.admin_identity() == adoption.LOCAL_USER_ID
+
+
+async def test_a_percent_in_the_operator_email_is_not_a_wildcard(
+    db_env: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(adoption.OPERATOR_EMAIL_ENV, "%@example.com")
+    await _users(db_env, STRANGER_ID)
+    async with db_env() as session:
+        await session.execute(
+            text("UPDATE users SET email = :e WHERE id = :u"),
+            {"e": "anybody@example.com", "u": STRANGER_ID},
+        )
+        await session.commit()
+
+    assert await adoption.operator_user_id() is None
 
 
 # --------------------------------------------------------------------------- #

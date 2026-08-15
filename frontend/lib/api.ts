@@ -240,6 +240,12 @@ export interface AuthStatus {
   source?: string | null;
   expires_at?: number | null;
   expires_in_sec?: number | null;
+  /** The source definitively rejected the stored credential — re-link required. */
+  revoked?: boolean;
+  /** A stored link the server can no longer decrypt (the encryption key moved). */
+  undecryptable?: boolean;
+  /** Whose status this is, or null when the caller could not be identified. */
+  user_id?: string | null;
 }
 
 /**

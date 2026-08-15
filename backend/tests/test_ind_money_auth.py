@@ -25,6 +25,8 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from sqlalchemy import select, text
 
+from cryptography.fernet import Fernet
+
 from db.crypto import decrypt
 from db.models import BrokerLink, OAuthPending, utcnow
 from tests.ind_oauth_stub import DISCOVERY, ISSUER, FakeBroker, broker  # noqa: F401
@@ -284,12 +286,35 @@ async def test_concurrent_calls_for_one_user_refresh_once(
 async def test_logout_revokes_upstream_before_deleting(
     db_env: Any, broker: FakeBroker
 ) -> None:
+    """**Ordering**, not just "both happened".
+
+    The first version of this test asserted a revoke call and an absent row,
+    which is satisfied just as well by deleting first and revoking after — and
+    "we deleted our copy" is not "your access is gone". So the two events are
+    recorded on one list: the broker hook fires when `/revoke` is hit, and the
+    local invalidation is wrapped to record itself. Moving `_invalidate` above
+    `revoke_token` in `AuthStore.logout` flips the list and fails here.
+    """
     await _link(USER_A)
     broker.calls.clear()
 
-    result = await auth.logout(USER_A)
+    order: list[str] = []
+    store = auth.AuthStore.for_user(USER_A)
+    await store.ensure_loaded()
+    broker.on_revoke = lambda: order.append("revoke")
+    real_invalidate = store._invalidate
 
-    assert "/revoke" in broker.calls, "the grant must be killed at the source"
+    async def recording_invalidate(**kwargs: Any) -> None:
+        order.append("delete")
+        await real_invalidate(**kwargs)
+
+    store._invalidate = recording_invalidate  # type: ignore[method-assign]
+
+    result = await store.logout()
+
+    assert order == ["revoke", "delete"], (
+        "the grant must be killed at the source before the local row goes"
+    )
     assert result["revoked_upstream"] is True
     assert await _row(db_env, USER_A) is None
 
@@ -463,3 +488,179 @@ async def test_a_db_row_wins_over_the_dev_file(
     await _link(auth.LOCAL_USER_ID)
     auth.reset_auth_stores()
     assert await auth.get_access_token(auth.LOCAL_USER_ID) == "fresh-from-db"
+
+
+# --------------------------------------------------------------------------- #
+# A link row the server can no longer decrypt
+# --------------------------------------------------------------------------- #
+async def test_a_rotated_encryption_key_is_needs_relink_not_a_500(
+    db_env: Any, broker: FakeBroker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`TOKEN_ENCRYPTION_KEY` is an env var on a Space anyone can edit.
+
+    Rotating or losing it makes every stored credential unreadable — a real
+    operational state, and one that used to escape as a bare `RuntimeError` out
+    of `/auth/status`, `/auth/login`, `/auth/logout` and all of `/portfolio/*`,
+    i.e. a 500. It is not a 500: the link is intact at the source and the
+    request is fine, we simply cannot read what we stored. Re-linking fixes it.
+    """
+    await _link(USER_A)
+    auth.reset_auth_stores()
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
+
+    status = await auth.auth_status(USER_A)
+
+    assert status["authenticated"] is False
+    assert status["undecryptable"] is True
+    assert status["revoked"] is False, "nobody revoked anything"
+    # And the row is left alone, so restoring the old key restores the link.
+    assert await _row(db_env, USER_A) is not None
+
+
+async def test_an_undecryptable_link_reports_needs_relink(
+    db_env: Any, broker: FakeBroker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from portfolio.connectors import IndMoneyConnector
+    from portfolio.models import LinkHealth
+
+    await _link(USER_A)
+    auth.reset_auth_stores()
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
+
+    async def _unused_transport(_tool: str, _args: Any) -> Any:  # pragma: no cover
+        raise AssertionError("link_health must not make a source call")
+
+    # An explicit transport keeps `_default_transport` — and its lazy import of
+    # the MCP client, which cannot be imported while `httpx.AsyncClient` is
+    # monkeypatched — out of this test. The auth store is still the real one.
+    connector = IndMoneyConnector(user_id=USER_A, transport=_unused_transport)
+    assert await connector.link_health(USER_A) is LinkHealth.NEEDS_RELINK
+
+
+async def test_relinking_repairs_an_undecryptable_row(
+    db_env: Any, broker: FakeBroker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The advertised fix has to actually work."""
+    await _link(USER_A)
+    auth.reset_auth_stores()
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    assert (await auth.auth_status(USER_A))["authenticated"] is False
+
+    broker.access = "fresh-after-relink"
+    await _link(USER_A)
+    assert (await auth.auth_status(USER_A))["authenticated"] is True
+    assert await auth.get_access_token(USER_A) == "fresh-after-relink"
+
+
+async def test_logout_works_on_an_undecryptable_row(
+    db_env: Any, broker: FakeBroker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unlinking must not need the key that was lost."""
+    await _link(USER_A)
+    auth.reset_auth_stores()
+    monkeypatch.setenv("TOKEN_ENCRYPTION_KEY", Fernet.generate_key().decode())
+
+    result = await auth.logout(USER_A)
+
+    assert result["authenticated"] is False
+    assert await _row(db_env, USER_A) is None
+
+
+async def test_no_encryption_key_is_reported_not_crashed(
+    db_env: Any, broker: FakeBroker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A server with no key at all must refuse to link, in words.
+
+    It refuses at `/auth/login` — the earliest point, because the pending row
+    already carries an encrypted client secret — rather than after the user has
+    been round-tripped through the broker and spent a one-use code.
+    """
+    monkeypatch.delenv("TOKEN_ENCRYPTION_KEY", raising=False)
+
+    with pytest.raises(auth.MCPAuthError) as excinfo:
+        await auth.begin_login(USER_A, REDIRECT)
+    assert "TOKEN_ENCRYPTION_KEY" in str(excinfo.value)
+    assert await _row(db_env, USER_A) is None
+
+
+# --------------------------------------------------------------------------- #
+# A stored client the server has stopped accepting
+# --------------------------------------------------------------------------- #
+async def test_a_rejected_client_is_forgotten_and_re_registered(
+    db_env: Any, broker: FakeBroker
+) -> None:
+    """The recovery half of client reuse — and the live failure mode.
+
+    Reusing a registered client is right until the vendor stops accepting it.
+    Without this, the same dead `client_id` is loaded from the row on every
+    attempt and every login fails identically, forever, with no way out but
+    editing the database.
+    """
+    await _link(USER_A)
+    assert broker.registrations == 1
+
+    broker.token_status = 401
+    broker.token_body = {"error": "invalid_client"}
+    url = await auth.begin_login(USER_A, REDIRECT)
+    state = parse_qs(urlsplit(url).query)["state"][0]
+    with pytest.raises(auth.MCPAuthError):
+        await auth.complete_login("code-2", state)
+
+    row = await _row(db_env, USER_A)
+    assert row is not None and row.client_id is None, "the dead client is cleared"
+
+    # And the next attempt registers a new one and succeeds.
+    broker.token_status = 200
+    broker.token_body = None
+    await _link(USER_A)
+    assert broker.registrations == 2
+    assert (await auth.auth_status(USER_A))["authenticated"] is True
+
+
+async def test_a_rejected_client_on_refresh_is_forgotten_too(
+    db_env: Any, broker: FakeBroker
+) -> None:
+    await _link(USER_A)
+    store = auth.AuthStore.for_user(USER_A)
+    store._expires_at = 0.0
+    broker.token_status = 400
+    broker.token_body = {"error": "invalid_client"}
+
+    with pytest.raises(auth.MCPAuthInvalid):
+        await store.get_token()
+
+    row = await _row(db_env, USER_A)
+    assert row is not None and row.client_id is None
+
+
+async def test_a_bad_grant_does_not_forget_the_client(
+    db_env: Any, broker: FakeBroker
+) -> None:
+    """`invalid_grant` is about the token, not the registration.
+
+    Clearing the client here would throw away a perfectly good registration on
+    the most ordinary failure there is — an expired refresh token.
+    """
+    await _link(USER_A)
+    store = auth.AuthStore.for_user(USER_A)
+    store._expires_at = 0.0
+    broker.token_status = 400
+    broker.token_body = {"error": "invalid_grant"}
+
+    with pytest.raises(auth.MCPAuthInvalid):
+        await store.get_token()
+
+    row = await _row(db_env, USER_A)
+    assert row is not None and row.client_id == "cli-1"
+
+
+# --------------------------------------------------------------------------- #
+# Cache bounds
+# --------------------------------------------------------------------------- #
+async def test_the_store_cache_is_bounded(db_env: Any) -> None:
+    """Both caches hold **decrypted** tokens, so unbounded growth is a growing
+    pile of plaintext credentials in a process that can stay up for weeks."""
+    for index in range(auth._CACHE_MAX + 5):
+        auth.AuthStore.for_user(f"user_{index}")
+    assert len(auth._stores) <= auth._CACHE_MAX
+    assert len(auth._locks) <= auth._CACHE_MAX
