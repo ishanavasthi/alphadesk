@@ -11,7 +11,11 @@ before touching anything.
 | `TESTING/<card>.md` | Per card: how to run its tests, what they cover, how to verify by hand. |
 | `design/` | D0 dashboard design bake-off: the 4–5 demos, `DECISION.md` (the locked design), `rejected/` (the record of what lost). |
 | `ind_money_payloads.md` | C2 data-spike findings (created by C2; answers the five payload questions + go/no-go). |
-| `screenshots/` | README screenshots. Kept out of the HF deploy snapshot — see STATUS.md deploy notes. |
+
+**No binaries in this repo.** C1 removed `docs/screenshots/` because Hugging
+Face's binary policy rejected the PNGs, which forced every deploy through a
+`space-deploy` snapshot branch. Keep screenshots and other binary assets out of
+git so `main` pushes straight to the Space.
 
 **The bar for SPECS/TESTING:** an agent in a fresh session with zero
 conversation history can pick up, debug, extend, and test the work from these
