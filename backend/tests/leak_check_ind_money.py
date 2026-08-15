@@ -55,11 +55,25 @@ CAPTURE_HARNESS_TOKENS = {"structuredContent", "textContent", "ExceptionGroup"}
 #                                  purpose.
 #   probe_unauth_list_tools.json — an exception type and message from a call that
 #                                  was rejected before returning any data.
+#   _capture_index.json          — the harness's own manifest: one row per call
+#                                  with the file name, tool name, arguments and a
+#                                  shape summary (field names, JSON types, row
+#                                  counts). It holds no leaf value at all, and
+#                                  its type vocabulary ("float", "str") is the
+#                                  same vocabulary the payload doc is written in.
 SCHEMA_ONLY_FILES = {
     "tool_inventory.json",
     "probe_dcr.json",
     "probe_unauth_list_tools.json",
+    "_capture_index.json",
 }
+
+# Directories scanned in full, not just where a file happens to be staged.
+# `backend/tests/` rather than `backend/tests/fixtures/ind_money/` on purpose:
+# the checker's own source, and the fixture tests, are as capable of quoting a
+# real value as a fixture is — and this script quoting one is the case the
+# narrower root could never catch.
+SCAN_ROOTS = ("docs/", "backend/tests/")
 
 MIN_STRING_LEN = 4
 # Small integers (counts, flags, row indices) are not account data.
@@ -113,7 +127,12 @@ def harvest_captures(capture_dir: str):
             # Everything in here is publishable schema: seed the allowlist with
             # its keys, tool names and enum members.
             walk(doc, on_key=allowlist.add)
-            for tool in doc.get("tools", []):
+            # The inventory has been captured both as a bare list of tools and
+            # wrapped as {"tools": [...]}; accept either rather than crashing.
+            tools = doc.get("tools", []) if isinstance(doc, dict) else doc
+            for tool in tools if isinstance(tools, list) else []:
+                if not isinstance(tool, dict):
+                    continue
                 allowlist.add(tool.get("name", ""))
                 props = (tool.get("inputSchema") or {}).get("properties", {})
                 for spec in props.values():
@@ -155,6 +174,15 @@ def harvest_captures(capture_dir: str):
 # ---------------------------------------------------------------------------
 
 def staged_files(repo_root: str, explicit: list[str]) -> list[str]:
+    """Everything a capture session could have contaminated.
+
+    Two sources, unioned. **Every staged path**, wherever it lives — a value
+    pasted into an application file must not escape the check because it sits
+    outside a known directory. Plus **every tracked file under SCAN_ROOTS**,
+    which covers files committed in an earlier round — including this script.
+    An earlier version scanned only `docs/` and the fixtures directory, so a
+    capture value quoted in the scanner's own comments was invisible to it.
+    """
     if explicit:
         return explicit
     out = subprocess.run(
@@ -166,11 +194,10 @@ def staged_files(repo_root: str, explicit: list[str]) -> list[str]:
         capture_output=True, text=True, check=True,
     ).stdout.split()
     paths = []
-    for rel in sorted(set(out) | set(tracked)):
-        if rel.startswith("docs/") or rel.startswith("backend/tests/fixtures/ind_money/"):
-            full = os.path.join(repo_root, rel)
-            if os.path.isfile(full):
-                paths.append(full)
+    for rel in sorted(set(out) | {t for t in tracked if t.startswith(SCAN_ROOTS)}):
+        full = os.path.join(repo_root, rel)
+        if os.path.isfile(full):
+            paths.append(full)
     return paths
 
 
@@ -272,7 +299,8 @@ def main() -> int:
                         help="plant a real capture value in a temp file and prove the "
                              "check flags it, so a PASS cannot be vacuous")
     parser.add_argument("files", nargs="*",
-                        help="explicit files to scan (default: docs/ + the ind_money fixtures)")
+                        help="explicit files to scan (default: every staged file, "
+                             "plus every tracked file under docs/ and backend/tests/)")
     args = parser.parse_args()
 
     repo_root = args.repo_root or subprocess.run(
