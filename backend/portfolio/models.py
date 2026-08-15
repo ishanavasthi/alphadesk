@@ -153,9 +153,14 @@ def to_decimal(value: Any) -> Optional[Decimal]:
         if not text:
             return None
         try:
-            return Decimal(text)
+            parsed = Decimal(text)
         except InvalidOperation as exc:
             raise ValueError(f"not a number: {value!r}") from exc
+        if not parsed.is_finite():
+            # NaN and ±Infinity parse happily and then poison every sum they
+            # touch. A money field is never either.
+            raise ValueError(f"not a finite number: {value!r}")
+        return parsed
     raise ValueError(f"not a number: {value!r}")
 
 

@@ -65,6 +65,15 @@ def _load(directory: Path, name: str) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _decimal_at(path: str, value: Any) -> Optional[Decimal]:
+    """`to_decimal` with a typed failure, so a malformed demo file degrades the
+    same way a malformed vendor payload does."""
+    try:
+        return to_decimal(value)
+    except (ValueError, TypeError, ArithmeticError) as exc:
+        raise PayloadShapeError(f"demo fixture: {path} is not a usable number") from exc
+
+
 class StubConnector(PortfolioConnector):
     """Serves an invented portfolio, with no network and no credential.
 
@@ -97,16 +106,18 @@ class StubConnector(PortfolioConnector):
     # -------------------------------------------------------------- interface
     async def fetch_snapshot(self, user_id: str) -> PortfolioSnapshot:
         doc = _load(self._dir_for(user_id), "snapshot.json")
-        net_worth = to_decimal(doc.get("net_worth"))
+        net_worth = _decimal_at("snapshot.net_worth", doc.get("net_worth"))
         if net_worth is None:
             raise PayloadShapeError("demo snapshot has no net_worth")
         return PortfolioSnapshot(
             source=self.source,
             as_of=self._clock(),
             net_worth=net_worth,
-            gross_value=to_decimal(doc.get("gross_value")),
-            invested_total=to_decimal(doc.get("invested_total")),
-            liabilities_total=to_decimal(doc.get("liabilities_total")),
+            gross_value=_decimal_at("snapshot.gross_value", doc.get("gross_value")),
+            invested_total=_decimal_at("snapshot.invested_total", doc.get("invested_total")),
+            liabilities_total=_decimal_at(
+                "snapshot.liabilities_total", doc.get("liabilities_total")
+            ),
             by_asset_type=_slices(doc.get("by_asset_type")),
             by_asset_class=_slices(doc.get("by_asset_class")),
             by_sector=_slices(doc.get("by_sector")),
@@ -158,7 +169,7 @@ class StubConnector(PortfolioConnector):
                         external_id=str(row["external_id"]),
                         kind=kind,
                         name=row.get("name"),
-                        amount=to_decimal(row.get("amount")),
+                        amount=_decimal_at(f"sips.{kind.value}.amount", row.get("amount")),
                         frequency=row.get("frequency"),
                         next_execution_at=_parse(row.get("next_execution_at")),
                         status=row.get("status"),
@@ -176,15 +187,16 @@ class StubConnector(PortfolioConnector):
 
     # ---------------------------------------------------------------- mapping
     def _holding(self, row: dict, as_of: datetime) -> Holding:
-        current_value = to_decimal(row.get("current_value"))
+        at = f"holdings.{row.get('external_id')}"
+        current_value = _decimal_at(f"{at}.current_value", row.get("current_value"))
         if current_value is None:
             raise PayloadShapeError(f"demo holding {row.get('external_id')!r} has no value")
 
-        invested = to_decimal(row.get("invested_amount"))
+        invested = _decimal_at(f"{at}.invested_amount", row.get("invested_amount"))
         if invested == 0:
             invested = None  # same rule as any source: 0 means unknown
 
-        units = to_decimal(row.get("units"))
+        units = _decimal_at(f"{at}.units", row.get("units"))
         pnl, pnl_pct = derive_pnl(current_value, invested)
         avg_cost = (
             (invested / units).quantize(Decimal("0.0001"))
@@ -204,7 +216,7 @@ class StubConnector(PortfolioConnector):
             units=units,
             avg_cost=avg_cost,
             invested_amount=invested,
-            current_price=to_decimal(row.get("current_price")),
+            current_price=_decimal_at(f"{at}.current_price", row.get("current_price")),
             current_value=current_value,
             pnl=pnl,
             pnl_pct=pnl_pct,
@@ -216,10 +228,11 @@ class StubConnector(PortfolioConnector):
 def _slices(rows: Any) -> list[AllocationSlice]:
     out: list[AllocationSlice] = []
     for row in rows or []:
-        current_value = to_decimal(row.get("current_value"))
+        at = f"allocation.{row.get('label')}"
+        current_value = _decimal_at(f"{at}.current_value", row.get("current_value"))
         if current_value is None:
             raise PayloadShapeError(f"demo allocation row {row.get('label')!r} has no value")
-        invested = to_decimal(row.get("invested_amount"))
+        invested = _decimal_at(f"{at}.invested_amount", row.get("invested_amount"))
         if invested == 0:
             invested = None
         pnl, pnl_pct = derive_pnl(current_value, invested)
@@ -233,7 +246,7 @@ def _slices(rows: Any) -> list[AllocationSlice]:
                 current_value=current_value,
                 pnl=pnl,
                 pnl_pct=pnl_pct,
-                weight_pct=to_decimal(row.get("weight_pct")),
+                weight_pct=_decimal_at(f"{at}.weight_pct", row.get("weight_pct")),
                 raw=row,
             )
         )

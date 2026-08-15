@@ -11,7 +11,7 @@
     {
       "external_id": "DEMO-SIP-MF-0002",
       "name": "Demo Balanced Advantage Fund",
-      "amount": 5000,
+      "amount": 5125,
       "frequency": "monthly",
       "next_execution_at": "2099-01-12T00:00:00+05:30",
       "status": "paused"
