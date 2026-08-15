@@ -12,10 +12,18 @@ Two parts:
    backing the Claude Code login.
 
 Credential sources for the token lifecycle, in priority order:
-  1. ``IND_MONEY_MCP_TOKEN`` env — static bearer (no refresh).
+  1. ``IND_MONEY_MCP_TOKEN`` env — static bearer (no refresh). *Single-tenant only.*
   2. ``backend/.ind_money_token.json`` cache (written after each refresh / login).
-  3. ``IND_MONEY_OAUTH_*`` env (CLIENT_ID / CLIENT_SECRET / REFRESH_TOKEN / TOKEN_URL / SCOPE).
+  3. ``IND_MONEY_OAUTH_*`` env (CLIENT_ID / CLIENT_SECRET / REFRESH_TOKEN). *Single-tenant only.*
   4. The Claude Code credential store (~/.claude/.credentials.json, mcpOAuth indmoney).
+     *Single-tenant only.*
+
+Sources 1, 3 and 4 are ambient credentials belonging to whoever operates the
+process, so they are only read when ``ALPHADESK_SINGLE_TENANT`` is set (the
+operator's own machine). On a shared deployment they must stay off: reading them
+would hand the operator's credential store to every visitor. The cache file (2)
+stays active everywhere — it is written by the in-app Connect flow, which
+``api.main`` gates behind the admin secret until per-user auth lands (V2 F3).
 """
 
 from __future__ import annotations
@@ -39,6 +47,17 @@ _DEFAULT_TOKEN_URL = "https://mcp.indmoney.com/token"
 _CLAUDE_PREFIX = "indmoney"
 _RESOURCE = "https://mcp.indmoney.com/"
 _SCOPE = os.environ.get("IND_MONEY_OAUTH_SCOPE", "portfolio:read")
+
+
+def single_tenant_mode() -> bool:
+    """Whether this process runs in single-tenant (operator-owned) mode.
+
+    Set ``ALPHADESK_SINGLE_TENANT=1`` for local development only. It enables the
+    ambient credential fallbacks (env vars, the Claude Code store) and bypasses
+    the admin-secret gate on /auth/login and /auth/logout. It must stay unset in
+    every deployed environment — see V2_PLAN.md, card C0.
+    """
+    return os.environ.get("ALPHADESK_SINGLE_TENANT", "").strip().lower() in {"1", "true", "yes"}
 
 
 class MCPAuthError(Exception):
@@ -79,7 +98,13 @@ class _Auth:
         self._static: Optional[str] = None
 
     def _load(self) -> None:
-        self._static = os.environ.get("IND_MONEY_MCP_TOKEN") or None
+        # Ambient credential sources (env bearer, IND_MONEY_OAUTH_* creds, the
+        # Claude Code store) belong to the process operator, not to whoever is
+        # calling the API — on a shared deployment they would authenticate every
+        # visitor as the operator. Only the login-flow cache file and non-secret
+        # config (token URL, scope) load outside single-tenant mode.
+        single = single_tenant_mode()
+        self._static = (os.environ.get("IND_MONEY_MCP_TOKEN") or None) if single else None
 
         if _CACHE_FILE.exists():
             try:
@@ -96,12 +121,14 @@ class _Auth:
 
         self._token_url = os.environ.get("IND_MONEY_OAUTH_TOKEN_URL", self._token_url)
         self._scope = self._scope or os.environ.get("IND_MONEY_OAUTH_SCOPE")
-        self._client_id = self._client_id or os.environ.get("IND_MONEY_OAUTH_CLIENT_ID")
-        self._client_secret = self._client_secret or os.environ.get("IND_MONEY_OAUTH_CLIENT_SECRET")
-        self._refresh = self._refresh or os.environ.get("IND_MONEY_OAUTH_REFRESH_TOKEN")
 
-        if not self._refresh and _CLAUDE_CREDS.exists():
-            self._seed_from_claude()
+        if single:
+            self._client_id = self._client_id or os.environ.get("IND_MONEY_OAUTH_CLIENT_ID")
+            self._client_secret = self._client_secret or os.environ.get("IND_MONEY_OAUTH_CLIENT_SECRET")
+            self._refresh = self._refresh or os.environ.get("IND_MONEY_OAUTH_REFRESH_TOKEN")
+
+            if not self._refresh and _CLAUDE_CREDS.exists():
+                self._seed_from_claude()
 
         self._loaded = True
 
@@ -199,8 +226,10 @@ class _Auth:
         Clears the in-memory tokens + client registration and removes the cache
         file, then keeps ``_loaded`` set so the killed credentials are not
         re-seeded from env / the Claude Code store until the next reconnect.
-        Note: a process restart will re-seed from ``IND_MONEY_OAUTH_*`` env vars
-        if those are set, since they are an explicit durable credential source.
+        Note: in single-tenant mode a process restart will re-seed from
+        ``IND_MONEY_OAUTH_*`` env vars if those are set, since they are an
+        explicit durable credential source; outside single-tenant mode the env
+        fallbacks are never read.
         """
         self.ensure_loaded()
         self._invalidate(clear_client=True)

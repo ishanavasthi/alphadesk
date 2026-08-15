@@ -20,12 +20,13 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -42,6 +43,7 @@ from tools.ind_money_auth import (  # noqa: E402
     begin_login,
     complete_login,
     logout,
+    single_tenant_mode,
 )
 
 # Where IND Money redirects after login. Must be reachable in the browser and
@@ -211,13 +213,41 @@ display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
     )
 
 
+def _require_admin(
+    x_alphadesk_admin_secret: Optional[str] = Header(default=None),
+) -> None:
+    """Interim C0 gate on connect/disconnect until per-user auth lands (V2 F3).
+
+    The IND Money link is still a process-wide singleton, so whoever can reach
+    /auth/login links their account to the whole server and whoever can reach
+    /auth/logout severs it for everyone. Until F3 makes links per-user, both are
+    operator-only actions guarded by the ``ALPHADESK_ADMIN_SECRET`` shared
+    secret (sent as the ``x-alphadesk-admin-secret`` header). Fail-closed: with
+    the secret unset, the endpoints are locked rather than open. Single-tenant
+    dev mode (``ALPHADESK_SINGLE_TENANT=1``, local only) bypasses the gate so
+    the in-app Connect button keeps working on the operator's machine.
+    """
+    if single_tenant_mode():
+        return
+    expected = os.environ.get("ALPHADESK_ADMIN_SECRET") or ""
+    supplied = x_alphadesk_admin_secret or ""
+    if not expected or not supplied or not secrets.compare_digest(supplied, expected):
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Connecting or disconnecting IND Money is an operator-only "
+                "action on this deployment."
+            ),
+        )
+
+
 @app.get("/auth/status")
 async def auth_status_endpoint() -> Dict[str, object]:
     """Whether the backend is authenticated with the IND Money MCP."""
     return await auth_status()
 
 
-@app.post("/auth/login")
+@app.post("/auth/login", dependencies=[Depends(_require_admin)])
 async def auth_login_endpoint() -> Dict[str, str]:
     """Begin an OAuth login; returns the authorization URL to open in a browser."""
     try:
@@ -227,7 +257,7 @@ async def auth_login_endpoint() -> Dict[str, str]:
     return {"authorization_url": url}
 
 
-@app.post("/auth/logout")
+@app.post("/auth/logout", dependencies=[Depends(_require_admin)])
 async def auth_logout_endpoint() -> Dict[str, object]:
     """Disconnect from IND Money — forget the stored tokens for this backend."""
     return await logout()
