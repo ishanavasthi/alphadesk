@@ -86,3 +86,21 @@ bottom of each section. (No secrets in this file — it is committed.)
 
 See `docs/STATUS.md` (always current) and the per-card `docs/SPECS/` +
 `docs/TESTING/`.
+
+## F3 morning items (per-user auth is merged & deployed)
+
+- **Real IND Money login is the last unverified end-to-end.** Ask me for a
+  login URL when you're up. It proves the 4 things a mock couldn't: the
+  vendor accepting a **reused** client, the **two-scope** (`portfolio:read
+  market:read`) grant, the **revocation** endpoint accepting our unlink call,
+  and **link durability across a Space restart**. Until then per-user linking
+  is proven only against mocked IND endpoints (Clerk side is fully live).
+- **`_is_invalid_client` is an unverified guess** at IND's DCR error
+  vocabulary (RFC-6749 default; C2 never provoked a rejected registration).
+  If the login above hits a dead stored client and does NOT self-heal, that
+  predicate is the fix — it fails visibly (logs) and recovery is one
+  `/auth/logout`.
+- **`ALPHADESK_OPERATOR_EMAIL` is set to `hiavasthi@gmail.com`** (your Clerk
+  login email) on the Space + locally — this is what lets your first sign-in
+  adopt the pre-F3 `local` snapshot history. Confirm it's the address you'll
+  sign in with; if not, tell me and I'll change it before you sign in.
