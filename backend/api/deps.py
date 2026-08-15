@@ -498,6 +498,19 @@ async def current_user(
         async def handler(user_id: Annotated[str, Depends(current_user)]):
             ...
     """
+    return await register_identity(session, claims)
+
+
+async def register_identity(session: AsyncSession, claims: dict[str, Any]) -> str:
+    """Record that this verified user exists, and return their id.
+
+    Every endpoint that establishes an identity goes through here — the four in
+    `api.main` and `api.routes.portfolio` included — so "a user has been seen"
+    means the same thing everywhere. It was one endpoint's private business
+    until `/auth/status` quietly became the *first* call a freshly signed-in
+    browser makes, and skipping it there meant adoption never ran for the one
+    person it exists for.
+    """
     user_id: str = claims["sub"]
     email = claim_email(claims)
     await ensure_user(session, user_id, email)
@@ -541,6 +554,7 @@ __all__ = [
     "current_user",
     "ensure_user",
     "get_jwk_client",
+    "register_identity",
     "require_authorized_parties",
     "reset_jwk_clients",
     "reset_seen_users",

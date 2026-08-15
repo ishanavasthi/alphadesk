@@ -41,10 +41,8 @@ from api.routes.portfolio import router as portfolio_router  # noqa: E402
 from graph.graph import alphaDesk_graph, resume_after_approval  # noqa: E402
 from graph.state import PortfolioState  # noqa: E402
 from api.deps import (  # noqa: E402
-    _maybe_adopt,
     bearer_token,
-    claim_email,
-    ensure_user,
+    register_identity,
     verify_token,
 )
 from services.snapshots import optional_session  # noqa: E402
@@ -284,17 +282,15 @@ async def _link_identity(
     if not authorization and single_tenant_mode():
         return LOCAL_USER_ID
     claims = await asyncio.to_thread(verify_token, bearer_token(authorization))
-    user_id: str = claims["sub"]
-    if session is not None:
-        email = claim_email(claims)
-        await ensure_user(session, user_id, email)
-        await _maybe_adopt(session, user_id, email)
-    return user_id
+    if session is None:
+        return str(claims["sub"])
+    return await register_identity(session, claims)
 
 
 async def _status_identity(
     authorization: Optional[str] = Header(default=None),
     x_alphadesk_admin_secret: Optional[str] = Header(default=None),
+    session: Optional[Any] = Depends(optional_session),
 ) -> Optional[str]:
     """Whose link status to report, or None for "nobody in particular".
 
@@ -304,10 +300,18 @@ async def _status_identity(
     it cannot name: an anonymous caller now gets a flat "not connected" instead
     of a truthful readout of *someone else's* link, which is what this endpoint
     used to hand to the whole internet.
+
+    It registers the identity like every other authenticated entry point.
+    That matters more here than it looks: a browser that has just signed in
+    calls `/auth/status` **first**, so if this were the one path that skipped
+    registration, operator adoption would never fire for the person it exists
+    for — which is exactly what the first live run of this card found.
     """
     if authorization:
         claims = await asyncio.to_thread(verify_token, bearer_token(authorization))
-        return str(claims["sub"])
+        if session is None:
+            return str(claims["sub"])
+        return await register_identity(session, claims)
     if single_tenant_mode():
         return LOCAL_USER_ID
     expected = os.environ.get("ALPHADESK_ADMIN_SECRET") or ""

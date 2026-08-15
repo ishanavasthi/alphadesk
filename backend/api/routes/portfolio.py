@@ -48,7 +48,7 @@ from typing import Any, NoReturn, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import _maybe_adopt, bearer_token, claim_email, ensure_user, verify_token
+from api.deps import bearer_token, register_identity, verify_token
 from portfolio.connectors import (
     IndMoneyConnector,
     PortfolioConnector,
@@ -178,12 +178,11 @@ async def portfolio_identity(
     """
     if authorization:
         claims = await asyncio.to_thread(verify_token, bearer_token(authorization))
-        user_id: str = claims["sub"]
-        if session is not None:
-            email = claim_email(claims)
-            await ensure_user(session, user_id, email)
-            await _maybe_adopt(session, user_id, email)
-        return user_id
+        if session is None:
+            # No database on this deployment: the token is still the identity,
+            # there is simply nowhere to record that we have seen it.
+            return str(claims["sub"])
+        return await register_identity(session, claims)
     return await _admin_identity(x_alphadesk_admin_secret)
 
 

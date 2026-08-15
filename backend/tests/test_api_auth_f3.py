@@ -27,8 +27,10 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 from api.main import app
+from db.models import User
 from api.routes.portfolio import connector_for_request, reset_connector
 from portfolio.connectors import StubConnector
 from services import adoption
@@ -252,6 +254,28 @@ async def test_the_admin_path_acts_as_local_before_adoption(client: Any) -> None
     app.dependency_overrides[connector_for_request] = lambda: StubConnector()
     body = (await client.get("/portfolio/summary", headers=ADMIN)).json()
     assert body["user_id"] == auth.LOCAL_USER_ID
+
+
+async def test_auth_status_registers_the_identity_too(
+    db_env: Any, client: Any, clerk: rsa.RSAPrivateKey, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`/auth/status` is the **first** call a freshly signed-in browser makes.
+
+    It was the one authenticated path that read the token without registering
+    the user, so operator adoption never fired for the person it exists for.
+    Found by the live run against the real Clerk instance rather than by this
+    suite, which is exactly why the regression is pinned here.
+    """
+    monkeypatch.setenv(adoption.OPERATOR_EMAIL_ENV, "operator@example.com")
+
+    response = await client.get(
+        "/auth/status", headers=bearer(clerk, USER_A, email="operator@example.com")
+    )
+    assert response.status_code == 200
+
+    async with db_env() as session:
+        rows = (await session.execute(select(User.id))).scalars().all()
+    assert USER_A in rows
 
 
 async def test_the_admin_path_follows_the_operator_after_adoption(
