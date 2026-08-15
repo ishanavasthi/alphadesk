@@ -1,24 +1,29 @@
-"""AlphaDesk identity + broker-link tables (card F1).
+"""AlphaDesk identity, broker-link and daily-snapshot tables (cards F1 + S1).
 
-Three tables only. Portfolio holdings and daily snapshots are deliberately
-*not* modelled here — they land in M1/S1, after the C2 data spike tells us what
-the IND Money payloads actually look like.
+    users              the person. `id` is the Clerk `user_id` (a string, not a
+                       UUID) so F2 can adopt Clerk without a key migration.
+    broker_links       one row per (user, broker source). Holds the OAuth
+                       material needed to keep a link alive: encrypted
+                       access/refresh tokens, the dynamically-registered client
+                       credentials, and the token endpoint to refresh against.
+    oauth_pending      short-lived rows for an in-flight authorization-code
+                       flow, keyed by the OAuth `state`. TTL 10 minutes, single
+                       use — both enforced in application code (F3), not by the
+                       DB.
+    snapshot_days      one row per (user, attributed IST calendar day): the
+                       source's own net-worth total, plus the day's USD/INR
+                       reference rate. Card S1.
+    snapshot_holdings  the normalized `Holding` rows behind one snapshot day.
+    snapshot_raw       the source payloads those rows were mapped from, kept
+                       for forensics and pruned at 90 days.
 
-    users          the person. `id` is the Clerk `user_id` (a string, not a
-                   UUID) so F2 can adopt Clerk without a key migration.
-    broker_links   one row per (user, broker source). Holds the OAuth material
-                   needed to keep a link alive: encrypted access/refresh
-                   tokens, the dynamically-registered client credentials, and
-                   the token endpoint to refresh against.
-    oauth_pending  short-lived rows for an in-flight authorization-code flow,
-                   keyed by the OAuth `state`. TTL 10 minutes, single use —
-                   both enforced in application code (F3), not by the DB.
-
-**Cascade semantics.** `broker_links.user_id` and `oauth_pending.user_id` are
-declared `ON DELETE CASCADE` *at the FK level*, so deleting a `users` row wipes
-the dependent rows inside Postgres. A later "delete my data" card relies on
-that being a schema guarantee rather than an ORM-relationship convention: a
-raw `DELETE FROM users` from psql or a migration is just as safe as an ORM
+**Cascade semantics.** `broker_links.user_id`, `oauth_pending.user_id` and
+`snapshot_days.user_id` are declared `ON DELETE CASCADE` *at the FK level*, as
+are `snapshot_holdings.snapshot_id` and `snapshot_raw.snapshot_id`. Deleting a
+`users` row therefore wipes every dependent row — including the user's entire
+net-worth history — inside Postgres. A later "delete my data" card relies on
+that being a schema guarantee rather than an ORM-relationship convention: a raw
+`DELETE FROM users` from psql or a migration is just as safe as an ORM
 `session.delete(user)`.
 
 Every `*_enc` column is an opaque Fernet token — see `db.crypto`. Never select
@@ -27,9 +32,11 @@ one into a log line.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 
-from sqlalchemy import Column, DateTime, UniqueConstraint
+from sqlalchemy import Column, Date, DateTime, Numeric, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
 
@@ -121,4 +128,155 @@ class OAuthPending(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow, sa_column=_ts_column())
 
 
-__all__ = ["BrokerLink", "OAuthPending", "SQLModel", "User", "utcnow"]
+# --------------------------------------------------------------------------- #
+# Daily snapshots (card S1)
+# --------------------------------------------------------------------------- #
+#: Money columns. 18 digits with 2 decimals holds any plausible net worth
+#: without the binary-float rounding a `double precision` column would
+#: reintroduce after M1 went to the trouble of keeping everything `Decimal`.
+def _money_column(*, nullable: bool = False) -> Column:
+    return Column(Numeric(18, 2), nullable=nullable)
+
+
+class SnapshotDay(SQLModel, table=True):
+    """One user's portfolio, as it stood on one attributed IST calendar day.
+
+    `captured_on` is **not** a date the source supplied — no IND Money payload
+    carries one (C2). It is derived from the capture time through the single IST
+    helper in `services.snapshots`, with any run before 06:00 IST attributed to
+    the previous IST calendar day. That cutoff is what makes the ~01:00 IST
+    retry land on the same day as the 23:45 IST primary run.
+
+    `UNIQUE (user_id, captured_on)` is the idempotency guarantee: a second
+    capture on the same attributed day is a no-op, not a second row.
+
+    `total_value` is the source's own headline total, passed straight through.
+    It is deliberately **not** the sum of `snapshot_holdings` and must never be
+    asserted equal to it — the un-enumerable US-stock wallet bucket alone makes
+    the two differ by ~2.3% (M1 §5).
+    """
+
+    __tablename__ = "snapshot_days"
+    __table_args__ = (
+        UniqueConstraint("user_id", "captured_on", name="uq_snapshot_days_user_day"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: str = Field(
+        foreign_key="users.id",
+        ondelete="CASCADE",
+        index=True,
+        max_length=255,
+    )
+    #: The IST calendar day this capture is attributed to. Never a UTC or
+    #: server-local "today".
+    captured_on: date = Field(sa_column=Column(Date, nullable=False))
+    total_value: Decimal = Field(sa_column=_money_column())
+    currency: str = Field(default="INR", max_length=8)
+    #: The day's USD/INR reference rate, or NULL when the FX fetch failed. A
+    #: failed rate must never fail a snapshot: the rate is display math, the
+    #: snapshot is unrecoverable data.
+    usd_inr_rate: Decimal | None = Field(
+        default=None, sa_column=Column(Numeric(18, 6), nullable=True)
+    )
+    #: Buckets the snapshot reported but whose rows could not be read, as
+    #: ``[{"asset_type": "MF", "reason": "throttled"}, …]``. **NULL means the
+    #: capture was complete** — a clean day leaves no marker at all.
+    #:
+    #: This lives on the day, not in `snapshot_raw`, precisely because
+    #: `snapshot_raw` is pruned at 90 days while the day is kept forever. A
+    #: two-year-old partial capture whose evidence had been pruned would read as
+    #: a complete one, and "you held nothing in that bucket" is a false statement
+    #: about someone's money, not a missing log line.
+    #:
+    #: ``none_as_null=True`` is load-bearing, not decoration: a JSONB column
+    #: stores Python ``None`` as the JSON value ``null``, which reads back as
+    #: ``None`` in Python while being **NOT NULL** in SQL. Without it,
+    #: ``WHERE buckets_failed IS NOT NULL`` matches every clean day — the query
+    #: this column exists to answer would return the opposite of the truth, and
+    #: an ORM-side assertion would never notice. A test pins it.
+    buckets_failed: list | None = Field(
+        default=None, sa_column=Column(JSONB(none_as_null=True), nullable=True)
+    )
+    #: When the capture actually ran (UTC). `max(captured_at)` per user is what
+    #: the dashboard's staleness banner is derived from.
+    captured_at: datetime = Field(default_factory=utcnow, sa_column=_ts_column())
+
+
+class SnapshotHolding(SQLModel, table=True):
+    """One normalized `portfolio.models.Holding` row, frozen into a snapshot.
+
+    Deliberately a flat copy rather than a foreign key to a positions table:
+    a snapshot is a historical record, and a later rename, reclassification or
+    delisting must not rewrite what was true on the day.
+    """
+
+    __tablename__ = "snapshot_holdings"
+
+    id: int | None = Field(default=None, primary_key=True)
+    snapshot_id: int = Field(
+        foreign_key="snapshot_days.id",
+        ondelete="CASCADE",
+        index=True,
+    )
+    source: str = Field(max_length=64)
+    #: Stable within `source`; the other half of M1's identity pair.
+    external_id: str = Field(max_length=255)
+    asset_type: str = Field(max_length=32)
+    symbol: str | None = Field(default=None, max_length=64)
+    isin: str | None = Field(default=None, max_length=32)
+    units: Decimal | None = Field(
+        default=None, sa_column=Column(Numeric(28, 8), nullable=True)
+    )
+    avg_cost: Decimal | None = Field(
+        default=None, sa_column=Column(Numeric(28, 8), nullable=True)
+    )
+    #: NULL means **unknown cost basis** (M1 §3), never "invested nothing".
+    invested_amount: Decimal | None = Field(default=None, sa_column=_money_column(nullable=True))
+    current_price: Decimal | None = Field(
+        default=None, sa_column=Column(Numeric(28, 8), nullable=True)
+    )
+    current_value: Decimal = Field(sa_column=_money_column())
+    currency: str = Field(default="INR", max_length=8)
+
+
+class SnapshotRaw(SQLModel, table=True):
+    """A source payload exactly as it arrived, kept for forensics.
+
+    One row per source call behind a snapshot: the whole-portfolio call plus one
+    per holdings bucket. The call each row came from is recorded **inside**
+    `payload` (`kind` / `asset_type`), not in a column, so `source` keeps
+    meaning the connector key it means everywhere else in the schema.
+
+    Pruned at 90 days by `services.snapshots.prune_raw`. Normalized rows are
+    kept forever — this table is the one that grows without bound.
+    """
+
+    __tablename__ = "snapshot_raw"
+
+    id: int | None = Field(default=None, primary_key=True)
+    snapshot_id: int = Field(
+        foreign_key="snapshot_days.id",
+        ondelete="CASCADE",
+        index=True,
+    )
+    source: str = Field(max_length=64)
+    payload: dict = Field(sa_column=Column(JSONB, nullable=False))
+    #: Indexed because `prune_raw` selects on it, and this is the only table in
+    #: the schema expected to reach a size where that matters.
+    captured_at: datetime = Field(
+        default_factory=utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True),
+    )
+
+
+__all__ = [
+    "BrokerLink",
+    "OAuthPending",
+    "SQLModel",
+    "SnapshotDay",
+    "SnapshotHolding",
+    "SnapshotRaw",
+    "User",
+    "utcnow",
+]

@@ -21,7 +21,7 @@ cd backend
 cp .env.example .env                             # then fill values
 alembic upgrade head                             # needs DATABASE_URL (Postgres)
 uvicorn api.main:app --reload --port 8000        # API + interactive docs at /docs
-pytest                                           # 43 tests; DB ones need Postgres
+pytest                                           # 469 tests; DB ones need Postgres
 ```
 
 **Frontend**
@@ -31,10 +31,10 @@ cd frontend
 npm install
 npm run dev        # localhost:3000
 npm run build
-npm run lint
+npm test           # vitest (added by S1); `npm run lint` is still unconfigured
 ```
 
-**Tests:** `pytest` from inside `backend/` (config in `backend/pytest.ini`, suite in `backend/tests/`). The DB tests need a Postgres — one-line Docker container and the full walkthrough are in `docs/TESTING/F1.md`; without one they skip loudly rather than failing. The suite creates and **drops** a `<db>_test` database, so it refuses to inherit a non-loopback `DATABASE_URL`; name a remote target in `TEST_DATABASE_URL` deliberately. `backend/evals/test_cases.py` is a separate, still-unwritten eval stub.
+**Tests:** `pytest` from inside `backend/` (config in `backend/pytest.ini`, suite in `backend/tests/`). The DB tests need a Postgres — one-line Docker container and the full walkthrough are in `docs/TESTING/F1.md`; without one they skip loudly rather than failing. The suite creates and **drops** a `<db>_test` database, so it refuses to inherit a non-loopback `DATABASE_URL`; name a remote target in `TEST_DATABASE_URL` deliberately. `backend/evals/test_cases.py` is a separate, still-unwritten eval stub. **Frontend tests are vitest + jsdom** (`frontend/vitest.config.ts`, suites in `frontend/tests/`), added by S1 as the repo's first frontend runner; `npm run lint` still drops into Next's interactive ESLint setup and is not wired.
 
 **`.dockerignore` is load-bearing:** the Dockerfile's `COPY backend/` would otherwise bake `backend/.env` (`TOKEN_ENCRYPTION_KEY`, `GROQ_API_KEY`) and `.ind_money_token.json` into any locally-built image. Add new secret files there as well as to `.gitignore`. The Dockerfile also gates the build on `backend/tests/check_tracing_in_image.py` — see below.
 
@@ -59,7 +59,9 @@ scanner → research → analyst → risk_manager ─┬─(any PASS/FLAG)→ ex
 
 **State persistence is in-memory** (`_RUNS`, `_ANALYSES`, `_PAPER_WATCHLIST`, `_ACTIONS` dicts in `backend/api/main.py`). Runs, stored analyses, and the paper watchlist survive a browser refresh but **not a backend restart**. This is a known limitation — swap for a DB to make durable.
 
-**Postgres (`backend/db/`, added by F1) exists but is not wired in yet.** SQLModel tables (`users`, `broker_links`, `oauth_pending`, all with DB-level `ON DELETE CASCADE`), an async engine + `async_session` FastAPI dependency, Fernet helpers for the `*_enc` columns (`TOKEN_ENCRYPTION_KEY`), and Alembic migrations run on asyncpg — there is deliberately no sync Postgres driver. `api/main.py` still imports none of it; F3/M1 are the first consumers. Details in `docs/SPECS/F1.md`. Any future portfolio-graph invocation must pass `graph.portfolio_config.portfolio_runnable_config()`, which keeps LangSmith tracing off for holdings data even when `LANGCHAIN_TRACING_V2=true`. It does that by leaning on a langchain-core internal, so `langchain-core` is pinned despite being transitive and the Docker build runs `tests/check_tracing_in_image.py` as a gate — if you bump langchain/langsmith/langgraph, re-run `backend/tests/test_portfolio_config.py`.
+**Postgres (`backend/db/`, added by F1; first consumer S1).** SQLModel tables — `users`, `broker_links`, `oauth_pending` (F1) and `snapshot_days`, `snapshot_holdings`, `snapshot_raw` (S1) — all with DB-level `ON DELETE CASCADE`, an async engine + `async_session` FastAPI dependency, Fernet helpers for the `*_enc` columns (`TOKEN_ENCRYPTION_KEY`), and Alembic migrations run on asyncpg — there is deliberately no sync Postgres driver. Details in `docs/SPECS/F1.md` and `docs/SPECS/S1.md`. **The database is optional at runtime:** with `DATABASE_URL` unset the dashboard still serves live totals and history is honestly empty — never a 500. Any deploy shipping a new migration needs `alembic upgrade head` against the production URL.
+
+**Daily snapshots (S1).** `backend/services/snapshots.py` captures one row per user per **IST calendar day, with any run before 06:00 IST attributed to the previous day** — one helper (`attributed_day`) owns that rule and nothing derives a day from UTC or server-local "today". Three nets fill the same row through `UNIQUE (user_id, captured_on)`: the 23:45 IST cron, a ~01:00 IST retry, and an opportunistic capture fired when `/portfolio/summary` finds today missing. **The first capture of a day wins** — a retry rescues an empty day, it never overwrites a good reading. `POST /internal/snapshot` and `/internal/prune` are guarded by `CRON_SECRET` (fail-closed; **not** the admin secret — a CI runner must not hold a key that reads holdings). A missed snapshot cannot be backfilled: the MCP is point-in-time, so acquisition failures degrade (skip a dead link, keep a partial bucket set, store a NULL FX rate) rather than abort — and a partial day records which buckets it could not read in `snapshot_days.buckets_failed`, so it never passes for complete. Any future portfolio-graph invocation must pass `graph.portfolio_config.portfolio_runnable_config()`, which keeps LangSmith tracing off for holdings data even when `LANGCHAIN_TRACING_V2=true`. It does that by leaning on a langchain-core internal, so `langchain-core` is pinned despite being transitive and the Docker build runs `tests/check_tracing_in_image.py` as a gate — if you bump langchain/langsmith/langgraph, re-run `backend/tests/test_portfolio_config.py`.
 
 **API ↔ frontend** (`backend/api/main.py` ↔ `frontend/lib/api.ts`): `POST /analyze` refuses with **409** unless IND Money is connected (an unauthenticated run can only yield an empty "0 candidates" pipeline), then streams Server-Sent Events (`start`, one `update` per agent node, then `complete` with recommendations/risk/`action_id`, or `error`). `POST /approve` resumes the paused graph. CORS: localhost/127.0.0.1 (any port) is always allowed; production origins come from `CORS_ALLOW_ORIGINS` (comma-separated) and optional `CORS_ALLOW_ORIGIN_REGEX`.
 

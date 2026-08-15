@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 # before the graph and agents read them.
 load_dotenv()
 
+from api.routes.internal import router as internal_router  # noqa: E402
 from api.routes.portfolio import router as portfolio_router  # noqa: E402
 from graph.graph import alphaDesk_graph, resume_after_approval  # noqa: E402
 from graph.state import PortfolioState  # noqa: E402
@@ -82,6 +83,12 @@ app.add_middleware(
 # router is gated by the same admin secret as /auth/login — see
 # `api/routes/portfolio.py`, which reuses `_require_admin` below.
 app.include_router(portfolio_router)
+
+# Machine-to-machine routes for the nightly snapshot job (card S1). Guarded by
+# CRON_SECRET, **not** by the admin gate above — a scheduled runner is not an
+# operator and must not hold a secret that can read holdings or unlink the
+# account. See `api/routes/internal.py`.
+app.include_router(internal_router)
 
 
 # --------------------------------------------------------------------------- #

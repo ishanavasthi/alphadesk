@@ -1,7 +1,7 @@
 "use client";
 
 import type { PortfolioSummary } from "@/lib/api";
-import { Badge, Button, Chip } from "./ui";
+import { Button, Chip } from "./ui";
 
 const LINK_LABEL: Record<PortfolioSummary["link_health"], { text: string; ok: boolean }> = {
   linked: { text: "IND Money · linked", ok: true },
@@ -10,17 +10,48 @@ const LINK_LABEL: Record<PortfolioSummary["link_health"], { text: string; ok: bo
   revoked: { text: "IND Money · access revoked", ok: false },
 };
 
+/** What the Capture button is currently saying. */
+export type CaptureState =
+  | "idle"
+  | "busy"
+  | "done"
+  | "existing"
+  /** A capture this page did not start is already running — nothing failed. */
+  | "in_flight"
+  | "failed";
+
+const CAPTURE_LABEL: Record<CaptureState, string> = {
+  idle: "Capture snapshot",
+  busy: "Capturing…",
+  done: "Captured",
+  existing: "Already captured today",
+  in_flight: "Capturing in background…",
+  failed: "Capture failed",
+};
+
+const CAPTURE_TITLE: Record<CaptureState, string> = {
+  idle:
+    "Take today's snapshot now. Idempotent — a day that already has one is left alone.",
+  busy: "Reading every bucket the snapshot reports, paced against the source's rate limit.",
+  done: "Today's snapshot is stored.",
+  existing:
+    "Today already has a snapshot. The first capture of a day is kept: it ran closest to the time it was timed for.",
+  in_flight:
+    "A capture for today was already running — opening this page starts one when the day is missing. It will finish on its own.",
+  failed: "The source could not be read. Tonight's scheduled run will try again.",
+};
+
 /**
  * The surface's own top bar (`a-shadcn.html` / `a2-overview.html`).
  *
- * "Capture snapshot" is rendered because the locked design has it, and it is
- * **disabled with a `soon` badge** because the feature does not exist until card
- * S1 writes the first daily capture. A button that looked live and did nothing
- * would be a worse answer than one that says what it is waiting for.
+ * "Capture snapshot" is live as of S1. It is idempotent by construction — a day
+ * that already has a row answers `already_captured` — so the honest label for a
+ * second press is "already captured today", not a spinner that pretends to have
+ * done something.
  *
- * "Refresh" carries a visible cooldown for the same reason: one press re-walks
- * every holdings bucket, so the countdown shows the reader why the button is
- * asleep rather than letting them spend the source's rate limit discovering it.
+ * "Refresh" carries a visible cooldown: one press re-walks every holdings
+ * bucket, so the countdown shows the reader why the button is asleep rather than
+ * letting them spend the source's rate limit discovering it.
  */
 export function PortfolioTopBar({
   linkHealth,
@@ -28,6 +59,8 @@ export function PortfolioTopBar({
   onRefresh,
   refreshing,
   cooldown,
+  onCapture,
+  captureState = "idle",
 }: {
   linkHealth: PortfolioSummary["link_health"] | null;
   demo: boolean;
@@ -35,6 +68,8 @@ export function PortfolioTopBar({
   refreshing: boolean;
   /** Seconds left before another refresh is allowed; 0 means ready. */
   cooldown: number;
+  onCapture: () => void;
+  captureState?: CaptureState;
 }) {
   const link = linkHealth ? LINK_LABEL[linkHealth] : null;
   // min-height, not height: the actions wrap to a second row at 375px, and a
@@ -63,11 +98,11 @@ export function PortfolioTopBar({
       <Button
         variant="outline"
         size="sm"
-        disabled
-        title="Daily snapshots arrive with card S1 — there is nothing to capture yet."
+        onClick={onCapture}
+        disabled={captureState === "busy"}
+        title={CAPTURE_TITLE[captureState]}
       >
-        ◫ Capture snapshot
-        <Badge variant="soon">S1</Badge>
+        ◫ {CAPTURE_LABEL[captureState]}
       </Button>
       {link ? <Chip tone={link.ok ? "ok" : "warn"}>{link.text}</Chip> : null}
       {demo ? <Chip>Demo data</Chip> : null}

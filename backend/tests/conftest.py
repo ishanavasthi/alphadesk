@@ -154,9 +154,22 @@ def _alembic_upgrade(url: str) -> None:
     command.upgrade(cfg, "head")
 
 
+#: Every table the suite writes to, truncated between tests. `users` cascades to
+#: the rest, but they are named anyway so that adding a table without adding it
+#: here is a visible omission rather than a silent one.
+_ALL_TABLES = (
+    "users",
+    "broker_links",
+    "oauth_pending",
+    "snapshot_days",
+    "snapshot_holdings",
+    "snapshot_raw",
+)
+
+
 @pytest_asyncio.fixture
 async def db_session(test_database_url: str):
-    """A clean `AsyncSession`; all three tables are truncated afterwards."""
+    """A clean `AsyncSession`; every table is truncated afterwards."""
     engine = create_async_engine(test_database_url)
     maker = async_sessionmaker(engine, expire_on_commit=False)
     try:
@@ -166,7 +179,9 @@ async def db_session(test_database_url: str):
             from sqlalchemy import text
 
             await conn.execute(
-                text("TRUNCATE users, broker_links, oauth_pending RESTART IDENTITY CASCADE")
+                text(
+                    f"TRUNCATE {', '.join(_ALL_TABLES)} RESTART IDENTITY CASCADE"
+                )
             )
     finally:
         await engine.dispose()
