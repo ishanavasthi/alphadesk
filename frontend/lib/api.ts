@@ -1,6 +1,6 @@
 // Typed client for the AlphaDesk FastAPI backend (SSE + approval).
 
-import { withAuth } from "@/lib/auth";
+import { AUTH_ENABLED, withAuth } from "@/lib/auth";
 
 // Default to 127.0.0.1 (not "localhost") so the browser doesn't try IPv6 ::1,
 // where uvicorn isn't listening. Override with NEXT_PUBLIC_API_URL if needed.
@@ -19,9 +19,12 @@ export const API_BASE =
  * the caller's headers unchanged and this is a plain `fetch` — same method,
  * same headers, same body as before card F2.
  *
- * The interim C0 admin-secret header is untouched and rides alongside: it gates
- * `/portfolio/*` and `/auth/login` today, and **card F3 is what removes it**,
- * once a verified `user_id` can take over the job.
+ * Card F3 made the backend per-user, so the Clerk token is now the credential
+ * that matters. The interim C0 admin-secret header still rides alongside on
+ * `/portfolio/*` — with `NEXT_PUBLIC_AUTH_ENABLED` off there is no sign-in UI
+ * in production, so removing it before card L1 would lock the operator out of
+ * their own dashboard. It is **not** sent to `/auth/login` or `/auth/logout`
+ * any more: linking is identity-bound, and the backend refuses it there.
  */
 async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
   return fetch(url, { ...init, headers: await withAuth(init.headers) });
@@ -239,26 +242,34 @@ export interface AuthStatus {
   expires_in_sec?: number | null;
 }
 
-/** GET /auth/status — is the backend authenticated with IND Money? */
+/**
+ * GET /auth/status — is **this caller** linked to IND Money?
+ *
+ * Per-user since F3. The admin secret rides along so a flag-off operator build
+ * still reports their own link rather than a flat "not connected"; a request
+ * with neither credential is answered for nobody, which is the point — this
+ * endpoint used to tell the whole internet whether the operator was connected.
+ */
 export async function getAuthStatus(): Promise<AuthStatus> {
-  const response = await apiFetch(`${API_BASE}/auth/status`);
+  const response = await apiFetch(`${API_BASE}/auth/status`, {
+    headers: ADMIN_SECRET ? { "x-alphadesk-admin-secret": ADMIN_SECRET } : undefined,
+  });
   if (!response.ok) throw new Error(`Auth status failed (${response.status}).`);
   return response.json();
 }
 
 /**
- * POST /auth/login — begin OAuth; returns the URL to open in a browser.
+ * POST /auth/login — begin OAuth for the signed-in user; returns the URL to open.
  *
- * The backend guards this with the same `_require_admin` dependency as
- * `/portfolio/*` (linking an account links the whole server), so the operator
- * secret rides along when this build has one. Without it the call only succeeds
- * in single-tenant dev mode — which is exactly why the `/portfolio` Connect gate
- * needs the header: it renders in the gated configuration too.
+ * **JWT-only since F3.** The admin secret is deliberately not sent: a link made
+ * under a shared operator secret would have no owner, which is exactly the
+ * process-wide credential this card deleted. Signed out, this 401s — and in
+ * single-tenant dev (`ALPHADESK_SINGLE_TENANT=1`) the backend links as `local`
+ * with no token at all, so the operator's own machine is unaffected.
  */
 export async function startAuthLogin(): Promise<string> {
   const response = await apiFetch(`${API_BASE}/auth/login`, {
     method: "POST",
-    headers: ADMIN_SECRET ? { "x-alphadesk-admin-secret": ADMIN_SECRET } : undefined,
   });
   if (!response.ok) throw new Error(`Login start failed (${response.status}).`);
   const data = await response.json();
@@ -304,7 +315,12 @@ export async function removeFromWatchlist(symbol: string): Promise<void> {
  * inlined into the JavaScript bundle every visitor downloads, so setting it in a
  * deployment publishes the operator's portfolio to the world. It belongs in
  * `frontend/.env.local` (gitignored) on the operator's own machine and nowhere
- * else. Production stays locked until F3 replaces this with per-user auth.
+ * else.
+ *
+ * F3 made it **optional** rather than required: with `NEXT_PUBLIC_AUTH_ENABLED`
+ * on, the Clerk session token is the credential and this is not needed at all.
+ * It survives for the flag-off interim only, and card L1 removes it along with
+ * the backend half.
  */
 export const ADMIN_SECRET = process.env.NEXT_PUBLIC_ALPHADESK_ADMIN_SECRET || "";
 
@@ -419,7 +435,12 @@ async function portfolioFetch<T>(
   signal?: AbortSignal,
   { method = "GET" }: { method?: "GET" | "POST" } = {},
 ): Promise<T> {
-  if (!ADMIN_SECRET) {
+  // Flag off, the admin secret is the only credential this build can produce,
+  // so its absence really is a locked build. Flag on, a signed-out visitor is
+  // an ordinary state and the backend's 401 is the honest answer — refusing to
+  // make the request would render "locked" at somebody who just needs to sign
+  // in.
+  if (!ADMIN_SECRET && !AUTH_ENABLED) {
     throw new PortfolioError(
       0,
       "locked",
@@ -431,7 +452,7 @@ async function portfolioFetch<T>(
   try {
     response = await apiFetch(`${API_BASE}${path}`, {
       method,
-      headers: { "x-alphadesk-admin-secret": ADMIN_SECRET },
+      headers: ADMIN_SECRET ? { "x-alphadesk-admin-secret": ADMIN_SECRET } : undefined,
       cache: "no-store",
       signal,
     });
