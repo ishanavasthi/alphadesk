@@ -21,7 +21,7 @@ cd backend
 cp .env.example .env                             # then fill values
 alembic upgrade head                             # needs DATABASE_URL (Postgres)
 uvicorn api.main:app --reload --port 8000        # API + interactive docs at /docs
-pytest                                           # 22 tests; DB ones need Postgres
+pytest                                           # 43 tests; DB ones need Postgres
 ```
 
 **Frontend**
@@ -34,7 +34,9 @@ npm run build
 npm run lint
 ```
 
-**Tests:** `pytest` from inside `backend/` (config in `backend/pytest.ini`, suite in `backend/tests/`). The DB tests need a Postgres — one-line Docker container and the full walkthrough are in `docs/TESTING/F1.md`; without one they skip loudly rather than failing. `backend/evals/test_cases.py` is a separate, still-unwritten eval stub.
+**Tests:** `pytest` from inside `backend/` (config in `backend/pytest.ini`, suite in `backend/tests/`). The DB tests need a Postgres — one-line Docker container and the full walkthrough are in `docs/TESTING/F1.md`; without one they skip loudly rather than failing. The suite creates and **drops** a `<db>_test` database, so it refuses to inherit a non-loopback `DATABASE_URL`; name a remote target in `TEST_DATABASE_URL` deliberately. `backend/evals/test_cases.py` is a separate, still-unwritten eval stub.
+
+**`.dockerignore` is load-bearing:** the Dockerfile's `COPY backend/` would otherwise bake `backend/.env` (`TOKEN_ENCRYPTION_KEY`, `GROQ_API_KEY`) and `.ind_money_token.json` into any locally-built image. Add new secret files there as well as to `.gitignore`. The Dockerfile also gates the build on `backend/tests/check_tracing_in_image.py` — see below.
 
 ## Architecture
 
@@ -57,7 +59,7 @@ scanner → research → analyst → risk_manager ─┬─(any PASS/FLAG)→ ex
 
 **State persistence is in-memory** (`_RUNS`, `_ANALYSES`, `_PAPER_WATCHLIST`, `_ACTIONS` dicts in `backend/api/main.py`). Runs, stored analyses, and the paper watchlist survive a browser refresh but **not a backend restart**. This is a known limitation — swap for a DB to make durable.
 
-**Postgres (`backend/db/`, added by F1) exists but is not wired in yet.** SQLModel tables (`users`, `broker_links`, `oauth_pending`, all with DB-level `ON DELETE CASCADE`), an async engine + `async_session` FastAPI dependency, Fernet helpers for the `*_enc` columns (`TOKEN_ENCRYPTION_KEY`), and Alembic migrations run on asyncpg — there is deliberately no sync Postgres driver. `api/main.py` still imports none of it; F3/M1 are the first consumers. Details in `docs/SPECS/F1.md`. Any future portfolio-graph invocation must pass `graph.portfolio_config.portfolio_runnable_config()`, which keeps LangSmith tracing off for holdings data even when `LANGCHAIN_TRACING_V2=true`.
+**Postgres (`backend/db/`, added by F1) exists but is not wired in yet.** SQLModel tables (`users`, `broker_links`, `oauth_pending`, all with DB-level `ON DELETE CASCADE`), an async engine + `async_session` FastAPI dependency, Fernet helpers for the `*_enc` columns (`TOKEN_ENCRYPTION_KEY`), and Alembic migrations run on asyncpg — there is deliberately no sync Postgres driver. `api/main.py` still imports none of it; F3/M1 are the first consumers. Details in `docs/SPECS/F1.md`. Any future portfolio-graph invocation must pass `graph.portfolio_config.portfolio_runnable_config()`, which keeps LangSmith tracing off for holdings data even when `LANGCHAIN_TRACING_V2=true`. It does that by leaning on a langchain-core internal, so `langchain-core` is pinned despite being transitive and the Docker build runs `tests/check_tracing_in_image.py` as a gate — if you bump langchain/langsmith/langgraph, re-run `backend/tests/test_portfolio_config.py`.
 
 **API ↔ frontend** (`backend/api/main.py` ↔ `frontend/lib/api.ts`): `POST /analyze` refuses with **409** unless IND Money is connected (an unauthenticated run can only yield an empty "0 candidates" pipeline), then streams Server-Sent Events (`start`, one `update` per agent node, then `complete` with recommendations/risk/`action_id`, or `error`). `POST /approve` resumes the paused graph. CORS: localhost/127.0.0.1 (any port) is always allowed; production origins come from `CORS_ALLOW_ORIGINS` (comma-separated) and optional `CORS_ALLOW_ORIGIN_REGEX`.
 

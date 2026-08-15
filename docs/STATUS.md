@@ -9,7 +9,7 @@ file at every card completion and gate. Newest facts win; keep entries terse.
 | --- | --- | --- |
 | C0 lockdown | ✅ **done 2026-08-15** | Admin gate on `/auth/login`+`/auth/logout` (`ALPHADESK_ADMIN_SECRET`, fail-closed); ambient credential fallbacks gated behind `ALPHADESK_SINGLE_TENANT` (local only). Verified live on the Space: 9/9 checks (401s, read-only 200s, status unauthenticated). Security review: no findings. |
 | C1 slim image | ✅ **done 2026-08-15** | Merge `8d2e8bd`. chromadb/pypdf/text-splitters dropped (rag-only, grep-proven); all 10 direct deps pinned from verified freeze; Dockerfile loses `build-essential`, `COPY data/`, ingest step (image 370MB, builds+boots verified); screenshots PNGs removed from HEAD; README/DEPLOY/CLAUDE RAG claims corrected; docs/SPECS+TESTING/C1.md added. Review: 1 Critical (real run data in TESTING doc) fixed via branch history rewrite pre-merge. **The PNG removal does NOT retire the `space-deploy` dance** — verified 2026-08-15: HF's pre-receive hook scans all pushed history and rejects the historical PNGs; only a `main` history rewrite would fix that, not worth it. |
-| F1 persistence | 🔨 **built, awaiting review** | Branch `v2-foundation`. Three identity tables (`users`, `broker_links`, `oauth_pending`) with **DB-level** `ON DELETE CASCADE`; Fernet crypto on `TOKEN_ENCRYPTION_KEY`; async Alembic (asyncpg only — no second sync driver); pytest wired (22 tests, 6 need Postgres and skip loudly without it); `portfolio_runnable_config()` tracing kill switch. New env vars: `DATABASE_URL`, `TOKEN_ENCRYPTION_KEY`. Runtime deps +5 pinned (image 370→426MB); test deps split into `requirements-dev.txt` so the image stays clean. `git diff main -- backend/api backend/agents backend/graph/graph.py backend/tools` is empty. Verified on local Docker Postgres 16 (`:5433`); still no Neon. Docs: `docs/SPECS/F1.md`, `docs/TESTING/F1.md`. |
+| F1 persistence | 🔨 **built + review follow-ups applied** | Branch `v2-foundation`. Three identity tables (`users`, `broker_links`, `oauth_pending`) with **DB-level** `ON DELETE CASCADE`; Fernet crypto on `TOKEN_ENCRYPTION_KEY`; async Alembic (asyncpg only — no second sync driver); pytest wired (43 tests, 6 need Postgres and skip loudly without it); `portfolio_runnable_config()` tracing kill switch, now **pinned + gated at Docker build time**. New env vars: `DATABASE_URL`, `TOKEN_ENCRYPTION_KEY`. Runtime deps +6 pinned incl. transitive `langchain-core==1.5.5` (image 370→426MB); test deps split into `requirements-dev.txt`. New `.dockerignore` keeps `backend/.env` + the IND Money token cache out of locally-built images. `git diff main -- backend/api backend/agents backend/graph/graph.py backend/tools` is empty. Verified on local Docker Postgres 16 (`:5433`); still no Neon. Docs: `docs/SPECS/F1.md`, `docs/TESTING/F1.md`. |
 | C2 data spike | queued — **HUMAN GATE** | Operator's real IND Money link is live on prod (admin-secret login, 2026-08-15), so live `networth_*` calls are possible. |
 | M1 model + connectors | queued | Blocked on C2 gate. |
 | D0 design bake-off | queued — **HUMAN GATE** | 4–5 Fable-built dashboard demos (shadcn/ui, Bloomberg-terminal, +2–3 others); human picks; lock in DECISION.md + plan §2 + memory. Blocks all real dashboard frontend. |
@@ -58,10 +58,19 @@ file at every card completion and gate. Newest facts win; keep entries terse.
   `LangChainTracer` when `LANGCHAIN_TRACING_V2=true`. F1's
   `portfolio_runnable_config()` works by occupying the tracer slot with an
   inert `LangChainTracer` subclass — i.e. it **rides on a langchain-core
-  internal**. Re-run `backend/tests/test_portfolio_config.py` and
-  `tests/check_tracing_in_image.py` after **any** langchain/langsmith/langgraph
-  bump. The image also floats langchain-core transitively (1.5.5 there vs 1.4.9
-  in the venv), so the in-image check is not optional.
+  internal**. Mitigated two ways: `langchain-core==1.5.5` is pinned even though
+  it is transitive (it had already drifted — 1.5.5 in the image vs 1.4.9 in the
+  venv), and the `Dockerfile` runs `tests/check_tracing_in_image.py` as a
+  **build-time gate** so a bad resolution fails the build. Still re-run
+  `backend/tests/test_portfolio_config.py` after any langchain/langsmith/
+  langgraph bump.
+- **`docker build` locally would have baked `backend/.env` into the image**
+  until F1 added a `.dockerignore` (`COPY backend/` takes everything, and .env
+  now carries `TOKEN_ENCRYPTION_KEY` as well as `GROQ_API_KEY`). If you add a
+  new secret file under `backend/`, add it to `.dockerignore` too.
+- **The pytest suite creates and DROPs a `<db>_test` database.** It refuses to
+  run against a non-loopback `DATABASE_URL` inherited from the shell; a remote
+  target must be named in `TEST_DATABASE_URL` on purpose.
 - **Losing `TOKEN_ENCRYPTION_KEY` means every stored broker link is
   undecryptable** and every user must re-link. It is a Space *secret*; back it
   up before rotating anything.
