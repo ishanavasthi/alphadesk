@@ -448,7 +448,13 @@ async def capture(
                 "message": "This deployment has no database configured, so nothing can be captured.",
             },
         )
-    outcome = await capture_if_missing(LOCAL_USER_ID, connector=connector)
+    # The request's own session, not one this call opens: an awaited capture is
+    # inside the request's scope, so it should use the request's transaction.
+    # (The fire-and-forget net in `/summary` is the opposite case and opens its
+    # own, because a request-scoped session is closed by the time it runs.)
+    outcome = await capture_if_missing(
+        LOCAL_USER_ID, connector=connector, session=session
+    )
     if outcome is None:
         return {"status": "in_flight", "captured_on": None}
     return {
@@ -456,6 +462,7 @@ async def capture(
         "captured_on": outcome.captured_on.isoformat(),
         "holdings": outcome.holdings,
         "reason": outcome.reason,
+        "buckets_failed": [f.as_dict() for f in outcome.buckets_failed],
     }
 
 

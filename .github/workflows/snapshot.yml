@@ -71,7 +71,13 @@ jobs:
       github.event_name == 'schedule' && github.event.schedule != '45 19 * * 0'
       || github.event_name == 'workflow_dispatch' && inputs.prune != true
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Worst case, computed rather than guessed — the final retry must never be
+    # killed by the job clock, because a killed retry is a permanently lost day:
+    #   wake     deadline 7 min + at most one 20 s curl overshoot  ~=  7.5 min
+    #   trigger  4 x 300 s curl  +  15+30+60 s backoff             ~= 21.8 min
+    #                                                        total ~= 29.3 min
+    # 40 leaves headroom for runner setup and a slow checkout-free start.
+    timeout-minutes: 40
     steps:
       - name: Check configuration
         env:
@@ -94,13 +100,29 @@ jobs:
           url="${BACKEND_URL%/}/"
           # A free Space sleeps after ~48h idle and answers non-200 while the
           # container boots, so the first response is not the final answer.
-          for attempt in $(seq 1 24); do
-            code=$(curl -sS -o /dev/null -w '%{http_code}' -m 30 "$url" || echo 000)
+          #
+          # **Deadline-based, not attempt-based.** An attempt loop's real budget
+          # is attempts x (curl timeout + sleep), which is not the number anyone
+          # reads off it — the previous 24-attempt loop claimed "~6 minutes" in
+          # its own error message and could actually run for 18. A wall clock
+          # makes the budget exact, keeps the error text true, and leaves the
+          # trigger step the time it needs inside the job timeout.
+          budget=420   # 7 minutes; a Space still silent by then is not waking
+          deadline=$(( $(date +%s) + budget ))
+          attempt=0
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            attempt=$(( attempt + 1 ))
+            # curl prints "000" itself on a connection failure, so a `|| echo
+            # 000` fallback would concatenate into "000000". Swallow the exit
+            # code and default only a genuinely empty capture.
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -m 20 "$url" || true)
+            code=${code:-000}
             echo "wake attempt $attempt: HTTP $code"
-            [ "$code" = "200" ] && { echo "Backend awake."; exit 0; }
-            sleep 15
+            if [ "$code" = "200" ]; then echo "Backend awake."; exit 0; fi
+            sleep 10
           done
-          echo "::error::Backend never answered 200 after ~6 minutes ($url)."
+          echo "::error::Backend never answered 200 within ${budget}s ($url)."\
+               "Nothing was captured; tonight's data depends on the retry run."
           exit 1
 
       - name: Trigger capture
@@ -109,15 +131,24 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           url="${BACKEND_URL%/}/internal/snapshot"
-          # Retry only what a retry can fix. 5xx and a dead connection mean the
-          # Space is still coming up or fell over; 401/403 means the secret is
-          # wrong and will be just as wrong in 30 seconds, so failing at once
-          # gives an honest error instead of six identical ones.
+          # Retry only what a retry can fix. A dead connection or a 5xx from the
+          # platform means the Space is still coming up or fell over; a wrong
+          # secret, a wrong URL or a rejected request will be just as wrong in
+          # 30 seconds, so those fail at once and give an honest error instead
+          # of six identical ones.
+          #
+          # `detail.code` off the body is what separates *our* 503s (the
+          # deployment is misconfigured — stop) from a Hugging Face edge 503
+          # during a cold start (keep trying). Status alone cannot tell them
+          # apart, and short-circuiting every 503 would let one slow wake cost
+          # the night.
           backoff=15
           for attempt in 1 2 3 4; do
+            : > response.json
             code=$(curl -sS -X POST -m 300 \
               -H "x-cron-secret: $CRON_SECRET" \
-              -o response.json -w '%{http_code}' "$url" || echo 000)
+              -o response.json -w '%{http_code}' "$url" || true)
+            code=${code:-000}
             echo "trigger attempt $attempt: HTTP $code"
             case "$code" in
               200)
@@ -141,10 +172,35 @@ jobs:
                      "the Space's. Retrying would not help."
                 exit 1
                 ;;
-              503)
-                echo "::error::Backend has no CRON_SECRET configured, so capture"\
-                     "is disabled there. See docs/TESTING/S1.md."
+              404|422)
+                echo "::error::The backend rejected the request ($code)."\
+                     "Check BACKEND_URL points at the Space root - the route is"\
+                     "POST <root>/internal/snapshot. Retrying would not help."
                 exit 1
+                ;;
+              503)
+                # Ours, or the platform's? Only the body knows. (One-liner, not
+                # a heredoc: an unindented heredoc body would terminate this
+                # YAML block scalar.)
+                reason=$(python3 -c "import json;d=json.load(open('response.json')).get('detail');print(d.get('code','') if isinstance(d,dict) else '')" 2>/dev/null || true)
+                case "$reason" in
+                  cron_not_configured)
+                    echo "::error::The Space has no CRON_SECRET configured, so"\
+                         "capture is disabled there. See docs/TESTING/S1.md."
+                    exit 1
+                    ;;
+                  no_database)
+                    echo "::error::The Space has no DATABASE_URL configured, so"\
+                         "there is nowhere to write a snapshot. Run step 3 of the"\
+                         "runbook in docs/TESTING/S1.md, then re-run this job."
+                    exit 1
+                    ;;
+                  *)
+                    # An unlabelled 503 is the platform's, not the app's - a
+                    # Space that went back to sleep or an edge hiccup. Retry.
+                    echo "503 with no app-level code; treating as transient."
+                    ;;
+                esac
                 ;;
             esac
             if [ "$attempt" -lt 4 ]; then
@@ -177,11 +233,15 @@ jobs:
             exit 1
           fi
           root="${BACKEND_URL%/}/"
-          for attempt in $(seq 1 24); do
-            code=$(curl -sS -o /dev/null -w '%{http_code}' -m 30 "$root" || echo 000)
-            [ "$code" = "200" ] && break
+          deadline=$(( $(date +%s) + 420 ))
+          attempt=0
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            attempt=$(( attempt + 1 ))
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -m 20 "$root" || true)
+            code=${code:-000}
             echo "wake attempt $attempt: HTTP $code"
-            sleep 15
+            if [ "$code" = "200" ]; then break; fi
+            sleep 10
           done
           # Retention is a housekeeping job, not a data-acquisition one: a
           # missed prune costs disk, and next Sunday fixes it. It still fails
@@ -190,7 +250,8 @@ jobs:
           code=$(curl -sS -X POST -m 120 \
             -H "x-cron-secret: $CRON_SECRET" \
             -o response.json -w '%{http_code}' \
-            "${BACKEND_URL%/}/internal/prune?days=90" || echo 000)
+            "${BACKEND_URL%/}/internal/prune?days=90" || true)
+          code=${code:-000}
           echo "prune: HTTP $code"
           cat response.json 2>/dev/null || true
-          [ "$code" = "200" ] || { echo "::error::Prune failed ($code)."; exit 1; }
+          if [ "$code" != "200" ]; then echo "::error::Prune failed ($code)."; exit 1; fi

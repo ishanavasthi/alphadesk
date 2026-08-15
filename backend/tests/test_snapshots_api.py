@@ -89,6 +89,44 @@ async def test_unset_cron_secret_fails_closed(
     assert response.json()["detail"]["code"] == "cron_not_configured"
 
 
+@pytest.mark.parametrize("path", INTERNAL_ROUTES)
+async def test_a_non_ascii_secret_header_is_401_not_500(
+    gate_client: AsyncClient, path: str
+) -> None:
+    """`secrets.compare_digest` raises `TypeError` on a non-ASCII `str`.
+
+    Starlette decodes headers as latin-1, so one byte above 0x7F in
+    `x-cron-secret` used to produce an unhandled 500 — a worse answer than 401
+    and a free liveness oracle for anyone probing the endpoint.
+    """
+    # Sent as raw bytes: httpx refuses to encode a non-ASCII `str` header, which
+    # is exactly why a client that *does* put such a byte on the wire (curl, or
+    # anything hand-rolled) reached code no test had ever run.
+    response = await gate_client.post(
+        path, headers={CRON_SECRET_HEADER: "sécret-non-ascii".encode("latin-1")}
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "bad_cron_secret"
+
+
+@pytest.mark.parametrize("path", INTERNAL_ROUTES)
+async def test_no_database_is_an_honest_503(
+    gate_client: AsyncClient, path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Space with a cron secret but no DATABASE_URL is half-configured.
+
+    Without this it raised on first engine use and the workflow saw an opaque
+    500, which it would dutifully retry four times against a backend that cannot
+    possibly succeed. The `code` is distinct from `cron_not_configured` so the
+    workflow can tell the two 503s apart — and both apart from a Hugging Face
+    edge 503 during a cold start, which it must keep retrying.
+    """
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    response = await gate_client.post(path, headers=CRON_AUTH)
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "no_database"
+
+
 async def test_the_admin_secret_does_not_open_the_cron_routes(
     gate_client: AsyncClient,
 ) -> None:
