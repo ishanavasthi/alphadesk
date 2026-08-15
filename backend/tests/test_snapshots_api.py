@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from api.main import app
 from api.routes.internal import CRON_SECRET_ENV, CRON_SECRET_HEADER
-from api.routes.portfolio import get_connector
+from api.routes.portfolio import connector_factory, connector_for_request
 from db.session import async_session
 from portfolio.connectors import StubConnector
 from portfolio.errors import NotLinked
@@ -195,7 +195,8 @@ async def api(test_database_url: str, monkeypatch: pytest.MonkeyPatch):
     connector = _Connector()
     app.dependency_overrides[async_session] = _session
     app.dependency_overrides[svc.optional_session] = _session
-    app.dependency_overrides[get_connector] = lambda: connector
+    app.dependency_overrides[connector_factory] = lambda: (lambda _uid: connector)
+    app.dependency_overrides[connector_for_request] = lambda: connector
     try:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://testserver"
@@ -266,9 +267,8 @@ async def test_internal_snapshot_reports_errors_without_failing_the_request(
     the retry would hammer a perfectly healthy backend all night.
     """
     client, _, _ = api
-    app.dependency_overrides[get_connector] = lambda: _Connector(
-        snapshot_error=NotLinked("no credential")
-    )
+    failing = _Connector(snapshot_error=NotLinked("no credential"))
+    app.dependency_overrides[connector_factory] = lambda: (lambda _uid: failing)
     response = await client.post("/internal/snapshot", headers=CRON_AUTH)
     assert response.status_code == 200
     assert response.json() == {

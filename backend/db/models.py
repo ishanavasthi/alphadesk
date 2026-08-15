@@ -92,6 +92,12 @@ class BrokerLink(SQLModel, table=True):
     client_secret_enc: str | None = Field(default=None)
     token_url: str | None = Field(default=None, max_length=2048)
     scope: str | None = Field(default=None, max_length=1024)
+    #: The redirect URI this client was registered against (F3). Dynamic client
+    #: registration binds a client to its `redirect_uris`, so a stored client is
+    #: only reusable while the callback URL is unchanged — a deploy that moves
+    #: the backend origin has to register a new one, and without this column
+    #: there is no way to know that except by failing the login.
+    redirect_uri: str | None = Field(default=None, max_length=2048)
 
     # --- link health ------------------------------------------------------
     supports_refresh: bool = Field(default=False)

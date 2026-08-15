@@ -18,6 +18,8 @@ on via env (LANGCHAIN_TRACING_V2); it is never disabled here.
 
 from __future__ import annotations
 
+import asyncio
+import html
 import json
 import os
 import secrets
@@ -39,8 +41,16 @@ from api.routes.internal import router as internal_router  # noqa: E402
 from api.routes.portfolio import router as portfolio_router  # noqa: E402
 from graph.graph import alphaDesk_graph, resume_after_approval  # noqa: E402
 from graph.state import PortfolioState  # noqa: E402
+from api.deps import (  # noqa: E402
+    bearer_token,
+    register_identity,
+    verify_token,
+)
+from services.snapshots import optional_session  # noqa: E402
 from tools.ind_money_auth import (  # noqa: E402
+    LOCAL_USER_ID,
     MCPAuthError,
+    OAuthStateError,
     auth_status,
     begin_login,
     complete_login,
@@ -212,6 +222,16 @@ async def root() -> Dict[str, str]:
 
 
 def _auth_html(message: str, ok: bool = False) -> HTMLResponse:
+    """The one page `/auth/callback` ever renders.
+
+    ``message`` is **always** HTML-escaped here rather than at the call sites.
+    One of those call sites echoed an attacker-controlled query parameter
+    (`?error=<script>…`) straight into the document — a reflected XSS on the
+    backend origin, which is the origin that serves this OAuth callback. Escaping
+    per-caller is a rule that has to be remembered every time somebody adds a
+    branch; escaping here is a rule that cannot be forgotten.
+    """
+    message = html.escape(message)
     color = "#16c784" if ok else "#e5484d"
     mark = "✓" if ok else "✕"
     return HTMLResponse(
@@ -226,54 +246,154 @@ display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
     )
 
 
+def admin_secret_accepted(x_alphadesk_admin_secret: Optional[str]) -> bool:
+    """**INTERIM (C0). The single place an admin header is ever accepted.**
+
+    Every other site that honours `x-alphadesk-admin-secret` calls this. That is
+    the point: this card's review found the acceptance logic had quietly grown a
+    *third* copy — an inline `compare_digest` in `_status_identity` that no
+    removal note mentioned — and a removal note that misses a site is how an
+    interim gate outlives the release that was supposed to delete it.
+
+    Fail-closed: an unset `ALPHADESK_ADMIN_SECRET` accepts nothing, so unsetting
+    it on the Space is by itself enough to close every one of those sites.
+
+    **The full removal checklist lives in `docs/SPECS/F3.md` §5 and must list
+    every caller of this function.** At card L1: delete this, its three callers,
+    and `frontend/lib/api.ts`'s `ADMIN_SECRET`.
+    """
+    if single_tenant_mode():
+        return True
+    expected = os.environ.get("ALPHADESK_ADMIN_SECRET") or ""
+    supplied = x_alphadesk_admin_secret or ""
+    if not expected or not supplied:
+        return False
+    return secrets.compare_digest(
+        supplied.encode("latin-1", "replace"), expected.encode("utf-8")
+    )
+
+
 def _require_admin(
     x_alphadesk_admin_secret: Optional[str] = Header(default=None),
 ) -> None:
-    """Interim C0 gate on connect/disconnect until per-user auth lands (V2 F3).
+    """INTERIM (C0) — raise 401 unless the admin header is accepted.
 
-    The IND Money link is still a process-wide singleton, so whoever can reach
-    /auth/login links their account to the whole server and whoever can reach
-    /auth/logout severs it for everyone. Until F3 makes links per-user, both are
-    operator-only actions guarded by the ``ALPHADESK_ADMIN_SECRET`` shared
-    secret (sent as the ``x-alphadesk-admin-secret`` header). Fail-closed: with
-    the secret unset, the endpoints are locked rather than open. Single-tenant
-    dev mode (``ALPHADESK_SINGLE_TENANT=1``, local only) bypasses the gate so
-    the in-app Connect button keeps working on the operator's machine.
+    Kept as the raising wrapper because FastAPI dependencies want one. Single-
+    tenant dev mode (``ALPHADESK_SINGLE_TENANT=1``, local only) passes, so the
+    in-app Connect button keeps working on the operator's machine.
     """
-    if single_tenant_mode():
-        return
-    expected = os.environ.get("ALPHADESK_ADMIN_SECRET") or ""
-    supplied = x_alphadesk_admin_secret or ""
-    if not expected or not supplied or not secrets.compare_digest(supplied, expected):
+    if not admin_secret_accepted(x_alphadesk_admin_secret):
         raise HTTPException(
             status_code=401,
-            detail=(
-                "Connecting or disconnecting IND Money is an operator-only "
-                "action on this deployment."
-            ),
+            detail="This is an operator-only action on this deployment.",
         )
 
 
+async def _link_identity(
+    authorization: Optional[str] = Header(default=None),
+    session: Optional[Any] = Depends(optional_session),
+) -> str:
+    """Whose broker link is being created or destroyed. **JWT only.**
+
+    `/auth/login` and `/auth/logout` are the two endpoints the interim C0 admin
+    header is deliberately *not* accepted on. Linking is identity-bound as of
+    F3: a link written under a shared operator secret would have no owner, which
+    is the precise shape of the process-wide credential this card deleted. A
+    caller with no verified identity has no link to make.
+
+    The one exception is single-tenant dev (`ALPHADESK_SINGLE_TENANT=1`, the
+    operator's own machine), which has no Clerk instance to mint a token from
+    and links as ``"local"`` exactly as it did before this card.
+    """
+    if not authorization and single_tenant_mode():
+        return LOCAL_USER_ID
+    claims = await asyncio.to_thread(verify_token, bearer_token(authorization))
+    if session is None:
+        return str(claims["sub"])
+    return await register_identity(session, claims)
+
+
+async def _status_identity(
+    authorization: Optional[str] = Header(default=None),
+    x_alphadesk_admin_secret: Optional[str] = Header(default=None),
+    session: Optional[Any] = Depends(optional_session),
+) -> Optional[str]:
+    """Whose link status to report, or None for "nobody in particular".
+
+    **This is the third interim admin-header site, and it is deliberate.** The
+    brief made `/auth/login` and `/auth/logout` JWT-only because those *write* a
+    link, and a link made under a shared secret has no owner. `/auth/status` is
+    a read, and the v1 research page polls it with no session while
+    `NEXT_PUBLIC_AUTH_ENABLED` is off — so it accepts the admin header, reports
+    the operator's own link, and is listed in the L1 removal checklist
+    (`docs/SPECS/F3.md` §5) alongside the other two. Acceptance goes through
+    :func:`admin_secret_accepted` like everything else; there is no second copy
+    of the comparison here any more.
+
+    What it will not do is answer for a user it cannot name: an anonymous caller
+    gets a flat "not connected" instead of a truthful readout of *someone
+    else's* link, which is what this endpoint used to hand to the whole
+    internet.
+
+    It registers the identity like every other authenticated entry point.
+    That matters more here than it looks: a browser that has just signed in
+    calls `/auth/status` **first**, so if this were the one path that skipped
+    registration, operator adoption would never fire for the person it exists
+    for — which is exactly what the first live run of this card found.
+    """
+    if authorization:
+        claims = await asyncio.to_thread(verify_token, bearer_token(authorization))
+        if session is None:
+            return str(claims["sub"])
+        return await register_identity(session, claims)
+    if admin_secret_accepted(x_alphadesk_admin_secret):
+        from services.adoption import admin_identity
+
+        return await admin_identity()
+    return None
+
+
 @app.get("/auth/status")
-async def auth_status_endpoint() -> Dict[str, object]:
-    """Whether the backend is authenticated with the IND Money MCP."""
-    return await auth_status()
+async def auth_status_endpoint(
+    user_id: Optional[str] = Depends(_status_identity),
+) -> Dict[str, object]:
+    """Whether **this caller** is linked to the IND Money MCP."""
+    if user_id is None:
+        return {
+            "authenticated": False,
+            "source": None,
+            "expires_at": None,
+            "expires_in_sec": None,
+            "revoked": False,
+            "undecryptable": False,
+            "user_id": None,
+        }
+    return await auth_status(user_id)
 
 
-@app.post("/auth/login", dependencies=[Depends(_require_admin)])
-async def auth_login_endpoint() -> Dict[str, str]:
-    """Begin an OAuth login; returns the authorization URL to open in a browser."""
+@app.post("/auth/login")
+async def auth_login_endpoint(
+    user_id: str = Depends(_link_identity),
+) -> Dict[str, str]:
+    """Begin an OAuth login for the signed-in user; returns the URL to open.
+
+    The `state` this mints is written to `oauth_pending` bound to ``user_id``
+    before the URL is handed out, so the callback can establish the owner
+    without trusting anything the returning browser carries.
+    """
     try:
-        url = await begin_login(AUTH_REDIRECT_URI)
+        url = await begin_login(user_id, AUTH_REDIRECT_URI)
     except MCPAuthError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     return {"authorization_url": url}
 
 
-@app.post("/auth/logout", dependencies=[Depends(_require_admin)])
-async def auth_logout_endpoint() -> Dict[str, object]:
-    """Disconnect from IND Money — forget the stored tokens for this backend."""
-    return await logout()
+@app.post("/auth/logout")
+async def auth_logout_endpoint(
+    user_id: str = Depends(_link_identity),
+) -> Dict[str, object]:
+    """Unlink IND Money for the signed-in user: revoke upstream, then delete."""
+    return await logout(user_id)
 
 
 @app.get("/auth/callback", response_class=HTMLResponse)
@@ -282,15 +402,24 @@ async def auth_callback_endpoint(
     state: Optional[str] = None,
     error: Optional[str] = None,
 ) -> HTMLResponse:
-    """OAuth redirect target — exchanges the code for tokens."""
+    """OAuth redirect target — exchanges the code for tokens.
+
+    **No identity is read off this request.** Not a cookie, not a header, not a
+    query parameter beyond the OAuth ones: the owner comes from the
+    `oauth_pending` row `state` names, which was written before the user ever
+    left for the broker. A state that is unknown, already used, or older than
+    ten minutes links nothing and says so.
+    """
     if error:
         return _auth_html(f"Authorization failed: {error}")
     if not code or not state:
         return _auth_html("Missing authorization code or state.")
     try:
         await complete_login(code, state)
-    except Exception as exc:  # noqa: BLE001
-        return _auth_html(f"Login failed: {exc}")
+    except OAuthStateError as exc:
+        return _auth_html(f"{exc} Nothing was connected.")
+    except Exception:  # noqa: BLE001 - the message can carry broker payload text
+        return _auth_html("Login failed. Please start the connection again.")
     return _auth_html("IND Money connected.", ok=True)
 
 
@@ -306,6 +435,15 @@ async def analyze(body: AnalyzeRequest) -> StreamingResponse:
     Refuses with 409 when IND Money is not connected: every agent downstream of
     the Scanner is fed by the MCP, so an unauthenticated run can only produce an
     empty "0 candidates" pipeline that looks like a real (but useless) result.
+
+    **NOT per-user yet — card F4 owns this.** `/analyze` and the rest of the Lab
+    endpoints on this module are still ungated and still run on the *ambient*
+    identity (`ind_money_auth.ambient_user_id()`: the operator in production,
+    `"local"` in single-tenant dev — never "whoever linked first"). F3 stopped
+    short of them on purpose: threading a `user_id` through the graph, the
+    in-memory run registry and the paper watchlist is F4's whole job, and half
+    of it here would have been a second identity path to keep in sync. Ledgered
+    as REQUIRED in F4 and in the L1 ambient-removal checklist.
     """
     status_now = await auth_status()
     if not status_now.get("authenticated"):

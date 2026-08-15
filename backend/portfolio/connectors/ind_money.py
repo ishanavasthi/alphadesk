@@ -144,25 +144,27 @@ _SIP_ID_KEYS = ("sip_id", "id", "fund_id", "investment_code", "ind_key")
 _DEFAULT_RETRY_AFTER_SECONDS = 5.0
 
 
-def _default_transport() -> Transport:
+def _default_transport(auth: Any) -> Transport:
+    """A transport bound to **one user's** credentials.
+
+    The token is minted from that user's `AuthStore` and passed explicitly into
+    the MCP call. Before F3 this function reached for a process-wide token and
+    the connector was, in effect, whoever had last pressed Connect — the leak
+    this card exists to close. There is no ambient token here now: no store, no
+    call.
+
+    Minting here rather than letting `_call_mcp_tool` do it is still deliberate:
+    that function flattens `MCPAuthError` into an untyped `MCPClientError`
+    string, which destroys the only signal separating "never linked" from "the
+    server is down". `_call` classifies what this lets through.
+    """
     from tools.ind_money import _call_mcp_tool  # imported lazily: needs env/auth
-    from tools.ind_money_auth import get_access_token
 
     async def call(tool_name: str, arguments: Optional[dict]) -> Any:
-        # Mint the token here rather than letting `_call_mcp_tool` do it: it
-        # flattens MCPAuthError into an untyped MCPClientError string, which
-        # destroys the only signal that separates "never linked" from "the
-        # server is down". `_call` classifies what this lets through.
-        await get_access_token()
-        return await _call_mcp_tool(tool_name, arguments)
+        token = await auth.get_token()
+        return await _call_mcp_tool(tool_name, arguments, token=token)
 
     return call
-
-
-async def _default_auth_status() -> dict:
-    from tools.ind_money_auth import auth_status
-
-    return await auth_status()
 
 
 def _now_utc() -> datetime:
@@ -170,13 +172,14 @@ def _now_utc() -> datetime:
 
 
 class IndMoneyConnector(PortfolioConnector):
-    """Read-only portfolio access to the IND Money MCP server.
+    """Read-only portfolio access to the IND Money MCP server, for **one user**.
 
-    The process holds exactly **one** credential set (the operator's, cached in
-    `backend/.ind_money_token.json`), so the connector is bound to a single
-    ``user_id`` and refuses any other. F3 replaces that with a per-user link row;
-    until then the guard is what stops a multi-user deployment from serving one
-    person's portfolio to everybody.
+    Every instance is bound to a ``user_id`` and to that user's
+    :class:`~tools.ind_money_auth.AuthStore`, and refuses a call for anybody
+    else. Before F3 the binding was a guard around a process-wide credential —
+    correct as far as it went, but the credential itself belonged to whoever had
+    linked the server. Now the credential comes from that user's
+    ``broker_links`` row, so the guard and the data agree.
     """
 
     source: ClassVar[str] = SOURCE
@@ -185,6 +188,7 @@ class IndMoneyConnector(PortfolioConnector):
         self,
         *,
         user_id: str = LOCAL_USER_ID,
+        auth: Optional[Any] = None,
         transport: Optional[Transport] = None,
         auth_status: Optional[Callable[[], Awaitable[dict]]] = None,
         clock: Callable[[], datetime] = _now_utc,
@@ -194,8 +198,13 @@ class IndMoneyConnector(PortfolioConnector):
         expiring_within_seconds: float = 300.0,
     ) -> None:
         self._user_id = user_id
-        self._transport = transport or _default_transport()
-        self._auth_status = auth_status or _default_auth_status
+        if auth is None and (transport is None or auth_status is None):
+            from tools.ind_money_auth import AuthStore
+
+            auth = AuthStore.for_user(user_id)
+        self._auth = auth
+        self._transport = transport or _default_transport(auth)
+        self._auth_status = auth_status or auth.status_verified
         self._clock = clock
         self._sleep = sleep
         self._max_retries = max(0, int(max_retries))
@@ -415,12 +424,19 @@ class IndMoneyConnector(PortfolioConnector):
         return sips
 
     async def link_health(self, user_id: str) -> LinkHealth:
-        """Derive link health from the token's observed state.
+        """Derive link health from the token's observed state, for this user.
 
         Note what is *not* done here: holding a refresh token is never treated as
         proof of health. The status provider actually verifies the credential
         (refreshing when it can), and a definitive rejection is reported as
         ``REVOKED`` rather than as a recoverable state.
+
+        The `revoked` flag is the F3 half of that promise. `status_verified()`
+        catches `MCPAuthInvalid` internally — it has to, or an idle status poll
+        would raise — and before this card it flattened that into a plain
+        `authenticated: False`, so a definitively dead grant was reported as
+        the softer NEEDS_RELINK forever. The flag carries the distinction across
+        that boundary.
         """
         self._check_user(user_id)
         if self._revoked:
@@ -435,6 +451,17 @@ class IndMoneyConnector(PortfolioConnector):
             return LinkHealth.REVOKED
         except MCPAuthError:
             return LinkHealth.NEEDS_RELINK
+
+        if status.get("undecryptable"):
+            # A stored link the server can no longer decrypt (rotated or lost
+            # `TOKEN_ENCRYPTION_KEY`). Not REVOKED — nobody revoked anything —
+            # and emphatically not a crash: re-linking is the fix, which is
+            # exactly what NEEDS_RELINK tells the dashboard to offer.
+            return LinkHealth.NEEDS_RELINK
+
+        if status.get("revoked"):
+            self._revoked = True
+            return LinkHealth.REVOKED
 
         if not status.get("authenticated"):
             return LinkHealth.NEEDS_RELINK

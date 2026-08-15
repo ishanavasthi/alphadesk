@@ -124,7 +124,10 @@ describe("lib/api.ts", () => {
     expect(api).toMatch(/withAuth\(init\.headers\)/);
   });
 
-  it("still sends the interim C0 admin header (F3 is what removes it)", () => {
+  it("still sends the interim C0 admin header (card L1 is what removes it)", () => {
+    // F3 narrowed it to `/portfolio/*` and made it optional; it cannot go away
+    // entirely until sign-in is switched on in production. Which endpoints it
+    // reaches is pinned in `auth-credentials.test.ts`.
     expect(api).toMatch(/x-alphadesk-admin-secret/);
   });
 });
