@@ -1,0 +1,13 @@
+langgraph
+langchain-groq
+langchain-openai
+langsmith
+fastapi
+uvicorn
+chromadb
+langchain-text-splitters
+pypdf
+pydantic
+mcp
+httpx
+python-dotenv
