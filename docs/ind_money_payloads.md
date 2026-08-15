@@ -207,7 +207,7 @@ data
 
 > ⚠️ **`IND_STOCK` — the one asset type AlphaDesk exists for — returned zero
 > holdings rows on this account.** The row shape inside Shape A's `holdings`
-> array is therefore **completely unverified for Indian equity**. It may match
+> array is therefore **completely unverified for Indian stocks**. It may match
 > Shape A's row shape; it may be a broker-native row (which would explain the
 > `holding_error` / `is_pledge_eligible` / MTF fields). We do not know, and no
 > amount of re-reading these captures will tell us.
@@ -491,15 +491,15 @@ total. D1, S1 and A1 survive.
 - **F3 (per-user linking) — CONFIRMED, not changed.** Use one pre-registered
   OAuth client, per-user tokens (Q5).
 
-**The one blocking unknown a human must weigh before M1 writes the equity
-model:** `IND_STOCK` — the entire point of AlphaDesk — returned **zero holdings
+**The one blocking unknown a human must weigh before M1 writes the
+`IND_STOCK` model:** `IND_STOCK` — the entire point of AlphaDesk — returned **zero holdings
 rows** on the operator's account, inside a payload envelope that shares almost
-no keys with the other asset types. **We have never seen an Indian-equity
+no keys with the other asset types. **We have never seen an `IND_STOCK`
 holding row.** M1 can safely model `networth_snapshot` and the aggregator-shape
 holdings today, but any `IND_STOCK` row model would be invention. Recommended
 sequencing: build M1 against the verified shapes and the committed fixtures,
 keep the `IND_STOCK` row model behind an explicitly-unverified boundary, and
-re-run the capture against an account holding Indian equity before D1 renders a
+re-run the capture against an account holding Indian stocks before D1 renders a
 holdings table.
 
 ---
