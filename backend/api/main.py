@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 # before the graph and agents read them.
 load_dotenv()
 
+from api.routes.portfolio import router as portfolio_router  # noqa: E402
 from graph.graph import alphaDesk_graph, resume_after_approval  # noqa: E402
 from graph.state import PortfolioState  # noqa: E402
 from tools.ind_money_auth import (  # noqa: E402
@@ -76,6 +77,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Read-only portfolio routes for the D1 dashboard (card D1). Every route on this
+# router is gated by the same admin secret as /auth/login — see
+# `api/routes/portfolio.py`, which reuses `_require_admin` below.
+app.include_router(portfolio_router)
 
 
 # --------------------------------------------------------------------------- #
