@@ -437,6 +437,14 @@ ordering is the refactor trap it looks like.
   `(user_id, captured_on)` makes the retry a free no-op.
 - **Third net:** opportunistic capture when a user loads the dashboard and the
   most recent trading day's row is missing.
+- **Daily USD/INR rate** (operator decision, 2026-08-15): each capture run
+  also fetches `https://api.frankfurter.dev/v2/rate/USD/INR` (free, keyless,
+  ECB reference; shape `{date, base, quote, rate}`; publishes once per working
+  day ~20:30 IST, so the 23:45 IST run gets same-day data) and stores it as
+  `snapshot_days.usd_inr_rate NUMERIC` for later INR/USD conversion math
+  (US-stock exposure display, not re-summing — holdings stay vendor-INR).
+  Weekend/holiday runs store the most recent published rate. A failed FX
+  fetch must NOT fail the snapshot — store NULL and log.
 - **Staleness is visible, not assumed.** `keepalive.yml` documents that GitHub
   disables scheduled workflows after 60 days of repo inactivity — so the job can
   silently stop, along with keepalive. The dashboard shows *"history paused — last
@@ -667,7 +675,8 @@ oauth_pending      state (PK) | user_id FK | source | verifier | redirect_uri
                    (TTL 10 min, single use)
 
 snapshot_days      id | user_id FK | captured_on DATE (IST-derived) | total_value NUMERIC
-                   | currency | captured_at   UNIQUE (user_id, captured_on)
+                   | currency | usd_inr_rate NUMERIC NULL | captured_at
+                   UNIQUE (user_id, captured_on)
 
 snapshot_holdings  id | snapshot_id FK | source | external_id | asset_type | symbol
                    | isin | units | avg_cost | invested_amount NULL
