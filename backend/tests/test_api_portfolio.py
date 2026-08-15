@@ -26,7 +26,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
-from api.routes.portfolio import get_connector
+from api.routes.portfolio import connector_for_request
 from portfolio.connectors import PortfolioConnector, StubConnector
 from portfolio.errors import (
     NonInrValue,
@@ -107,12 +107,12 @@ class _RaisingConnector(PortfolioConnector):
 
 
 def _client(connector: PortfolioConnector) -> Iterator[TestClient]:
-    app.dependency_overrides[get_connector] = lambda: connector
+    app.dependency_overrides[connector_for_request] = lambda: connector
     try:
         with TestClient(app) as client:
             yield client
     finally:
-        app.dependency_overrides.pop(get_connector, None)
+        app.dependency_overrides.pop(connector_for_request, None)
 
 
 @pytest.fixture

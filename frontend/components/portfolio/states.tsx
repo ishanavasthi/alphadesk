@@ -93,21 +93,20 @@ export function ConnectGate({
 }
 
 /**
- * No admin secret in this build.
+ * This build has no credential it could send.
  *
- * This is the interim exposure gate seen from the browser: `/portfolio` serves
- * one real person's holdings under a hard-coded user id, so it stays locked
- * everywhere except a machine that deliberately configured the operator secret
- * locally. Card F3 replaces the whole mechanism with per-user auth, and this
- * state disappears with it.
+ * The backend is per-user as of card F3, so the credential that matters is a
+ * Clerk session token. Until card L1 turns sign-in on, this build has none to
+ * offer, and the interim operator secret is the only thing left — so a build
+ * without it is locked. Both this state and the secret disappear at L1.
  */
 export function LockedState() {
   return (
     <Gate glyph="🔒" title="Portfolio is locked on this deployment">
       <p className="mb-3 text-[13px] text-muted-foreground">
-        These routes serve a single real account under the interim operator gate, so they stay
-        closed until <b className="font-semibold text-foreground">card F3</b> lands per-user
-        accounts and each person sees only their own portfolio.
+        The backend serves each person their own portfolio, but sign-in is not switched on in
+        this build yet — so there is no account to see it as. It opens at{" "}
+        <b className="font-semibold text-foreground">card L1</b>.
       </p>
       <p className="text-xs text-[var(--adp-faint)]">
         Running this locally? Put <code>NEXT_PUBLIC_ALPHADESK_ADMIN_SECRET</code> in{" "}
@@ -115,19 +114,20 @@ export function LockedState() {
         compiled into the public bundle.
       </p>
       <div className="mt-3.5">
-        <Badge variant="soon">F3 · accounts</Badge>
+        <Badge variant="soon">L1 · sign-in</Badge>
       </div>
     </Gate>
   );
 }
 
-/** The gate rejected the configured secret. */
+/** The backend answered 401: no valid session, and no accepted operator secret. */
 export function UnauthorizedState() {
   return (
-    <Gate glyph="⚠" title="The operator secret was rejected">
+    <Gate glyph="⚠" title="Not signed in">
       <p className="text-[13px] text-muted-foreground">
-        The backend answered 401. <code>NEXT_PUBLIC_ALPHADESK_ADMIN_SECRET</code> in
-        <code> frontend/.env.local</code> has to match <code>ALPHADESK_ADMIN_SECRET</code> in the
+        The backend answered 401. Sign in to see your own portfolio — or, on an operator build,
+        check that <code>NEXT_PUBLIC_ALPHADESK_ADMIN_SECRET</code> in
+        <code> frontend/.env.local</code> matches <code>ALPHADESK_ADMIN_SECRET</code> in the
         backend&rsquo;s environment.
       </p>
     </Gate>

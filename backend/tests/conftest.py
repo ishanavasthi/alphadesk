@@ -168,6 +168,40 @@ _ALL_TABLES = (
 
 
 @pytest_asyncio.fixture
+async def db_env(test_database_url: str, monkeypatch: pytest.MonkeyPatch):
+    """Point the **application's** engine at the test database (card F3).
+
+    `db_session` hands a test its own session. That is not enough for code whose
+    whole point is that it opens its own — `AuthStore` reads and writes a
+    `broker_links` row from wherever the request happens to be, so it goes
+    through `db.session.get_sessionmaker()`. This fixture makes that factory
+    resolve to the same throwaway `<db>_test` database, disposes the engine on
+    both sides of the test so no pooled connection outlives it, and truncates
+    afterwards.
+
+    Yields a sessionmaker for the test's own assertions about raw rows.
+    """
+    from db import session as db_session_module
+
+    monkeypatch.setenv("DATABASE_URL", test_database_url)
+    await db_session_module.dispose_engine()
+
+    engine = create_async_engine(test_database_url)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        yield maker
+    finally:
+        await db_session_module.dispose_engine()
+        async with engine.begin() as conn:
+            from sqlalchemy import text
+
+            await conn.execute(
+                text(f"TRUNCATE {', '.join(_ALL_TABLES)} RESTART IDENTITY CASCADE")
+            )
+        await engine.dispose()
+
+
+@pytest_asyncio.fixture
 async def db_session(test_database_url: str):
     """A clean `AsyncSession`; every table is truncated afterwards."""
     engine = create_async_engine(test_database_url)

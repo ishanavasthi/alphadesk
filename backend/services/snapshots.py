@@ -553,10 +553,13 @@ async def _fetch_bucket(
 async def capture_users(session: AsyncSession) -> list[str]:
     """Which users a batch run should try.
 
-    Every user with a broker link — and, before F3 lands per-user links, the
-    single constant `"local"` the whole stack is keyed on. The union is not a
-    guess about the future: it is what makes the F3 cutover a data migration
-    rather than an edit to this function.
+    Every user with a broker link. Before F3 the only such link was the
+    process-wide one keyed on `"local"`, and this fell back to that constant so
+    the nightly job had something to do; the fallback stays for exactly the
+    window in which the operator's pre-F3 row is still keyed that way. Once
+    adoption has moved it onto a Clerk id, the fallback stops firing because the
+    query returns a real user — which is what makes the cutover a data
+    migration rather than an edit to this function.
     """
     rows = await session.execute(select(distinct(BrokerLink.user_id)))
     linked = [row[0] for row in rows.all()]
@@ -566,7 +569,8 @@ async def capture_users(session: AsyncSession) -> list[str]:
 async def capture_all(
     session: AsyncSession,
     *,
-    connector: PortfolioConnector,
+    connector: Optional[PortfolioConnector] = None,
+    connector_factory: Optional[Callable[[str], PortfolioConnector]] = None,
     user_ids: Optional[Sequence[str]] = None,
     now: Optional[datetime] = None,
     fx: Optional[FxFetcher] = None,
@@ -580,7 +584,15 @@ async def capture_all(
     a mapping error costs exactly that user's day and nothing else. The batch is
     serial rather than gathered because the rate limits are per *account* at the
     source and a fan-out would trip them the moment there is more than one user.
+
+    ``connector_factory`` is how a real run gets **one connector per user** —
+    the F3 shape, since a connector now carries a specific user's credentials.
+    ``connector`` is the single-connector form, kept for the tests and callers
+    that genuinely have one user in scope; passing it for a multi-user batch
+    would (correctly) fail every user but the one it is bound to.
     """
+    if connector is None and connector_factory is None:
+        raise ValueError("capture_all needs a connector or a connector_factory")
     now = now or _now_utc()
     day = attributed_day(now)
     ids = list(user_ids) if user_ids is not None else await capture_users(session)
@@ -591,7 +603,10 @@ async def capture_all(
             outcome = await capture_user(
                 session,
                 user_id,
-                connector=connector,
+                connector=(
+                    connector_factory(user_id) if connector_factory is not None
+                    else connector
+                ),
                 now=now,
                 fx=fx,
                 sleep=sleep,

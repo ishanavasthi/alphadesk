@@ -23,12 +23,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import SnapshotDay, SnapshotHolding, SnapshotRaw, User
-from portfolio.connectors import StubConnector
+from portfolio.connectors import PortfolioConnector, StubConnector
 from portfolio.errors import (
     NotLinked,
     RateLimited,
     SourceUnavailable,
     UnsupportedAssetType,
+    UserScopeError,
 )
 from portfolio.models import AssetType, Holding, LinkHealth, PortfolioSnapshot
 from services import snapshots as svc
@@ -740,3 +741,69 @@ async def test_single_flight_releases_after_a_failure() -> None:
             raise RuntimeError("boom")
     async with svc.single_flight(USER) as again:
         assert again is True
+
+
+async def test_the_batch_builds_one_connector_per_user(
+    db_session: AsyncSession,
+) -> None:
+    """**The seam the M1 singleton used to occupy.**
+
+    `capture_all` is the one caller that iterates users, so it is the one place
+    where "the connector is per user" can silently stop being true — a cron job
+    that binds every user to the operator's credential writes one person's
+    holdings into everybody's history, and nothing else in the system would
+    notice. So the factory records the id it was asked for, and each connector
+    it returns **refuses** any other user, which is what makes
+    `connector_factory("local")` (or any other constant) fail here rather than
+    quietly pass.
+    """
+    asked: list[str] = []
+
+    class BoundConnector(ScriptedConnector):
+        """Exactly what `IndMoneyConnector` is: usable by one user only."""
+
+        def __init__(self, user_id: str) -> None:
+            super().__init__()
+            self._bound = user_id
+
+        def _check(self, user_id: str) -> None:
+            if user_id != self._bound:
+                raise UserScopeError(
+                    f"connector bound to {self._bound!r} cannot serve {user_id!r}"
+                )
+
+        async def fetch_snapshot(self, user_id: str) -> PortfolioSnapshot:
+            self._check(user_id)
+            return await StubConnector().fetch_snapshot(USER)
+
+        async def fetch_holdings(
+            self, user_id: str, asset_type: AssetType
+        ) -> list[Holding]:
+            self._check(user_id)
+            return await StubConnector().fetch_holdings(USER, asset_type)
+
+    def factory(user_id: str) -> PortfolioConnector:
+        asked.append(user_id)
+        return BoundConnector(user_id)
+
+    report = await svc.capture_all(
+        db_session,
+        connector_factory=factory,
+        user_ids=["alice", "bob"],
+        now=PRIMARY_RUN,
+        fx=_fx_ok,
+        sleep=_no_sleep,
+        call_spacing=0,
+    )
+
+    assert asked == ["alice", "bob"], "one connector per user, in order"
+    assert report.users_captured == 2
+    assert report.errors == 0
+    assert {d.user_id for d in await _days(db_session)} == {"alice", "bob"}
+
+
+async def test_the_batch_refuses_to_run_with_no_connector_at_all(
+    db_session: AsyncSession,
+) -> None:
+    with pytest.raises(ValueError):
+        await svc.capture_all(db_session, user_ids=["alice"], now=PRIMARY_RUN)

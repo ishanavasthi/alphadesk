@@ -14,6 +14,7 @@ import {
   type PortfolioHolding,
   type PortfolioSummary,
 } from "@/lib/api";
+import { AUTH_ENABLED } from "@/lib/auth";
 import { AllocationBars, AllocationBarsSkeleton } from "@/components/portfolio/AllocationBars";
 import { CapStrip } from "@/components/portfolio/CapStrip";
 import { HoldingsTable } from "@/components/portfolio/HoldingsTable";
@@ -133,7 +134,10 @@ export default function PortfolioPage() {
   const sectorToken = useRef(0);
 
   useEffect(() => {
-    if (!ADMIN_SECRET) {
+    // Flag off, the admin secret is the only credential this build can send, so
+    // its absence is a locked build. Flag on, a signed-out visitor is a normal
+    // state the backend answers 401 for, and `unauthorized` is what renders.
+    if (!ADMIN_SECRET && !AUTH_ENABLED) {
       setPhase("locked");
       return;
     }

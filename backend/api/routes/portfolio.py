@@ -8,9 +8,10 @@ rules shape the whole file:
    `tools/ind_money.py`, and no vendor field name appears in this file — the
    boundary M1 established (`docs/SPECS/M1.md` §8) does not stop at
    `backend/portfolio/`.
-2. **Every route is gated** by the interim C0 admin secret. These endpoints
-   serve the operator's *real* portfolio under a hard-coded ``user_id`` and no
-   per-user auth exists until F3 — see :func:`_admin_gate`.
+2. **Every route is per user.** The user id comes from a verified Clerk session
+   token, or — until card L1 turns sign-in on in production — from the interim
+   C0 admin secret, which acts as the operator. See :func:`portfolio_identity`
+   and :func:`_admin_identity`; the second of those is marked for deletion.
 3. **No source failure becomes a raw 500.** Every ``PortfolioSourceError`` maps
    to a status the frontend can act on, with a machine-readable ``code``.
 
@@ -28,25 +29,27 @@ grid.
 
 S1 added the two writes on this router — ``POST /portfolio/capture`` and the
 fire-and-forget capture ``/summary`` starts when today's attributed day has no
-row yet — plus a real ``/history``. Both stay behind the same admin gate as the
-reads: they act on the operator's own account. The **cron-triggered** capture
+row yet — plus a real ``/history``. Both stay behind the same identity as the
+reads: they act on the caller's own account. The **cron-triggered** capture
 lives on a separate router with a separate secret (`api/routes/internal.py`),
-because a scheduled runner is not an operator.
+because a scheduled runner is not a person.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone
 from decimal import Decimal
+from collections.abc import Callable
 from typing import Any, NoReturn, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.deps import bearer_token, register_identity, verify_token
 from portfolio.connectors import (
-    LOCAL_USER_ID,
     IndMoneyConnector,
     PortfolioConnector,
     StubConnector,
@@ -123,56 +126,127 @@ def _needs_capture(captured_at: Optional[datetime]) -> bool:
     return attributed_day(captured_at) < attributed_day(datetime.now(timezone.utc))
 
 
-def _admin_gate(
-    x_alphadesk_admin_secret: Optional[str] = Header(default=None),
-) -> None:
-    """Interim exposure gate — the C0 admin secret, on every portfolio route.
+# --------------------------------------------------------------------------- #
+# Who is asking?
+# --------------------------------------------------------------------------- #
+async def _admin_identity(supplied: Optional[str]) -> str:
+    """INTERIM — the C0 admin-secret path. **Delete this at card L1.**
 
-    Reuses ``api.main._require_admin`` rather than re-deriving the comparison:
-    one gate, one fail-closed rule, one place to delete when F3 lands per-user
-    auth. The import is deferred because `api.main` mounts this router, so a
-    module-level import would be circular.
+    Removal is one function and its two call sites: this, and the
+    `x_alphadesk_admin_secret` parameter of :func:`portfolio_identity`. It dies
+    the moment `ALPHADESK_ADMIN_SECRET` is unset in the Space, which is part of
+    the L1 release checklist (`docs/SPECS/F3.md` §interim).
 
-    Why a gate at all on read-only routes: until F3 there is no user identity
-    anywhere in the stack, and these routes serve **the operator's real
-    holdings** under the constant ``user_id="local"``. Ungated, deploying this
-    dashboard would publish one person's net worth to anyone who can reach the
-    URL. Single-tenant dev mode (``ALPHADESK_SINGLE_TENANT=1``, the operator's
-    own machine) bypasses it exactly as it does for connect/disconnect.
+    Why it survives F3 at all: `NEXT_PUBLIC_AUTH_ENABLED` is **off** in
+    production until L1, so the deployed frontend has no sign-in UI and can mint
+    no Clerk token. A pure-JWT gate here would lock the operator out of their own
+    dashboard for the whole interval between this card and that release — the
+    exact failure F2 §1 declined to cause. So `/portfolio/*` accepts either.
+
+    `/auth/login` and `/auth/logout` do **not**. Linking is identity-bound now,
+    and an admin-header link path is precisely what C0 existed to stop.
+
+    The identity an admin-header request acts as is the operator's — their Clerk
+    id once they have signed in (adoption moved the data there) and ``"local"``
+    before that (where the data still is). Never a stranger, never "the only
+    user in the table"; see `services.adoption.admin_identity`.
     """
     from api.main import _require_admin
 
-    _require_admin(x_alphadesk_admin_secret)
+    _require_admin(supplied)
+    from services.adoption import admin_identity
+
+    return await admin_identity()
 
 
-router = APIRouter(prefix="/portfolio", tags=["portfolio"], dependencies=[Depends(_admin_gate)])
+async def portfolio_identity(
+    authorization: Optional[str] = Header(default=None),
+    x_alphadesk_admin_secret: Optional[str] = Header(default=None),
+    # `optional_session` is the *lazy* session dependency: it yields None when
+    # `DATABASE_URL` is unset and otherwise hands over a session object without
+    # connecting, so resolving it before the token costs nothing and cannot
+    # 500. (`api.deps.current_user` needs the stricter ordering — it depends on
+    # `async_session`, which raises on an unconfigured database — and gets it by
+    # depending on `verified_claims` ahead of the session.)
+    session: Optional[AsyncSession] = Depends(optional_session),
+) -> str:
+    """The user these routes serve: a verified Clerk id, or the interim operator.
 
-_connector: Optional[PortfolioConnector] = None
+    A JWT wins whenever one is present, so the moment L1 flips the flag every
+    request is identity-bound with no further change here. A request with **no**
+    `Authorization` header falls through to the interim admin path above.
+
+    A *bad* `Authorization` header is a 401, never a fall-through to the admin
+    secret: letting a rejected token retry as an anonymous admin request would
+    make the weaker credential the effective one.
+    """
+    if authorization:
+        claims = await asyncio.to_thread(verify_token, bearer_token(authorization))
+        if session is None:
+            # No database on this deployment: the token is still the identity,
+            # there is simply nowhere to record that we have seen it.
+            return str(claims["sub"])
+        return await register_identity(session, claims)
+    return await _admin_identity(x_alphadesk_admin_secret)
 
 
-def _build_connector() -> PortfolioConnector:
+router = APIRouter(prefix="/portfolio", tags=["portfolio"])
+
+#: One connector per user id. `IndMoneyConnector` remembers that the source
+#: definitively revoked *that user's* grant, and that memory is worth keeping —
+#: but it is per user, so a process-wide singleton would have been a shared
+#: credential wearing a cache's clothes.
+_connectors: dict[str, PortfolioConnector] = {}
+
+#: Ceiling on the cache. On overflow it is dropped wholesale: the only cost is
+#: re-learning revocation states, and an LRU here would be machinery guarding a
+#: cheap object.
+_CONNECTOR_CACHE_MAX = 1000
+
+
+def _build_connector(user_id: str) -> PortfolioConnector:
     if (os.environ.get(SOURCE_ENV) or "").strip().lower() == "stub":
         return StubConnector()
-    return IndMoneyConnector(user_id=LOCAL_USER_ID)
+    return IndMoneyConnector(user_id=user_id)
 
 
-def get_connector() -> PortfolioConnector:
-    """The process-wide connector.
+def get_connector(user_id: str) -> PortfolioConnector:
+    """The connector serving ``user_id``, created on first use.
 
-    Deliberately a singleton: ``IndMoneyConnector`` remembers that the source
-    definitively revoked our grant, and that memory is worthless if every
-    request builds a fresh instance that has to learn it again.
+    **Takes the user id.** The pre-F3 signature took nothing and returned the
+    one connector the process had, which is how a single credential ended up
+    answering for every caller. Any new call site that cannot name a user is a
+    call site that should not be reading holdings.
     """
-    global _connector
-    if _connector is None:
-        _connector = _build_connector()
-    return _connector
+    connector = _connectors.get(user_id)
+    if connector is None:
+        if len(_connectors) >= _CONNECTOR_CACHE_MAX:
+            _connectors.clear()
+        connector = _build_connector(user_id)
+        _connectors[user_id] = connector
+    return connector
+
+
+def connector_for_request(
+    user_id: str = Depends(portfolio_identity),
+) -> PortfolioConnector:
+    """FastAPI wiring for :func:`get_connector`. One per request, per user."""
+    return get_connector(user_id)
+
+
+def connector_factory() -> Callable[[str], PortfolioConnector]:
+    """:func:`get_connector` itself, as a dependency.
+
+    The batch snapshot job has no single user, so it needs the *factory* rather
+    than a connector. Named rather than a lambda so a test can override it —
+    an anonymous dependency cannot be looked up in `dependency_overrides`.
+    """
+    return get_connector
 
 
 def reset_connector() -> None:
-    """Drop the cached connector (tests, and a source switch in dev)."""
-    global _connector
-    _connector = None
+    """Drop every cached connector (tests, and a source switch in dev)."""
+    _connectors.clear()
 
 
 # --------------------------------------------------------------------------- #
@@ -229,10 +303,11 @@ def _snapshot_json(
     snapshot: PortfolioSnapshot,
     link_health: str,
     captured_at: Optional[datetime] = None,
+    user_id: str = "",
 ) -> dict[str, Any]:
     pnl, pnl_pct = derive_pnl(snapshot.gross_value, snapshot.invested_total)
     return {
-        "user_id": LOCAL_USER_ID,
+        "user_id": user_id,
         "source": snapshot.source,
         "as_of": snapshot.as_of.isoformat(),
         "currency": snapshot.currency,
@@ -398,7 +473,8 @@ def _breakdown_by(value: str) -> BreakdownBy:
 # --------------------------------------------------------------------------- #
 @router.get("/summary")
 async def summary(
-    connector: PortfolioConnector = Depends(get_connector),
+    user_id: str = Depends(portfolio_identity),
+    connector: PortfolioConnector = Depends(connector_for_request),
     session: Optional[AsyncSession] = Depends(optional_session),
 ) -> dict[str, Any]:
     """Headline totals, the snapshot's four breakdowns, and link health.
@@ -413,20 +489,21 @@ async def summary(
     source can still be asked about today.
     """
     try:
-        health = await connector.link_health(LOCAL_USER_ID)
-        snapshot = await connector.fetch_snapshot(LOCAL_USER_ID)
+        health = await connector.link_health(user_id)
+        snapshot = await connector.fetch_snapshot(user_id)
     except PortfolioSourceError as exc:
         _fail(exc)
 
-    captured_at = await _last_captured_at(session, LOCAL_USER_ID)
+    captured_at = await _last_captured_at(session, user_id)
     if session is not None and _needs_capture(captured_at):
-        schedule_capture_if_missing(LOCAL_USER_ID, connector)
-    return _snapshot_json(snapshot, health.value, captured_at)
+        schedule_capture_if_missing(user_id, connector)
+    return _snapshot_json(snapshot, health.value, captured_at, user_id)
 
 
 @router.post("/capture")
 async def capture(
-    connector: PortfolioConnector = Depends(get_connector),
+    user_id: str = Depends(portfolio_identity),
+    connector: PortfolioConnector = Depends(connector_for_request),
     session: Optional[AsyncSession] = Depends(optional_session),
 ) -> dict[str, Any]:
     """Capture today's attributed day now — the top bar's "Capture snapshot".
@@ -453,7 +530,7 @@ async def capture(
     # (The fire-and-forget net in `/summary` is the opposite case and opens its
     # own, because a request-scoped session is closed by the time it runs.)
     outcome = await capture_if_missing(
-        LOCAL_USER_ID, connector=connector, session=session
+        user_id, connector=connector, session=session
     )
     if outcome is None:
         return {"status": "in_flight", "captured_on": None}
@@ -469,7 +546,8 @@ async def capture(
 @router.get("/holdings")
 async def holdings(
     asset_type: str = Query(..., description="One of the 16 queryable asset types."),
-    connector: PortfolioConnector = Depends(get_connector),
+    user_id: str = Depends(portfolio_identity),
+    connector: PortfolioConnector = Depends(connector_for_request),
 ) -> dict[str, Any]:
     """Rows for **one** asset type.
 
@@ -480,7 +558,7 @@ async def holdings(
     """
     parsed = _asset_type(asset_type)
     try:
-        rows = await connector.fetch_holdings(LOCAL_USER_ID, parsed)
+        rows = await connector.fetch_holdings(user_id, parsed)
     except PortfolioSourceError as exc:
         _fail(exc)
     return {
@@ -494,7 +572,8 @@ async def holdings(
 async def allocation(
     asset_type: str = Query(..., description="One of the 16 queryable asset types."),
     by: str = Query(..., description="assets | sector | market_cap"),
-    connector: PortfolioConnector = Depends(get_connector),
+    user_id: str = Depends(portfolio_identity),
+    connector: PortfolioConnector = Depends(connector_for_request),
 ) -> dict[str, Any]:
     """One ``(asset_type, by)`` breakdown, fetched lazily.
 
@@ -504,7 +583,7 @@ async def allocation(
     parsed = _asset_type(asset_type)
     parsed_by = _breakdown_by(by)
     try:
-        result = await connector.fetch_allocation(LOCAL_USER_ID, parsed, parsed_by)
+        result = await connector.fetch_allocation(user_id, parsed, parsed_by)
     except PortfolioSourceError as exc:
         _fail(exc)
     return _allocation_json(result)
@@ -513,6 +592,7 @@ async def allocation(
 @router.get("/history")
 async def history(
     days: int = Query(90, ge=1, le=1825, description="Window length in days."),
+    user_id: str = Depends(portfolio_identity),
     session: Optional[AsyncSession] = Depends(optional_session),
 ) -> dict[str, Any]:
     """Net-worth history from the captured daily snapshots.
@@ -536,8 +616,8 @@ async def history(
             "note": "No database is configured, so no history is being captured.",
         }
     try:
-        points = await history_points(session, LOCAL_USER_ID, days=days)
-        captured_at = await last_captured_at(session, LOCAL_USER_ID)
+        points = await history_points(session, user_id, days=days)
+        captured_at = await last_captured_at(session, user_id)
     except Exception:  # noqa: BLE001 - history is additive; it never fails the page
         _log.warning("portfolio history unavailable", exc_info=True)
         return {
@@ -563,4 +643,12 @@ async def history(
     }
 
 
-__all__ = ["SOURCE_ENV", "get_connector", "reset_connector", "router"]
+__all__ = [
+    "SOURCE_ENV",
+    "connector_factory",
+    "connector_for_request",
+    "get_connector",
+    "portfolio_identity",
+    "reset_connector",
+    "router",
+]

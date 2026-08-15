@@ -19,12 +19,13 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+from collections.abc import Callable
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.routes.portfolio import get_connector
+from api.routes.portfolio import connector_factory as connector_factory_dep
 from portfolio.connectors import PortfolioConnector
 from services.snapshots import (
     RAW_RETENTION_DAYS,
@@ -127,13 +128,14 @@ router = APIRouter(
 @router.post("/snapshot")
 async def snapshot(
     session: Optional[AsyncSession] = Depends(optional_session),
-    # The same process-wide connector the dashboard reads through, injected the
-    # same way. Deliberately shared: `IndMoneyConnector` remembers a definitive
-    # revocation, and a capture job that built its own instance would re-learn
-    # that fact by making a doomed call every night. Declared as a dependency
-    # rather than called inline so a test can substitute it the same way it does
-    # for `/portfolio/*`.
-    connector: PortfolioConnector = Depends(get_connector),
+    # The same connector *cache* the dashboard reads through — a factory now,
+    # because a connector is bound to one user's credentials since F3 and this
+    # job runs over every linked user. Still shared per user rather than rebuilt:
+    # `IndMoneyConnector` remembers a definitive revocation, and a capture job
+    # that built a fresh instance would re-learn that fact by making a doomed
+    # call every night. Declared as a dependency so a test can substitute it the
+    # same way it does for `/portfolio/*`.
+    connector_factory: Callable[[str], PortfolioConnector] = Depends(connector_factory_dep),
 ) -> dict[str, Any]:
     """Capture today's attributed day for every user that needs it.
 
@@ -146,7 +148,9 @@ async def snapshot(
     failed, and conflating "three users are unlinked" with "the backend is down"
     would make the retry hammer a healthy server.
     """
-    report = await capture_all(_require_database(session), connector=connector)
+    report = await capture_all(
+        _require_database(session), connector_factory=connector_factory
+    )
     log.info(
         "snapshot run for %s: captured=%d skipped=%d errors=%d",
         report.captured_on,
