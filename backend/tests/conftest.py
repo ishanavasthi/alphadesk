@@ -9,10 +9,15 @@ lie about. The default target is the local Docker container from
       -e POSTGRES_PASSWORD=test -e POSTGRES_DB=alphadesk \
       -p 5433:5432 postgres:16
 
-Point `TEST_DATABASE_URL` (or `DATABASE_URL`) somewhere else to override. The
-fixture creates a **separate `<db>_test` database** on the same server so a dev
-DB is never touched, and builds its schema by running `alembic upgrade head` —
-the tests therefore exercise the migration, not a parallel `create_all()`.
+Point `TEST_DATABASE_URL` somewhere else to override. The fixture creates a
+**separate `<db>_test` database** on the same server so a dev DB is never
+touched, and builds its schema by running `alembic upgrade head` — the tests
+therefore exercise the migration, not a parallel `create_all()`.
+
+**Safety guard:** the fixture runs `DROP DATABASE ... WITH (FORCE)`, so an
+inherited `DATABASE_URL` is only honoured when it points at loopback. Anything
+else must be named explicitly in `TEST_DATABASE_URL` — see
+`resolve_test_database_url()`.
 
 If no Postgres is reachable, the DB tests skip with a message naming the URL
 tried. Everything else (crypto, tracing) runs with no services at all.
@@ -45,9 +50,55 @@ def encryption_key(monkeypatch: pytest.MonkeyPatch) -> str:
     return TEST_ENCRYPTION_KEY
 
 
+#: Hosts the suite is willing to run `DROP DATABASE` against without being told
+#: to explicitly. Everything else is assumed to be someone's real server.
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]", ""})
+
+
+class UnsafeTestDatabase(RuntimeError):
+    """Raised when the suite would drop a database on a non-loopback host."""
+
+
+def resolve_test_database_url(
+    test_database_url: str | None,
+    database_url: str | None,
+    default: str = DEFAULT_TEST_DB_URL,
+) -> str:
+    """Pick the server the suite may create and drop `<db>_test` on.
+
+    The fixture below runs `DROP DATABASE ... WITH (FORCE)`. That is fine
+    against a throwaway local container and catastrophic against a staging or
+    production Postgres — so inheriting `DATABASE_URL` from the shell is only
+    allowed when it points at loopback. A remote target must be named
+    explicitly in `TEST_DATABASE_URL`, which is a deliberate act rather than a
+    leftover export.
+
+    `TEST_DATABASE_URL` itself is trusted whatever the host: naming it *is* the
+    confirmation.
+    """
+    if test_database_url:
+        return async_url(test_database_url)
+
+    if database_url:
+        host = (urlsplit(async_url(database_url)).hostname or "").lower()
+        if host not in LOOPBACK_HOSTS:
+            raise UnsafeTestDatabase(
+                f"Refusing to run the test suite against DATABASE_URL (host "
+                f"{host!r}): the suite creates and DROPs a <db>_test database, "
+                "and an inherited DATABASE_URL is usually a leftover export "
+                "pointing at a real server. Set TEST_DATABASE_URL explicitly if "
+                "you really mean this host, or unset DATABASE_URL to use the "
+                f"local default ({default})."
+            )
+        return async_url(database_url)
+
+    return async_url(default)
+
+
 def _base_url() -> str:
-    raw = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL") or DEFAULT_TEST_DB_URL
-    return async_url(raw)
+    return resolve_test_database_url(
+        os.getenv("TEST_DATABASE_URL"), os.getenv("DATABASE_URL")
+    )
 
 
 def _with_database(url: str, name: str) -> str:

@@ -59,7 +59,7 @@ depends on an internal guard, so a bump is exactly when it could rot.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 from langchain_core.callbacks.base import BaseCallbackManager
 from langchain_core.runnables import RunnableConfig
@@ -68,6 +68,7 @@ from langchain_core.tracers.langchain import LangChainTracer
 
 __all__ = [
     "PORTFOLIO_TRACING_TAG",
+    "disabled_tracers",
     "has_live_tracer",
     "is_tracing_disabled",
     "portfolio_runnable_config",
@@ -84,15 +85,22 @@ class _NullLangSmithClient:
 
     Silent rather than raising: if a future langchain-core starts poking the
     client on an ignored handler, the portfolio graph should keep working. The
-    counter is what turns that silence into a test assertion.
+    call log is what turns that silence into a test assertion.
+
+    **`calls` is class-level on purpose.** langchain re-instantiates the
+    handler (`self.__class__(...)` in `copy_with_metadata_defaults()`) whenever
+    a config carries metadata, which hands the copy a *fresh* client — so a log
+    kept per instance would leave the singleton's list empty no matter what the
+    handler that actually ran did, and the assertion would be vacuous. One
+    shared list means any copy's activity is visible from anywhere.
     """
 
-    def __init__(self) -> None:
-        self.calls: list[str] = []
+    #: Shared across every instance — see the class docstring.
+    calls: ClassVar[list[str]] = []
 
     def __getattr__(self, name: str) -> Any:
         def _record(*_args: Any, **_kwargs: Any) -> None:
-            self.calls.append(name)
+            type(self).calls.append(name)
             return None
 
         return _record
@@ -212,23 +220,35 @@ def portfolio_runnable_config(
     return config
 
 
+def _handlers(callbacks: Any) -> list[Any]:
+    """Resolve `callbacks` (a RunnableConfig, manager or list) to a handler list."""
+    if isinstance(callbacks, dict):  # a RunnableConfig
+        callbacks = get_callback_manager_for_config(callbacks)
+    if isinstance(callbacks, BaseCallbackManager):
+        return list(callbacks.handlers)
+    return list(callbacks or [])
+
+
+def disabled_tracers(callbacks: Any) -> list[TracingDisabledTracer]:
+    """The inert tracers actually present after `callbacks` is resolved.
+
+    Use this rather than `tracing_disabled_handler()` when asserting on the
+    null client's call log: langchain may hand the resolved manager a *copy* of
+    the handler, and it is the copy that would have done any writing.
+    """
+    return [h for h in _handlers(callbacks) if isinstance(h, TracingDisabledTracer)]
+
+
 def has_live_tracer(callbacks: Any) -> bool:
     """True if `callbacks` carries a tracer that would ship runs to LangSmith.
 
     Accepts a `RunnableConfig`, a `BaseCallbackManager` or a handler list.
     `TracingDisabledTracer` instances do not count — they never write.
     """
-    if isinstance(callbacks, dict):  # a RunnableConfig
-        callbacks = get_callback_manager_for_config(callbacks)
-    handlers = (
-        callbacks.handlers
-        if isinstance(callbacks, BaseCallbackManager)
-        else list(callbacks or [])
-    )
     return any(
         isinstance(handler, LangChainTracer)
         and not isinstance(handler, TracingDisabledTracer)
-        for handler in handlers
+        for handler in _handlers(callbacks)
     )
 
 

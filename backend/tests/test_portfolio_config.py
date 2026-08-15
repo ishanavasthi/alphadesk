@@ -19,6 +19,7 @@ from langchain_core.tracers.langchain import LangChainTracer
 from graph.portfolio_config import (
     PORTFOLIO_TRACING_TAG,
     TracingDisabledTracer,
+    disabled_tracers,
     has_live_tracer,
     is_tracing_disabled,
     portfolio_runnable_config,
@@ -69,8 +70,14 @@ def test_portfolio_config_resolves_to_no_live_tracer() -> None:
 
 
 def test_invoking_a_runnable_with_the_config_writes_nothing() -> None:
-    handler = tracing_disabled_handler()
-    before = len(handler.client.calls)
+    # thread_id on purpose: it sends langchain down copy_with_metadata_defaults(),
+    # so the manager gets a *copy* of the handler. Observe the copy, not the
+    # module singleton, or the assertion below proves nothing.
+    config = portfolio_runnable_config(thread_id="run-123", run_name="portfolio-test")
+    resolved = disabled_tracers(config)
+    assert resolved, "no TracingDisabledTracer survived config resolution"
+    client = resolved[0].client
+    before = len(client.calls)
 
     seen: list[list[str]] = []
 
@@ -83,11 +90,10 @@ def test_invoking_a_runnable_with_the_config_writes_nothing() -> None:
         return value + 1
 
     chain = RunnableLambda(lambda v: v * 2) | RunnableLambda(_inner)
-    assert chain.invoke(3, portfolio_runnable_config(run_name="portfolio-test")) == 7
+    assert chain.invoke(3, config) == 7
 
-    assert handler.client.calls[before:] == [], (
-        "the inert tracer's LangSmith client was called: "
-        f"{handler.client.calls[before:]}"
+    assert client.calls[before:] == [], (
+        f"the inert tracer's LangSmith client was called: {client.calls[before:]}"
     )
     assert seen, "the nested runnable never ran"
     for handlers in seen:
@@ -119,6 +125,44 @@ def test_helper_does_not_disable_tracing_globally() -> None:
     """The kill switch is scoped to the config — the research graph still traces."""
     portfolio_runnable_config()
     assert has_live_tracer({}) is True
+
+
+def test_copied_handlers_share_one_call_log() -> None:
+    """M1 regression guard.
+
+    A config carrying metadata makes langchain rebuild the handler via
+    `self.__class__(...)`, which hands the copy a fresh `_NullLangSmithClient`.
+    A per-instance call log would therefore leave the singleton's list empty no
+    matter what the handler that actually ran did — a vacuous assertion. The
+    log is class-level; this test fails if that regresses.
+    """
+    singleton = tracing_disabled_handler()
+
+    # The invariant, independent of langchain: every instance logs to one list.
+    assert TracingDisabledTracer().client.calls is singleton.client.calls
+
+    # And the copy langchain actually makes. `thread_id` is the trigger —
+    # `configurable` entries become langsmith-inheritable metadata, which sends
+    # `_configure()` through `copy_with_metadata_defaults()`. Every real
+    # portfolio-graph invocation passes a thread_id, so this is the live path.
+    config = portfolio_runnable_config(thread_id="run-123")
+    resolved = disabled_tracers(config)
+    assert resolved
+    copy = resolved[0]
+    assert copy is not singleton, (
+        "langchain no longer copies the handler for thread_id configs — "
+        "this test's premise is stale, re-check the copy path"
+    )
+
+    marker = "_probe_call_from_test"
+    getattr(copy.client, marker)()
+    try:
+        assert marker in singleton.client.calls, (
+            "the copy's client writes to a different log than the singleton's; "
+            "call-log assertions elsewhere would be vacuous"
+        )
+    finally:
+        singleton.client.calls.remove(marker)
 
 
 def test_inert_tracer_ignores_every_callback_category() -> None:
