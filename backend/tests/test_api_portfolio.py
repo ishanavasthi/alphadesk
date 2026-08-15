@@ -264,8 +264,32 @@ def test_allocation_rejects_an_unknown_breakdown(client: TestClient) -> None:
     assert response.json()["detail"]["code"] == "unknown_breakdown"
 
 
-def test_history_is_honestly_empty(client: TestClient) -> None:
-    body = client.get("/portfolio/history?days=30", headers=AUTH).json()
+def test_history_is_honestly_empty_without_a_database(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No Postgres configured → an empty series and a note, never a 500.
+
+    The live figures on this dashboard come from the source, not the database.
+    A deployment that has not been wired to Postgres yet still renders; it just
+    has no past to draw. S1 must not have turned an additive feature into a
+    hard dependency — `backend/tests/test_snapshots_api.py` covers the case
+    where the database *is* there.
+    """
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    response = client.get("/portfolio/history?days=30", headers=AUTH)
+    assert response.status_code == 200
+    body = response.json()
     assert body["points"] == []
     assert body["last_captured_at"] is None
     assert body["days"] == 30
+    assert "no history" in body["note"].lower()
+
+
+def test_summary_survives_a_missing_database(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`last_captured_at` degrades to null; nothing else about /summary moves."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    response = client.get("/portfolio/summary", headers=AUTH)
+    assert response.status_code == 200
+    assert response.json()["last_captured_at"] is None
