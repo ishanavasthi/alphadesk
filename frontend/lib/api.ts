@@ -392,7 +392,11 @@ export class PortfolioError extends Error {
   }
 }
 
-async function portfolioFetch<T>(path: string, signal?: AbortSignal): Promise<T> {
+async function portfolioFetch<T>(
+  path: string,
+  signal?: AbortSignal,
+  { method = "GET" }: { method?: "GET" | "POST" } = {},
+): Promise<T> {
   if (!ADMIN_SECRET) {
     throw new PortfolioError(
       0,
@@ -404,6 +408,7 @@ async function portfolioFetch<T>(path: string, signal?: AbortSignal): Promise<T>
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
+      method,
       headers: { "x-alphadesk-admin-secret": ADMIN_SECRET },
       cache: "no-store",
       signal,
@@ -472,9 +477,29 @@ export function getPortfolioAllocation(
   );
 }
 
-/** GET /portfolio/history — empty until S1 captures the first daily snapshot. */
+/** GET /portfolio/history — one point per captured day, oldest first. */
 export function getPortfolioHistory(days = 90, signal?: AbortSignal): Promise<HistoryResponse> {
   return portfolioFetch<HistoryResponse>(`/portfolio/history?days=${days}`, signal);
+}
+
+/** The outcome of a capture attempt. `in_flight` means one was already running. */
+export interface CaptureResult {
+  status: "captured" | "already_captured" | "skipped" | "failed" | "in_flight";
+  captured_on: string | null;
+  holdings?: number;
+  reason?: string | null;
+}
+
+/**
+ * POST /portfolio/capture — take today's snapshot now.
+ *
+ * Behind the same gate as the reads, because it acts on the same account.
+ * Idempotent: a day that already has a row answers `already_captured` rather
+ * than taking a second reading, so this button cannot overwrite the nightly
+ * capture — which ran at the time it was timed for — with a later, worse one.
+ */
+export function capturePortfolioSnapshot(signal?: AbortSignal): Promise<CaptureResult> {
+  return portfolioFetch<CaptureResult>("/portfolio/capture", signal, { method: "POST" });
 }
 
 /** POST /approve — approve or reject the staged batch for a run. */
