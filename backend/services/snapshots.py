@@ -406,7 +406,9 @@ async def capture_user(
         session.add(day_row)
         await session.flush()
         snapshot_id = day_row.id
-        assert snapshot_id is not None  # assigned by the flush above
+        if snapshot_id is None:  # pragma: no cover - the flush above assigns it
+            # A real check rather than an `assert`, which `python -O` removes.
+            raise RuntimeError("snapshot_days row has no id after flush")
         for holding in holdings:
             session.add(_holding_row(snapshot_id, holding))
         for source, payload in raws:
