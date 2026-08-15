@@ -42,6 +42,8 @@ be tested.
 | `mf_sips__empty.json` | `mf_sips()` | Returned zero rows in the spike. |
 | `indian_stocks_sips__empty.json` | `indian_stocks_sips()` | Returned zero rows in the spike. |
 | `raw_mcp_envelope__networth_snapshot.json` | any tool, pre-unwrap | `{"result": "<stringified JSON>"}` — the wire format every tool on this server uses. |
+| `rate_limit_error__tool_scope.json` | **any tool, when throttled** — mirrors the captured `rate_limit_envelope.json` | The 9-key `rate_limit_exceeded` body that **replaces** the payload on a throttled call, at the **per-tool** tier (`scope: "tool"`, `window: "tool:min"`). The MCP result carries `isError: false`, so this is what a "successful" response can actually contain. Shape verified against a real capture; every value here invented. See `docs/ind_money_payloads.md` §2.5. |
+| `rate_limit_error__global_scope.UNVERIFIED.json` | same, **global** tier | ⚠️ The `scope: "global"` / `window: "min"` variant. The tier is real but **no capture of it was preserved** — only the key *values* differ from the verified file, so the shape is safe to test against while the tier itself stays flagged. |
 
 ## The edge cases in `networth_holdings__MF.json`
 

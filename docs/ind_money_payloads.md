@@ -288,22 +288,35 @@ purchase would leave no trace in either tool even if both were populated.
 > ⚠️ **This is the single most likely way M1's ingest breaks in production, and
 > nothing about it is visible in a happy-path capture.**
 
-The server enforces a **global per-minute rate limit** and reports a breach
-**in the response body**, with MCP-level `isError: false`. There is no HTTP
-error, no exception, and no header to check. The body replaces the expected
-payload entirely:
+The server rate-limits on **two tiers** and reports a breach **in the response
+body**, with MCP-level `isError: false`. There is no HTTP error, no exception,
+and no header to check. The body replaces the expected payload entirely:
 
 ```
 { error:                "rate_limit_exceeded"
-  message:              str
-  scope:                "global"      (not per-tool)
+  message:              str           (prose, and it names which tier tripped)
+  scope:                str           ∈ {"tool", "global"}
+  window:               str           ∈ {"tool:min", "min"}  — pairs with scope
   tool:                 str           (the tool that tripped it)
-  window:               "min"
-  limit:                number        (calls allowed per window)
-  current:              number        (calls consumed)
+  limit:                number        (calls allowed in this window)
+  current:              number        (consumed before this call)
   cost:                 number        (what this call costs — not every call is 1)
   retry_after_seconds:  number }
 ```
+
+**The two tiers, and which one you hit:**
+
+| Tier | `scope` | `window` | Observed limit | Trips when |
+| --- | --- | --- | --- | --- |
+| Per-tool | `"tool"` | `"tool:min"` | 15/min | Hammering **one** tool — e.g. the 48-call breakdown sweep |
+| Global | `"global"` | `"min"` | 30/min | A fast **mixed** sweep across tools |
+
+The per-tool tier is the tighter one and trips **first** on any single-tool
+burst, which is the shape of most ingest work. Do not code against one tier:
+**read `scope`, `limit` and `retry_after_seconds` off the body** rather than
+hard-coding either number, since a client that only understands the global tier
+will misread a per-tool breach as a server-wide outage and back off far more
+than it needs to.
 
 Consequences M1 must handle:
 
@@ -313,20 +326,30 @@ Consequences M1 must handle:
 2. **`payload["data"]` / `payload["holdings"]` will `KeyError`.** The documented
    shapes in §2.1–§2.4 are simply absent on a throttled call. Any parser that
    indexes straight into them crashes rather than degrading.
-3. **Calls are not equally priced.** `cost` is per-tool, and
-   `networth_allocation_breakdown` costs more than one unit, so a full 16 × 3
-   breakdown sweep burns through the budget far faster than its call count
-   suggests. Budget by **cost**, not by number of calls.
+3. **Calls are not equally priced.** `networth_allocation_breakdown` costs
+   **2**, so the 48-call breakdown sweep spends 96 units, not 48 — and against
+   a 15/min per-tool budget it trips after **7 calls**. Budget by **cost**, not
+   by number of calls.
 4. **`retry_after_seconds` is the backoff to honour.** It is the only
    quantitative recovery signal the server gives.
+5. **`current` is the count *before* this call.** In the captured breach
+   `current + cost` exceeds `limit` while `current` alone does not — the server
+   rejects a call whose cost would take it over, rather than waiting for the
+   counter itself to reach the limit. A client that compares only `current` to
+   `limit` will conclude it had budget left.
 
-**Evidence basis:** this envelope is **not present in the capture set used to
-re-derive the rest of this document** — that run was paced slowly enough never
-to trip the limit, which is exactly why the original write-up missed it. It was
-observed in a separate, faster re-capture during the C2 audit and is reproduced
-from that run's notes. The field names and the `scope`/`window` values are as
-recorded; treat the specific `limit` and `cost` figures as one observation
-rather than a contract, and read them from the body at runtime.
+**Evidence basis — verified.** This envelope was captured directly: a
+deliberate read-only burst against one tool tripped the limit on **call 8** and
+the raw response was saved (`rate_limit_envelope.json`). The **9 keys**,
+`isError: false`, the body-replaces-payload behaviour, `cost: 2` for
+`networth_allocation_breakdown`, and the per-tool `scope`/`window` pair are all
+confirmed against that capture.
+
+Two caveats. The **global tier** (30/min, `scope: "global"`, `window: "min"`)
+comes from the run-1 notes of a fast mixed sweep and has **no preserved
+capture** — the tier exists, but treat that number as one observation. And the
+specific limits are server configuration, not a contract: read them off the
+body.
 
 ### 2.6 Fields the payloads do **not** have
 
@@ -501,14 +524,20 @@ the doc previously claimed a single root cause without doing the arithmetic:
   | `MF` | 9 | **+0.015%** |
   | `US_STOCK` | 1 | **+0.944%** |
 
-- Every row's own `market_value` equals `total_units × unit_price` to the paisa,
-  so the **rows are internally consistent** and it is the aggregate that
-  disagrees with them. With **no `as_of` field anywhere** (§2.6) nothing in the
-  payload can confirm why, but the likeliest reading is that the snapshot
-  aggregate and the holdings rows are priced from different refreshes — which
-  would explain why the two market-priced types (`MF`, `US_STOCK`) drift while
-  the two cash-like ones (`SA`, `FD`) are exact, and why the thinly-held
-  `US_STOCK` bucket drifts most in relative terms.
+- Every **market-priced** (`MF`, `US_STOCK`) row's `market_value` equals
+  `total_units × unit_price` to the paisa — 10 of 14 rows — so those **rows are
+  internally consistent** and it is the aggregate that disagrees with them. The
+  other 4 rows (3 `SA`, 1 `FD`) carry `total_units` **and** `unit_price` of
+  exactly `0` alongside a non-zero `market_value`: cash-like holdings get no
+  unit/price decomposition at all, so the identity is not merely violated
+  there, it is undefined. **M1 must never derive value as `units × price`** —
+  it silently yields `0` for every FD and savings row.
+- With **no `as_of` field anywhere** (§2.6) nothing in the payload can confirm
+  why the aggregate disagrees, but the likeliest reading is that the snapshot
+  and the holdings rows are priced from different refreshes — which fits the
+  pattern exactly: the two market-priced types (`MF`, `US_STOCK`) drift while
+  the two cash-like ones (`SA`, `FD`) reconcile to the paisa, and the
+  thinly-held `US_STOCK` bucket drifts most in relative terms.
 
 **The decisive fact about `IND_STOCK`, which the doc should have stated
 outright:** `snapshot.investments[]` has **no `IND_STOCK` bucket at all** — not

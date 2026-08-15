@@ -61,11 +61,20 @@ CAPTURE_HARNESS_TOKENS = {"structuredContent", "textContent", "ExceptionGroup"}
 #                                  counts). It holds no leaf value at all, and
 #                                  its type vocabulary ("float", "str") is the
 #                                  same vocabulary the payload doc is written in.
+#   rate_limit_envelope.json     — a captured `rate_limit_exceeded` response. By
+#                                  construction it carries the server's own rate
+#                                  limit metadata (tool name, window, limit,
+#                                  counter, cost, backoff) and *no* account data:
+#                                  the error body replaces the payload entirely,
+#                                  so there is nothing of the operator's in it.
+#                                  Its vocabulary is quoted on purpose in §2.5 of
+#                                  the payload doc and in both C2 test docs.
 SCHEMA_ONLY_FILES = {
     "tool_inventory.json",
     "probe_dcr.json",
     "probe_unauth_list_tools.json",
     "_capture_index.json",
+    "rate_limit_envelope.json",
 }
 
 # Directories scanned in full, not just where a file happens to be staged.

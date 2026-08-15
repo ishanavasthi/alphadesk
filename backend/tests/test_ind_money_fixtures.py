@@ -61,6 +61,22 @@ BREAKDOWN_FIXTURES = {
     "networth_allocation_breakdown__empty.json": None,
 }
 
+# The rate-limit body (§2.5). Not a payload — it REPLACES one.
+RATE_LIMIT_KEYS = {
+    "error", "message", "scope", "window", "tool",
+    "limit", "current", "cost", "retry_after_seconds",
+}
+
+RATE_LIMIT_FIXTURES = [
+    "rate_limit_error__tool_scope.json",
+    "rate_limit_error__global_scope.UNVERIFIED.json",
+]
+
+TOOL_NAMES = {
+    "networth_snapshot", "networth_holdings", "networth_allocation_breakdown",
+    "mf_sips", "indian_stocks_sips",
+}
+
 
 def load(name: str):
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
@@ -140,6 +156,48 @@ def test_raw_envelope_unwraps_to_a_snapshot():
 def test_sip_fixtures_are_empty_because_reality_was():
     assert load("mf_sips__empty.json") == {"mf_sips": []}
     assert load("indian_stocks_sips__empty.json") == {"indian_stocks_sips": []}
+
+
+@pytest.mark.parametrize("name,scope,window", [
+    ("rate_limit_error__tool_scope.json", "tool", "tool:min"),
+    ("rate_limit_error__global_scope.UNVERIFIED.json", "global", "min"),
+])
+def test_rate_limit_envelope_shape(name, scope, window):
+    """§2.5: a throttled call returns THIS instead of the payload, isError=False."""
+    doc = load(name)
+    assert set(doc) == RATE_LIMIT_KEYS
+    assert doc["error"] == "rate_limit_exceeded"
+    # scope and window are paired — reading one without the other misidentifies
+    # which tier tripped, and the tiers have different limits.
+    assert (doc["scope"], doc["window"]) == (scope, window)
+    assert doc["tool"] in TOOL_NAMES
+
+
+@pytest.mark.parametrize("name", RATE_LIMIT_FIXTURES)
+def test_rate_limit_envelope_replaces_the_payload(name):
+    """The error body carries NO payload key. Indexing data/holdings must fail."""
+    doc = load(name)
+    for payload_key in ("data", "holdings", "asset_type", "breakdown_by",
+                        "total_networth", "investments"):
+        assert payload_key not in doc, (
+            f"{name}: a rate-limit body must not carry {payload_key!r} — the whole "
+            "point is that the payload is gone, so ingest cannot index into it"
+        )
+
+
+@pytest.mark.parametrize("name", RATE_LIMIT_FIXTURES)
+def test_rate_limit_counter_semantics(name):
+    """`current` counts calls consumed BEFORE this one, and cost is what tips it.
+
+    In the real capture `current` alone was still under `limit` — the server
+    rejects a call whose *cost* would take it over. A client comparing only
+    `current` to `limit` concludes it had budget left and retries immediately.
+    """
+    doc = load(name)
+    assert doc["current"] < doc["limit"]
+    assert doc["current"] + doc["cost"] > doc["limit"]
+    assert doc["cost"] >= 1
+    assert doc["retry_after_seconds"] > 0
 
 
 # --------------------------------------------------------------------------
