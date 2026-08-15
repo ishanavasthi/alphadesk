@@ -8,6 +8,9 @@ chromadb
 langchain-text-splitters
 pypdf
 pydantic
-mcp
+# Pinned: mcp 2.0.0 removed mcp.client.streamable_http.streamablehttp_client,
+# which tools/ind_money.py imports. Unpinned, a rebuild installs 2.x and the
+# app dies at import. 1.28.1 is the version verified working.
+mcp==1.28.1
 httpx
 python-dotenv
