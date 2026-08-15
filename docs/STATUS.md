@@ -10,7 +10,7 @@ file at every card completion and gate. Newest facts win; keep entries terse.
 | C0 lockdown | ✅ **done 2026-08-15** | Admin gate on `/auth/login`+`/auth/logout` (`ALPHADESK_ADMIN_SECRET`, fail-closed); ambient credential fallbacks gated behind `ALPHADESK_SINGLE_TENANT` (local only). Verified live on the Space: 9/9 checks (401s, read-only 200s, status unauthenticated). Security review: no findings. |
 | C1 slim image | ✅ **done 2026-08-15** | Merge `8d2e8bd`. chromadb/pypdf/text-splitters dropped (rag-only, grep-proven); all 10 direct deps pinned from verified freeze; Dockerfile loses `build-essential`, `COPY data/`, ingest step (image 370MB, builds+boots verified); screenshots PNGs removed from HEAD; README/DEPLOY/CLAUDE RAG claims corrected; docs/SPECS+TESTING/C1.md added. Review: 1 Critical (real run data in TESTING doc) fixed via branch history rewrite pre-merge. **The PNG removal does NOT retire the `space-deploy` dance** — verified 2026-08-15: HF's pre-receive hook scans all pushed history and rejects the historical PNGs; only a `main` history rewrite would fix that, not worth it. |
 | F1 persistence | ✅ **done 2026-08-15** | Merged to `main`. Review: 0 Critical, 5 Important + 2 minors — all fixed and re-verified (fix round 1); orchestrator re-ran acceptance on the final tip (43/43, migration idempotent, FK cascades `c`). Three identity tables (`users`, `broker_links`, `oauth_pending`) with **DB-level** `ON DELETE CASCADE`; Fernet crypto on `TOKEN_ENCRYPTION_KEY`; async Alembic (asyncpg only — no second sync driver); pytest wired (43 tests, 6 need Postgres and skip loudly without it); `portfolio_runnable_config()` tracing kill switch, now **pinned + gated at Docker build time**. New env vars: `DATABASE_URL`, `TOKEN_ENCRYPTION_KEY`. Runtime deps +6 pinned incl. transitive `langchain-core==1.5.5` (image 370→426MB); test deps split into `requirements-dev.txt`. New `.dockerignore` keeps `backend/.env` + the IND Money token cache out of locally-built images. `git diff main -- backend/api backend/agents backend/graph/graph.py backend/tools` is empty. Verified on local Docker Postgres 16 (`:5433`); still no Neon. Docs: `docs/SPECS/F1.md`, `docs/TESTING/F1.md`. |
-| C2 data spike | 🚦 **built — AWAITING HUMAN GATE** | Branch `spike/ind-money-portfolio` (not pushed). 71 live calls captured (15-tool inventory, snapshot, all 16 `asset_type` holdings, full 16×3 breakdown grid, both SIP tools, 2× DCR). All five questions answered with count-based evidence in `docs/ind_money_payloads.md`; **verdict GO, kill criterion NOT triggered**, but A1/D1/M1/S1 all take scope changes. 16 synthetic fixtures + README in `backend/tests/fixtures/ind_money/`; 64 new tests (suite 43→101 passed, 6 skipped). Adversarial leak check (`backend/tests/leak_check_ind_money.py`, `--self-test` proves non-vacuous) run to PASS over 26 files; it caught 5 rounds of real overlap first. Raw captures deleted from scratch. Docs: `docs/SPECS/C2.md`, `docs/TESTING/C2.md`. **M1 still must not start until a human reads the go/no-go.** |
+| C2 data spike | 🚦 **built — AWAITING HUMAN GATE** | Branch `spike/ind-money-portfolio` (not pushed). 72 live calls captured (15-tool inventory, snapshot, all 16 `asset_type` holdings, full 16×3 breakdown grid, both SIP tools, 2× DCR). All five questions answered with count-based evidence in `docs/ind_money_payloads.md`; **verdict GO, kill criterion NOT triggered**, but A1/D1/M1/S1 all take scope changes. 16 synthetic fixtures + README in `backend/tests/fixtures/ind_money/`; 64 new tests (suite 43→101 passed, 6 skipped). Adversarial leak check (`backend/tests/leak_check_ind_money.py`, `--self-test` proves non-vacuous) run to PASS over 35 files; it caught 5 rounds of real overlap first. Raw captures retained in scratch (outside the tree) until this gate passes, then deleted. Docs: `docs/SPECS/C2.md`, `docs/TESTING/C2.md`. **M1 still must not start until a human reads the go/no-go.** |
 | M1 model + connectors | queued | Blocked on C2 gate. Pre-loaded scope changes from C2: `IND_STOCK` returns a *different* 19-key live-trading envelope (not the 14-key aggregator row) and **has never been seen populated** — keep it behind an explicitly-unverified boundary; all money/percent fields must be `float`/`Decimal` (the API emits `int` and `float` for the same field); `invested_amount == 0` means *unknown cost basis*, not zero — nullable, never fed into P&L. |
 | D0 design bake-off | queued — **HUMAN GATE** | 4–5 Fable-built dashboard demos (shadcn/ui, Bloomberg-terminal, +2–3 others); human picks; lock in DECISION.md + plan §2 + memory. Blocks all real dashboard frontend. |
 | D1 dashboard | queued | Blocked on D0. Interim: `/portfolio/*` behind the C0 admin secret until F3. **C2 scope change:** the XIRR column is dead (drop or relabel as `Return %` from per-row `pnl_per`), and headline totals must not silently blend `US_STOCK`/`US_STOCK_WALLET` into an INR figure — there is no currency field anywhere to justify it. |
@@ -82,7 +82,7 @@ file at every card completion and gate. Newest facts win; keep entries terse.
   **has never been observed by anyone**. Anything built on it is a hypothesis
   until a capture from an account holding Indian stocks says otherwise.
 - **The IND Money payloads carry no date field and no currency field. At all.**
-  (C2, verified by a key-name walk over all 78 captures.) Consequences: XIRR is
+  (C2, verified by a key-name walk over all 67 payload captures — 54 distinct key names, none date- or currency-shaped.) Consequences: XIRR is
   uncomputable (and the `xirr` field it does ship was 0 in 14/14 rows); anything
   time-based must be stamped by AlphaDesk at ingest; and there is no way to tell
   whether `US_STOCK` values are INR or USD, while `networth_snapshot` already
@@ -91,13 +91,23 @@ file at every card completion and gate. Newest facts win; keep entries terse.
   (C2): `investments[]` includes `asset_type: "US_STOCK_WALLET"`, which is
   **not** in `networth_holdings`' 16-value `asset_type` enum. Summed holdings sit
   ~2.3% below the snapshot total by construction, so any "holdings must sum to
-  net worth" check or DB constraint is guaranteed to fail.
+  net worth" check or DB constraint is guaranteed to fail. Re-derived bucket by
+  bucket: the wallet accounts for essentially all of that gap, SA/FD/US_STOCK
+  reconcile exactly, and MF is off by a further ~0.015% in the other direction
+  — so even a wallet-aware constraint would not balance. Use a tolerance.
+- **`networth_snapshot` carries no `IND_STOCK` bucket at all** (C2): the empty
+  `networth_holdings(IND_STOCK)` response is an empty portfolio slice, not a
+  broken or permission-limited endpoint. The Indian-stock *row shape* is still
+  unverified; its absence is not the mystery.
 - **`broker` is not a safe grouping key** (C2): it was an empty string in 4 of 14
   real rows (all FD and SA). `investment` (the display name) was empty in 1 of
   14. Dedup or source-attribution keyed on either will silently collapse rows.
 - **Real payloads must never enter this public repo.** C2's procedure —
   scratch-only captures outside the working tree, hand-written synthetic
-  fixtures, an adversarial leak check with a self-test, then delete the
-  captures — is written up in `docs/TESTING/C2.md` and is the pattern for any
-  future capture. The check found real overlap in 5 successive rounds, including
-  in prose that merely *described* the payloads, so do not skip it.
+  fixtures, an adversarial leak check with a self-test, captures retained for
+  review and deleted after the gate — is written up in `docs/TESTING/C2.md` and
+  is the pattern for any future capture. The check found real overlap in 5
+  successive rounds, including in prose that merely *described* the payloads,
+  so do not skip it. **And do not trust a `PASS` without checking the scan
+  scope:** a sixth leak sat in the checker's own source, which the checker did
+  not scan until review widened it.

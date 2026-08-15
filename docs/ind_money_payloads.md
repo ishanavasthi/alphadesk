@@ -16,9 +16,16 @@ names, JSON types, nesting, and **counts**. Evidence is phrased as
 "field X was 0 in N of M rows", never as an amount, a fund, a ticker, a broker
 name, or a date.
 
-Raw captures lived only in a scratch directory outside the repo
-(`…/scratchpad/c2-captures/`, 78 files) and were **deleted at the end of the
-card**. See `docs/TESTING/C2.md` to re-run the capture.
+Raw captures live only in a scratch directory outside the repo
+(`…/scratchpad/c2-captures*/`) and never enter the working tree. They are
+**retained until this card's verification and its human gate have both
+passed** — a reviewer has to be able to re-derive every count below against
+the evidence — and the orchestrator deletes them afterwards. See
+`docs/TESTING/C2.md` to re-run the capture.
+
+Counts here were re-derived against a same-day re-capture of the same account.
+Shapes, key sets and row counts were stable; live prices had moved slightly
+between the two fetches, which is visible in one place only (§3, Q3).
 
 ---
 
@@ -28,11 +35,12 @@ card**. See `docs/TESTING/C2.md` to re-run the capture.
 
 Server: `indmcp` **v1.26.0**, MCP protocol `2025-11-25`.
 
-**Every tool declares the same `outputSchema`:**
+**All 15 tools declare the same `outputSchema`**, differing only in its
+`title`, which is generated per tool as `<tool_name>Output`:
 
 ```json
 {"properties": {"result": {"title": "Result", "type": "string"}},
- "required": ["result"], "type": "object"}
+ "required": ["result"], "title": "<tool_name>Output", "type": "object"}
 ```
 
 That is, the MCP-level contract is a **single stringified-JSON blob** — the real
@@ -40,12 +48,12 @@ payload shape is undocumented at the protocol level and only knowable by
 calling. `_unwrap` in `backend/tools/ind_money.py` already handles this. Every
 shape in §2 below is the shape *after* unwrapping.
 
-Note the drift between the declared `outputSchema` title and the tool name for
-one tool: `networth_holdings` declares `networth_asset_holdingsOutput`. Harmless,
-but it means the server has an internal name for that tool that is not the
-exposed one.
+That generator makes one tool's title disagree with its own name:
+`networth_holdings` declares `networth_asset_holdingsOutput`. The other 14
+titles match their tool names exactly. Harmless, but it means the server has an
+internal name for that tool that is not the exposed one.
 
-### The four portfolio tools the plan guessed — all four exist, names exact
+### The five portfolio tools the plan guessed — all five exist, names exact
 
 | Tool | Params (all `string` unless noted) | Notes |
 | --- | --- | --- |
@@ -206,11 +214,15 @@ data
 19 top-level keys, none of them shared with Shape A beyond `holdings`.
 
 > ⚠️ **`IND_STOCK` — the one asset type AlphaDesk exists for — returned zero
-> holdings rows on this account.** The row shape inside Shape A's `holdings`
+> holdings rows on this account.** The row shape inside Shape B's `holdings`
 > array is therefore **completely unverified for Indian stocks**. It may match
 > Shape A's row shape; it may be a broker-native row (which would explain the
 > `holding_error` / `is_pledge_eligible` / MTF fields). We do not know, and no
 > amount of re-reading these captures will tell us.
+>
+> What the captures *do* settle (see Q3): `networth_snapshot` reports **no
+> `IND_STOCK` bucket whatsoever**, so the empty response is the account holding
+> no Indian stocks — not the endpoint failing or withholding them.
 
 ### 2.3 `networth_allocation_breakdown(asset_type=…, breakdown_by=…)`
 
@@ -243,21 +255,39 @@ data └─ mf_sips             array   (EMPTY in capture)
 data └─ indian_stocks_sips  array   (EMPTY in capture)
 ```
 
-Both returned zero rows. **The SIP row shape is entirely unverified.** The tool
-descriptions claim the rows carry SIP amount, frequency, status, next execution
-date and a current-month installment breakdown — if true, these are the only
-tools in the whole inventory that would carry **dates**. Unverified.
+Both returned zero rows. **The SIP row shape is entirely unverified.**
+
+The tool descriptions are the only evidence of what a populated row holds, and
+they are worth reading closely, because these are the only two tools in the
+whole inventory that promise a **date** at all. Verbatim from `list_tools`:
+
+> Returns SIP data per fund, including fund name, category, SIP amount,
+> frequency, next execution date, and status.
+
+> Returns SIP data grouped per stock, including SIP amount, frequency,
+> next execution date, status, and the current month's installment breakdown.
+
+Every date these describe is **forward-looking or current-month**: the *next*
+execution date, and the status of *this* month's installments (the surrounding
+"Use when" bullets list "upcoming, in-progress, or failed SIP installments").
+Neither description promises a dated history of past cashflows, and no other
+tool supplies one — so even a fully populated SIP response would not yield the
+cashflow series XIRR needs. That is why Q1's conclusion does not soften here.
+Separately, SIPs cover only instruments bought on a schedule; a lumpsum
+purchase would leave no trace in either tool even if both were populated.
 
 ### 2.5 Fields the payloads do **not** have
 
-Confirmed absent everywhere by a key-name walk over all 78 captured files:
+Confirmed absent everywhere by a key-name walk over all **67 payload captures**
+(1 snapshot + 16 holdings + 48 breakdowns + 2 SIP), which between them use
+**54 distinct key names**:
 
 - **No date/time field of any kind.** A scan for key names containing
   `date`, `cashflow`, `transaction`, `txn`, `installment`, `purchase`,
-  `as_on`, `timestamp` matched **0 keys** across every capture.
+  `as_on`, `timestamp` matched **0 of those 54 keys**.
 - **No currency / fx / conversion field.** A case-insensitive scan for
   `currency`, `USD`, `INR`, `fx`, `exchange_rate`, `conversion` matched
-  **0 of 78 files** — not as a key, not as a value.
+  **0 of the 67 payload files** — not as a key, not as a value.
 - No per-row `sector` (sector only exists in the aggregate breakdowns).
 - No quantity-lot / average-cost breakdown, no ISIN-labelled field.
 
@@ -278,21 +308,32 @@ Evidence:
   FD 1/1). There is not one non-zero `xirr` anywhere in the capture set.
 - `IND_STOCK` returned **0 rows**, so XIRR could not even be tested on the asset
   type that matters most.
-- The vendor's own tool description for `networth_holdings` advertises
-  "P&L, P&L %, or XIRR for each holding" — so the field is *claimed* to be
-  populated and simply is not, on this account.
+- The vendor's own `networth_holdings` description advertises it. Verbatim
+  from `list_tools`, one of that tool's "Use for" bullets reads:
+
+  > - P&L, P&L %, or XIRR for each holding
+
+  So the field is *claimed* to be populated and simply is not, on this account.
 - **XIRR cannot be computed client-side either.** It needs dated cashflows;
   the payloads carry **zero date fields** (§2.5), and the 15-tool inventory
-  contains **no transaction-history or cashflow tool at all**. Both SIP tools —
-  the only plausible source of dated installments — returned **0 rows**.
+  contains **no transaction-history or cashflow tool at all**. Both SIP tools
+  returned **0 rows** — and, per §2.4, their own descriptions promise only the
+  *next* execution date and the *current* month's installments, so even
+  populated they would carry a forward-looking schedule, not the past-dated
+  cashflow series XIRR requires.
 
 **Alternative return signal that IS present and non-zero:**
 
-| Level | Field | Populated? |
-| --- | --- | --- |
-| Per holding row | `pnl_per` (simple return %) | non-zero in 11 of 14 rows; `0` in 3 of 14 (all 3 in one asset type where a simple-return figure is not meaningful) |
-| Per holding row | `total_pnl` (absolute) | populated in 14 of 14 |
-| Aggregate | `return`, `return_percentage` on `investments[]`/`assets[]`/`sector[]`/`market_cap[]` | populated in 26 of 26 snapshot rows |
+| Level | Field | Present & non-null | Non-zero |
+| --- | --- | --- | --- |
+| Per holding row | `pnl_per` (simple return %) | 14 of 14 | 11 of 14; `0` in 3 of 14 |
+| Per holding row | `total_pnl` (absolute) | 14 of 14 | 11 of 14; `0` in 3 of 14 |
+| Aggregate | `return`, `return_percentage` on `investments[]`/`assets[]`/`sector[]`/`market_cap[]` | 26 of 26 snapshot rows | 26 of 26 |
+
+`total_pnl` and `pnl_per` go to zero on **the same 3 rows**, all in one asset
+type where a return figure is not meaningful. So "populated" is true of both in
+the sense that the key is always there with a real number — but on 3 of 14 rows
+that number is `0`, and a renderer must not read that as "broke even".
 
 These are **simple cumulative returns** (current vs invested), not
 time-weighted or money-weighted. They are a legitimate substitute for a
@@ -309,32 +350,38 @@ the capture cannot see the case the vendor warns about.**
 
 Observed:
 
-| asset_type | rows | `invested_amount` key missing | value `null` | value `0` | distinct `broker` values | rows with empty-string `broker` |
+| asset_type | rows | `invested_amount` key missing | value `null` | value `0` | distinct **non-empty** `broker` values | rows with empty-string `broker` |
 | --- | --- | --- | --- | --- | --- | --- |
 | MF | 9 | 0 | 0 | 0 | 2 | 0 |
-| SA | 3 | 0 | 0 | 0 | 1 | 3 |
-| FD | 1 | 0 | 0 | 0 | 1 | 1 |
+| SA | 3 | 0 | 0 | 0 | **0** | 3 |
+| FD | 1 | 0 | 0 | 0 | **0** | 1 |
 | US_STOCK | 1 | 0 | 0 | 0 | 1 | 0 |
 | IND_STOCK | **0** | — | — | — | — | — |
 | other 11 types | 0 | — | — | — | — | — |
-| **total** | **14** | **0** | **0** | **0** | **3 non-empty across all types** | **4** |
+| **total** | **14** | **0** | **0** | **0** | **3 distinct, none shared across types** | **4** |
 
 Aggregate level, `invested_value`: **0 of 26** snapshot rows and **0 of 23**
 allocation-breakdown rows were missing or zero.
 
-**But the vendor's own `networth_holdings` tool description states, verbatim in
-its schema text: for linked (non-INDmoney) brokers, `invested_amount` is often
-missing and returned as `0`.** This account's holdings sit almost entirely on
-IND Money's own rails — that is *why* the observed rate is 0/14. The zero rate
-is a property of this account, not of the API.
+**But the vendor documents the failure mode in the tool's own description.**
+Verbatim from `list_tools`:
+
+> For linked (non-INDmoney) brokers, invested_amount is often missing and
+> returned as 0.
+
+This account's holdings sit almost entirely on IND Money's own rails — that is
+*why* the observed rate is 0/14. The zero rate is a property of this account,
+not of the API.
 
 Per-source conclusions M1 must not skip:
 
 1. **`broker` is not a reliable grouping key.** It was an **empty string in 4 of
    14 rows** (all FD and all SA rows). Any dedup / source-attribution keyed on
    `broker` silently collapses those into one "unknown source" bucket.
-2. Only **2 distinct non-empty broker values** were observed, both under MF — far
-   too small a sample to state a per-broker missing rate.
+2. Only **3 distinct non-empty `broker` values** were observed across the whole
+   portfolio — 2 under MF, 1 under US_STOCK, none shared between asset types,
+   and none at all on the SA and FD rows. Far too small a sample to state a
+   per-broker missing rate.
 3. `investment` (the display name) was an **empty string in 1 of 14 rows**, so
    even the human-readable label is not guaranteed.
 4. Treat `invested_amount == 0` as **"unknown cost basis"**, not "invested
@@ -362,16 +409,47 @@ holdings rows — it will not balance, for a structural reason.**
   magnitude larger).
 - **NOT consistent with the holdings rows:** summing `market_value` over every
   `networth_holdings` call for all 16 enum values (14 rows total) lands about
-  **2.3% below** `total_current_value` — far too large to be rounding.
-  **Root cause identified:** `snapshot.investments[]` contains a bucket whose
-  `asset_type` is `US_STOCK_WALLET`, and that value **is not in the
-  `networth_holdings` `asset_type` enum** (verified against the tool's own input
-  schema — 16 values, `US_STOCK_WALLET` absent). There is no call that can
-  enumerate it. It is almost certainly uninvested wallet cash.
+  **2.34% below** `total_current_value` — far too large to be rounding.
 
-M1 implication: any `CHECK` or test asserting "sum of holdings == stored net
-worth" is guaranteed to fail. Model the gap explicitly — either a synthetic
-"unallocated / wallet cash" line item, or a documented tolerance.
+**Root cause, re-derived bucket by bucket against the captures.** The
+unenumerable bucket accounts for essentially all of the gap, but *not* all of
+it, and the doc previously claimed otherwise without doing the arithmetic:
+
+- `snapshot.investments[]` contains a bucket whose `asset_type` is
+  `US_STOCK_WALLET`, and that value **is not in the `networth_holdings`
+  `asset_type` enum** (verified against the tool's own input schema — 16 values,
+  `US_STOCK_WALLET` absent). No call can enumerate it. It is almost certainly
+  uninvested wallet cash. Its `current_value` is **2.348% of
+  `total_current_value`** — slightly *more* than the 2.339% gap.
+- Bucket by bucket, every asset type that *can* be enumerated reconciles:
+  **SA and FD match to the paisa** (`investments[].current_value` == the sum of
+  that type's `market_value` rows, difference exactly `0.00`), and **US_STOCK**
+  matches to well under a rounding step.
+- **MF does not.** Its holdings rows sum **~0.015% above** the snapshot's MF
+  bucket. Every MF row's own `market_value` equals `total_units × unit_price` to
+  the paisa, so the rows are internally consistent; the aggregate and the rows
+  simply disagree. With **no `as_of` field anywhere** (§2.5) there is nothing in
+  the payload that can confirm it, but the most likely explanation is that the
+  snapshot aggregate and the holdings rows are priced from different NAV
+  refreshes. This residual is what remains of the gap after the wallet bucket,
+  and it runs the *opposite* way.
+
+**The decisive fact about `IND_STOCK`, which the doc should have stated
+outright:** `snapshot.investments[]` has **no `IND_STOCK` bucket at all** — not
+a zero-valued one, not a hidden one. The five buckets present are MF, SA,
+US_STOCK_WALLET, FD and US_STOCK. So `networth_holdings(IND_STOCK)` returning
+zero rows is **consistent with the account simply holding no Indian stocks**,
+and is *not* evidence of a broken, permission-limited or differently-shaped
+endpoint. That narrows the §2.2 warning: the 19-key envelope is real and its
+row shape is still unverified, but there is no sign of a suppressed or
+unreadable Indian-stock position hiding behind it.
+
+M1 implication, unchanged and now better supported: any `CHECK` or test
+asserting "sum of holdings == stored net worth" is guaranteed to fail — first
+by ~2.3% from the unenumerable wallet bucket, and then by a residual fraction
+of a percent that no field in the payload lets you explain away. Model the gap
+explicitly — a synthetic "unallocated / wallet cash" line item plus a
+documented tolerance, not equality.
 
 ### Q4 — Is any value non-INR? Is there a currency field?
 
@@ -379,7 +457,7 @@ worth" is guaranteed to fail. Model the gap explicitly — either a synthetic
 resolved from this API surface. That is itself the finding.**
 
 - Case-insensitive scan for `currency`, `USD`, `INR`, `fx`, `exchange_rate`,
-  `conversion` across all 78 captured files: **0 hits** — no key, no value, no
+  `conversion` across all 67 payload captures: **0 hits** — no key, no value, no
   enum member. The declared `outputSchema` is `{"result": string}` for every
   tool, so there is no schema-level currency field to fall back on either.
 - The **only** signal distinguishing a foreign-denominated row is the
@@ -487,7 +565,9 @@ total. D1, S1 and A1 survive.
   payload**. S1's calendar-day attribution must stamp its own capture time at
   ingest; the vendor gives it nothing to anchor to. Also: do not add a
   reconciliation constraint between stored holdings and stored net worth — the
-  unenumerable `US_STOCK_WALLET` bucket makes it ~2.3% off by construction.
+  unenumerable `US_STOCK_WALLET` bucket makes it ~2.3% off by construction, and
+  a smaller MF residual (Q3) means even a wallet-aware constraint would not
+  balance to the paisa.
 - **F3 (per-user linking) — CONFIRMED, not changed.** Use one pre-registered
   OAuth client, per-user tokens (Q5).
 
@@ -495,8 +575,11 @@ total. D1, S1 and A1 survive.
 `IND_STOCK` model:** `IND_STOCK` — the entire point of AlphaDesk — returned **zero holdings
 rows** on the operator's account, inside a payload envelope that shares almost
 no keys with the other asset types. **We have never seen an `IND_STOCK`
-holding row.** M1 can safely model `networth_snapshot` and the aggregator-shape
-holdings today, but any `IND_STOCK` row model would be invention. Recommended
+holding row.** The snapshot confirms *why* — the account carries no `IND_STOCK`
+bucket at all (Q3), so this is an empty portfolio slice rather than a broken
+endpoint — but that does not make the row shape any less unknown. M1 can safely
+model `networth_snapshot` and the aggregator-shape holdings today, but any
+`IND_STOCK` row model would be invention. Recommended
 sequencing: build M1 against the verified shapes and the committed fixtures,
 keep the `IND_STOCK` row model behind an explicitly-unverified boundary, and
 re-run the capture against an account holding Indian stocks before D1 renders a
