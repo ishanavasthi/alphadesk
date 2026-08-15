@@ -21,8 +21,11 @@ bottom of each section. (No secrets in this file — it is committed.)
 4. **OpenAI provider-side budget cap** (before A1 is used in anger): set a
    hard monthly limit in the OpenAI dashboard — the one control an app bug
    cannot bypass. App-side ceilings ship in A1 code.
-5. **F3 needs four env vars — one of them blocks linking entirely.** Set in
-   `backend/.env` *and* as HF Space secrets:
+5. ~~**F3 needs four env vars**~~ — **DONE by you while I was building**
+   (`TOKEN_ENCRYPTION_KEY`, `CLERK_AUTHORIZED_PARTIES`,
+   `ALPHADESK_OPERATOR_EMAIL`, `CLERK_SECRET_KEY`, plus `CLERK_JWKS_URL`/
+   `CLERK_ISSUER`, locally and on the Space). Kept below for the record and
+   because each one has a failure mode worth recognising:
    - `TOKEN_ENCRYPTION_KEY` — **currently unset**. F1 added it; F3 is the
      first card that actually stores an encrypted credential, so without it
      the first Connect attempt fails outright. Generate:
@@ -39,7 +42,8 @@ bottom of each section. (No secrets in this file — it is committed.)
    - `CLERK_SECRET_KEY` — used for exactly one thing: resolving that verified
      email (a Clerk session token carries no email claim). Without it,
      adoption cannot identify you and declines to run.
-6. **F3 morning run — the real IND Money login.** `docs/TESTING/F3.md` §6 is
+6. **F3 morning run — the real IND Money login.** Still the one thing that
+   could not be done overnight. `docs/TESTING/F3.md` §6 is
    the ordered checklist. The short version: run `alembic upgrade head`
    (0003→0004), link IND Money, then **restart the backend and confirm the
    link survives** — that durability is the entire point of the card and the
@@ -48,7 +52,13 @@ bottom of each section. (No secrets in this file — it is committed.)
    locally with `NEXT_PUBLIC_AUTH_ENABLED=true` and sign in as yourself (the
    second also exercises adoption on your real account). Also worth watching:
    the granted `scope` — we now ask for `portfolio:read market:read`, and C2
-   saw a `portfolio:read`-only grant come back from `/register`.
+   saw a `portfolio:read`-only grant come back from `/register`. And if the
+   login fails with something that looks like a rejected *client* rather than a
+   rejected grant, F3 is supposed to clear the stored registration and
+   self-heal on the next press of Connect (the log line says so) — if it does
+   not, `_is_invalid_client` in `backend/tools/ind_money_auth.py` is guessing at
+   this vendor's error vocabulary and needs the real body. Manual recovery is
+   one `POST /auth/logout`.
 
 ## Decisions I made overnight (review, undo if wrong)
 
