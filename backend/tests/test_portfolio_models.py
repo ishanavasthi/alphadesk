@@ -80,6 +80,23 @@ def test_to_decimal_refuses_non_numbers(value):
         to_decimal(value)
 
 
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity", float("nan"),
+                                   float("inf")])
+def test_to_decimal_refuses_non_finite_numbers(value):
+    """NaN and ±Infinity parse happily and then poison every sum they touch.
+    A money field is never either."""
+    with pytest.raises(ValueError, match="finite"):
+        to_decimal(value)
+
+
+@pytest.mark.parametrize("value", ["1,234.56", "1 234", "₹1000", "12.3.4"])
+def test_to_decimal_refuses_formatted_numbers(value):
+    """A thousands separator is a display string, not a number. Guessing at it
+    is how a value silently changes by three orders of magnitude."""
+    with pytest.raises(ValueError):
+        to_decimal(value)
+
+
 def test_every_money_field_on_a_holding_is_decimal():
     h = holding(
         units=10, avg_cost=9, invested_amount=90.0, current_price=10,
@@ -157,11 +174,19 @@ def test_as_of_is_normalized_to_utc():
 
 @pytest.mark.parametrize("model_kwargs", [
     {"currency": "USD"},
+    # An empty currency is rejected deliberately: "no currency stated" is not
+    # evidence of INR, and defaulting it would be the assumption this card
+    # exists to make explicit. A caller who means INR must say INR.
     {"currency": ""},
+    {"currency": "   "},
 ])
 def test_non_inr_is_rejected(model_kwargs):
     with pytest.raises(ValueError, match="INR"):
         holding(**model_kwargs)
+
+
+def test_a_lowercase_inr_is_accepted_and_normalized():
+    assert holding(currency="inr").currency == "INR"
 
 
 def test_currency_defaults_to_inr_everywhere():

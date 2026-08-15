@@ -16,14 +16,23 @@ import pytest
 from portfolio.connectors.ind_money import IndMoneyConnector
 from portfolio.errors import (
     NonInrValue,
+    NotLinked,
     PayloadShapeError,
+    PortfolioSourceError,
     RateLimited,
     SourceReportedError,
+    SourceUnavailable,
     UnsupportedAssetType,
     UnverifiedShapeError,
     UserScopeError,
 )
-from portfolio.models import AssetType, BreakdownBy, Holding, LinkHealth
+from portfolio.models import (
+    AssetType,
+    BreakdownBy,
+    Holding,
+    LinkHealth,
+    sum_holdings_value,
+)
 from tests.ind_money_transport import FixtureTransport, load
 
 NOW = datetime(2026, 8, 15, 6, 30, tzinfo=timezone.utc)
@@ -64,6 +73,33 @@ def one_shot(payload):
         return payload
 
     return transport
+
+
+def raising(exc: BaseException):
+    """A transport that fails the way a real client library fails."""
+
+    async def transport(tool: str, arguments=None):
+        raise exc
+
+    return transport
+
+
+def mf_rows(*rows: dict) -> dict:
+    """A holdings payload built from full-shape rows, edited per test."""
+    return {"holdings": list(rows)}
+
+
+def mf_row(**overrides) -> dict:
+    row = {
+        "asset_type": "MF", "assetclass_l2": "Fixture Growth Assets",
+        "market_cap": "Fixture Cap Band A", "investment": "Fixture Alpha Fund",
+        "investment_code": "FIXT000901", "broker": "FIXBRK01",
+        "invested_amount": 100000.0, "market_value": 110000.0,
+        "total_units": 1000.0, "unit_price": 110.0, "total_pnl": 10000.0,
+        "pnl_per": 10.0, "holding_percent": 11.0, "xirr": 0,
+    }
+    row.update(overrides)
+    return row
 
 
 # --------------------------------------------------------------------------
@@ -393,7 +429,7 @@ async def test_persistent_throttling_raises_a_typed_error_carrying_the_body(fixt
     assert error.limit == body["limit"]
     assert error.current == body["current"]
     assert error.cost == body["cost"]
-    assert error.retry_after_seconds == body["retry_after_seconds"]
+    assert error.retry_after == body["retry_after_seconds"]
     assert len(transport.calls) == 3  # initial + 2 bounded retries
     assert len(sleeper.waits) == 2
 
@@ -499,7 +535,7 @@ async def test_both_sip_endpoints_are_read_and_empty_is_normal():
 async def test_a_populated_sip_row_is_mapped_defensively():
     payload = {"mf_sips": [{
         "sip_id": "FIXSIP01", "fund_name": "Fixture Alpha Bluechip Fund",
-        "sip_amount": 5000, "frequency": "monthly", "status": "active",
+        "sip_amount": 5125, "frequency": "monthly", "status": "active",
         "next_execution_date": "2099-01-05", "unmapped_vendor_field": 7,
     }]}
 
@@ -509,7 +545,7 @@ async def test_a_populated_sip_row_is_mapped_defensively():
     sips = await connector(transport).fetch_sips(USER)
     assert len(sips) == 1
     assert sips[0].external_id == "mf:FIXSIP01"
-    assert sips[0].amount == Decimal("5000")
+    assert sips[0].amount == Decimal("5125")
     assert sips[0].next_execution_at.tzinfo is not None
     # Anything unmapped survives in raw rather than being dropped or guessed at.
     assert sips[0].raw["unmapped_vendor_field"] == 7
@@ -588,3 +624,265 @@ async def test_a_transient_auth_failure_is_not_reported_as_revoked():
         auth_status=flaky,
     )
     assert await c.link_health(USER) is LinkHealth.NEEDS_RELINK
+
+
+# --------------------------------------------------------------------------
+# Nothing escapes the abstraction untyped (fix round 1)
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_dead_credential_surfaces_as_not_linked():
+    """The MCP client's own exception must never reach a caller. A caller
+    writing `except PortfolioSourceError` has to catch everything."""
+    from tools.ind_money_auth import MCPAuthInvalid
+
+    c = connector(raising(MCPAuthInvalid("refresh rejected")))
+    with pytest.raises(NotLinked) as excinfo:
+        await c.fetch_snapshot(USER)
+    assert isinstance(excinfo.value, PortfolioSourceError)
+    # ... and a dead grant is remembered, not re-probed as if it might recover.
+    assert await c.link_health(USER) is LinkHealth.REVOKED
+
+
+@pytest.mark.asyncio
+async def test_a_transport_failure_surfaces_as_source_unavailable():
+    from tools.ind_money import MCPClientError
+
+    c = connector(raising(MCPClientError("IND_MONEY_MCP_URL is not set")))
+    with pytest.raises(SourceUnavailable) as excinfo:
+        await c.fetch_holdings(USER, AssetType.MF)
+    assert isinstance(excinfo.value, PortfolioSourceError)
+
+
+@pytest.mark.asyncio
+async def test_a_transient_auth_failure_is_source_unavailable_not_not_linked():
+    from tools.ind_money_auth import MCPAuthError
+
+    c = connector(raising(MCPAuthError("connection reset")))
+    with pytest.raises(SourceUnavailable):
+        await c.fetch_snapshot(USER)
+    # Transient: the credential is not condemned on a network blip.
+    assert await c.link_health(USER) is LinkHealth.LINKED
+
+
+@pytest.mark.asyncio
+async def test_an_arbitrary_transport_exception_is_still_typed():
+    c = connector(raising(RuntimeError("something the client library did")))
+    with pytest.raises(PortfolioSourceError):
+        await c.fetch_sips(USER)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", ["1,234.56", "NaN", "Infinity", {}, []])
+async def test_a_malformed_money_value_is_typed_and_says_where(bad):
+    """A thousands separator or a NaN is a shape deviation, not a number.
+    Neither may escape as a bare ValueError or as a pydantic ValidationError
+    several frames later."""
+    with pytest.raises(PayloadShapeError) as excinfo:
+        await connector(one_shot(mf_rows(mf_row(market_value=bad)))).fetch_holdings(
+            USER, AssetType.MF
+        )
+    assert "holdings[0].market_value" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_aggregate_value_is_typed_too():
+    payload = copy.deepcopy(load("networth_snapshot.json"))
+    payload["investments"][0]["current_value"] = "1,234.56"
+    with pytest.raises(PayloadShapeError, match=r"investments\[0\]"):
+        await connector(one_shot(payload)).fetch_snapshot(USER)
+
+
+# --------------------------------------------------------------------------
+# Failure must never be rendered as emptiness (fix round 1)
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag", ["holding_error", "position_error"])
+async def test_a_broker_side_fetch_failure_is_not_an_empty_portfolio(flag):
+    """The live-trading envelope reports a failed broker fetch in a flag while
+    still returning `holdings: []`. Mapping that to [] tells the user they own
+    nothing, which is a lie with a plausible face."""
+    payload = copy.deepcopy(load("networth_holdings__IND_STOCK__empty.json"))
+    payload[flag] = True
+    with pytest.raises(SourceReportedError) as excinfo:
+        await connector(one_shot(payload)).fetch_holdings(USER, AssetType.IND_STOCK)
+    assert flag in str(excinfo.value)
+    assert not isinstance(excinfo.value, RateLimited)
+
+
+@pytest.mark.asyncio
+async def test_the_flags_being_false_is_the_ordinary_empty_case():
+    payload = load("networth_holdings__IND_STOCK__empty.json")
+    assert payload["holding_error"] is False
+    assert await connector(one_shot(payload)).fetch_holdings(USER, AssetType.IND_STOCK) == []
+
+
+# --------------------------------------------------------------------------
+# Identity must not silently merge two positions (fix round 1)
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_the_id_fallback_does_not_merge_two_indistinguishable_rows():
+    """Two rows with no instrument code, no name and no broker, but genuinely
+    different holdings. Hashing only the descriptive fields gave them the SAME
+    id — the exact silent merge the primary id is designed to avoid."""
+    blank = dict(investment_code="", investment="", broker="")
+    payload = mf_rows(
+        mf_row(market_value=110000.0, invested_amount=100000.0, **blank),
+        mf_row(market_value=250000.0, invested_amount=200000.0, **blank),
+    )
+    holdings = await connector(one_shot(payload)).fetch_holdings(USER, AssetType.MF)
+    assert len(holdings) == 2
+    assert holdings[0].external_id != holdings[1].external_id
+
+
+@pytest.mark.asyncio
+async def test_the_id_fallback_is_deterministic_for_the_same_response():
+    blank = dict(investment_code="", investment="", broker="")
+    payload = mf_rows(mf_row(**blank), mf_row(market_value=9.0, **blank))
+    first = await connector(one_shot(payload)).fetch_holdings(USER, AssetType.MF)
+    second = await connector(one_shot(payload)).fetch_holdings(USER, AssetType.MF)
+    assert [h.external_id for h in first] == [h.external_id for h in second]
+
+
+@pytest.mark.asyncio
+async def test_a_coded_row_keeps_the_same_id_regardless_of_position():
+    """The fallback's position-dependence must not infect coded rows, which are
+    the overwhelming majority."""
+    a = mf_row(investment_code="FIXT000111")
+    b = mf_row(investment_code="FIXT000222")
+    forward = await connector(one_shot(mf_rows(a, b))).fetch_holdings(USER, AssetType.MF)
+    backward = await connector(one_shot(mf_rows(b, a))).fetch_holdings(USER, AssetType.MF)
+    assert {h.external_id for h in forward} == {h.external_id for h in backward}
+
+
+# --------------------------------------------------------------------------
+# The vendor's own P&L wins where it exists (fix round 1)
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_the_sources_own_pnl_is_passed_through_not_recomputed():
+    """The source's figures may legitimately disagree with
+    `current_value - invested_amount` (different refreshes, fees, rounding).
+    Recomputing would quietly overwrite the source's answer with our own."""
+    payload = mf_rows(mf_row(
+        invested_amount=100000.0, market_value=110000.0,
+        total_pnl=7777.0, pnl_per=7.77,   # deliberately NOT 10000.0 / 10.0
+    ))
+    holding = (await connector(one_shot(payload)).fetch_holdings(USER, AssetType.MF))[0]
+    assert holding.pnl == Decimal("7777.0")
+    assert holding.pnl_pct == Decimal("7.77")
+    assert holding.current_value - holding.invested_amount == Decimal("10000.0")
+
+
+@pytest.mark.asyncio
+async def test_a_partial_source_pnl_falls_back_to_deriving_both():
+    """One figure without the other is not a usable pass-through."""
+    payload = mf_rows(mf_row(
+        invested_amount=100000.0, market_value=110000.0, total_pnl=7777.0,
+    ))
+    payload["holdings"][0].pop("pnl_per")
+    holding = (await connector(one_shot(payload)).fetch_holdings(USER, AssetType.MF))[0]
+    assert holding.pnl == Decimal("10000.0")
+    assert holding.pnl_pct == Decimal("10.00")
+
+
+# --------------------------------------------------------------------------
+# Aggregate slices degrade the same way rows do (fix round 1)
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_zero_invested_bucket_degrades_instead_of_raising():
+    """0 means unknown at the aggregate level too. Without that mapping the
+    model's own guard fires and the caller gets a bare ValidationError."""
+    payload = copy.deepcopy(load("networth_snapshot.json"))
+    payload["investments"][0]["invested_value"] = 0
+    snapshot = await connector(one_shot(payload)).fetch_snapshot(USER)
+    bucket = snapshot.by_asset_type[0]
+    assert bucket.invested_amount is None
+    assert bucket.pnl is None and bucket.pnl_pct is None
+    assert bucket.current_value > 0  # the value itself is still known
+
+
+@pytest.mark.asyncio
+async def test_a_zero_invested_breakdown_slice_degrades_too():
+    payload = copy.deepcopy(load("networth_allocation_breakdown__MF__assets.json"))
+    payload["data"][0]["invested_value"] = 0
+    allocation = await connector(one_shot(payload)).fetch_allocation(
+        USER, AssetType.MF, BreakdownBy.ASSETS
+    )
+    assert allocation.slices[0].invested_amount is None
+    assert allocation.slices[0].pnl is None
+
+
+# --------------------------------------------------------------------------
+# Throttling details (fix round 1)
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_throttle_without_a_delay_still_waits():
+    """The global-tier envelope is UNVERIFIED, so an absent `retry_after_seconds`
+    is plausible — and retrying instantly only deepens the breach."""
+    body = dict(load("rate_limit_error__tool_scope.json"))
+    body.pop("retry_after_seconds")
+    transport = FixtureTransport(queue=[body])
+    sleeper = Sleeper()
+    c = IndMoneyConnector(
+        transport=transport, clock=lambda: NOW, sleep=sleeper,
+        auth_status=_status(authenticated=True, expires_in_sec=3000),
+    )
+    await c.fetch_holdings(USER, AssetType.MF)
+    assert sleeper.waits and sleeper.waits[0] >= 1.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [False, "", 0, None])
+async def test_a_falsy_error_key_is_not_an_error(value):
+    """`error: false` is a field, not a failure. Treating any present `error`
+    key as a breach would reject perfectly ordinary payloads."""
+    payload = dict(load("networth_snapshot.json"), error=value)
+    snapshot = await connector(one_shot(payload)).fetch_snapshot(USER)
+    assert snapshot.net_worth > 0
+
+
+# --------------------------------------------------------------------------
+# Strictness behind the UNVERIFIED boundary (fix round 1)
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_strict_mode_requires_the_whole_documented_key_set():
+    """"Matches the documented shape" means the whole 14-key row, not just the
+    one field the mapper happens to read."""
+    payload = copy.deepcopy(load("networth_holdings__IND_STOCK__populated.UNVERIFIED.json"))
+    payload["holdings"][0].pop("holding_percent")
+    with pytest.raises(UnverifiedShapeError, match="holding_percent"):
+        await connector(one_shot(payload)).fetch_holdings(USER, AssetType.IND_STOCK)
+
+
+@pytest.mark.asyncio
+async def test_strict_mode_still_tolerates_the_legitimately_absent_cost_basis():
+    payload = copy.deepcopy(load("networth_holdings__IND_STOCK__populated.UNVERIFIED.json"))
+    payload["holdings"][0].pop("invested_amount")
+    holdings = await connector(one_shot(payload)).fetch_holdings(USER, AssetType.IND_STOCK)
+    assert holdings[0].invested_amount is None
+    assert holdings[0].pnl is None
+
+
+# --------------------------------------------------------------------------
+# The reconciliation gap, as THIS source's fixtures exhibit it
+# --------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_the_holdings_sum_does_not_equal_the_snapshot_total():
+    """A property of this source's data, not of the interface: an un-enumerable
+    bucket plus per-type residuals mean no equality holds. Pinned here so
+    nobody can add a reconciliation check without a test going red."""
+    c = connector()
+    rows = []
+    for asset_type in AssetType.queryable():
+        rows.extend(await c.fetch_holdings(USER, asset_type))
+    snapshot = await connector().fetch_snapshot(USER)
+    assert rows
+    assert sum_holdings_value(rows) != snapshot.gross_value
+    assert sum_holdings_value(rows) != snapshot.net_worth

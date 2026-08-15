@@ -58,13 +58,32 @@ def _ind_money() -> PortfolioConnector:
 
 CONNECTORS = {"stub": _stub, "ind_money": _ind_money}
 
+#: How each source answers for an asset type outside the 16-value enum. This is
+#: a real, documented divergence, not an escape hatch: the stub can enumerate
+#: its own non-standard buckets and IND Money cannot (no call accepts a value
+#: outside its enum). Asserting it per-connector is what stops one
+#: implementation from quietly skipping a check the other has to pass.
+UNKNOWN_ASSET_TYPE_BEHAVIOUR = {"stub": "enumerates", "ind_money": "refuses"}
+
 
 @pytest.fixture(params=sorted(CONNECTORS))
-def connector(request) -> PortfolioConnector:
-    return CONNECTORS[request.param]()
+def connector_case(request) -> tuple[str, PortfolioConnector]:
+    return request.param, CONNECTORS[request.param]()
+
+
+@pytest.fixture
+def connector(connector_case) -> PortfolioConnector:
+    return connector_case[1]
 
 
 async def all_holdings(connector: PortfolioConnector) -> list[Holding]:
+    """Every queryable asset type, one call each.
+
+    ⚠️ Do **not** copy this against a live source. Sixteen calls to a single
+    tool is precisely the single-tool burst that trips IND Money's per-tool
+    limit (15/min) first. It is safe here only because both connectors are
+    offline: the stub reads files and the IND Money case is driven by fixtures.
+    """
     rows: list[Holding] = []
     for asset_type in AssetType.queryable():
         rows.extend(await connector.fetch_holdings(USER, asset_type))
@@ -103,15 +122,6 @@ async def test_snapshot_is_typed_stamped_and_inr(connector):
     assert isinstance(snapshot.net_worth, Decimal)
     assert snapshot.currency == "INR"
     assert snapshot.as_of.tzinfo is timezone.utc  # stamped, never parsed
-
-
-@pytest.mark.asyncio
-async def test_snapshot_totals_do_not_reconcile_with_the_holdings_rows(connector):
-    """Deliberate, on both sources: an un-enumerable bucket plus per-type
-    residuals mean no equality holds. Any code that asserts one will break in
-    production, so both fixtures make the gap visible in CI instead."""
-    snapshot = await connector.fetch_snapshot(USER)
-    assert sum_holdings_value(await all_holdings(connector)) != snapshot.gross_value
 
 
 # --------------------------------------------------------------------------
@@ -170,15 +180,49 @@ async def test_a_known_cost_basis_produces_a_consistent_pnl(connector):
 
 
 @pytest.mark.asyncio
-async def test_an_asset_type_outside_the_enum_is_handled_not_crashed(connector):
-    """A source either enumerates its non-standard buckets or says it cannot.
-    What it must never do is raise something untyped."""
-    try:
-        rows = await connector.fetch_holdings(USER, AssetType.UNKNOWN)
-    except UnsupportedAssetType:
+async def test_an_asset_type_outside_the_enum_behaves_as_documented(connector_case):
+    """A source either enumerates its non-standard buckets or says it cannot —
+    and **which** it does is pinned per connector.
+
+    An earlier version swallowed `UnsupportedAssetType` and returned early,
+    which meant IND Money silently skipped every assertion the stub had to
+    pass. A contract test that one implementation can opt out of is not a
+    contract test.
+    """
+    name, connector = connector_case
+    behaviour = UNKNOWN_ASSET_TYPE_BEHAVIOUR[name]
+
+    if behaviour == "refuses":
+        with pytest.raises(UnsupportedAssetType):
+            await connector.fetch_holdings(USER, AssetType.UNKNOWN)
         return
+
+    rows = await connector.fetch_holdings(USER, AssetType.UNKNOWN)
+    assert rows, "a source that claims to enumerate them must return some"
     assert all(row.asset_type is AssetType.UNKNOWN for row in rows)
     assert all(row.asset_type_raw for row in rows), "the original string is lost"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("by", list(BreakdownBy))
+async def test_an_out_of_enum_allocation_behaves_as_documented(connector_case, by):
+    """The same divergence, on the allocation path — which has its own guard
+    and would otherwise go entirely untested."""
+    name, connector = connector_case
+    if UNKNOWN_ASSET_TYPE_BEHAVIOUR[name] == "refuses":
+        with pytest.raises(UnsupportedAssetType):
+            await connector.fetch_allocation(USER, AssetType.UNKNOWN, by)
+    else:
+        allocation = await connector.fetch_allocation(USER, AssetType.UNKNOWN, by)
+        assert allocation.asset_type is AssetType.UNKNOWN
+
+
+def test_every_connector_declares_its_out_of_enum_behaviour():
+    """Adding a source without saying which way it goes is not allowed."""
+    assert set(UNKNOWN_ASSET_TYPE_BEHAVIOUR) == set(CONNECTORS)
+    assert set(UNKNOWN_ASSET_TYPE_BEHAVIOUR.values()) == {"enumerates", "refuses"}, (
+        "if every source behaved the same way, this would not need to be a map"
+    )
 
 
 # --------------------------------------------------------------------------
