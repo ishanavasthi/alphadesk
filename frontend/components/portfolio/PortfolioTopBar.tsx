@@ -11,13 +11,21 @@ const LINK_LABEL: Record<PortfolioSummary["link_health"], { text: string; ok: bo
 };
 
 /** What the Capture button is currently saying. */
-export type CaptureState = "idle" | "busy" | "done" | "existing" | "failed";
+export type CaptureState =
+  | "idle"
+  | "busy"
+  | "done"
+  | "existing"
+  /** A capture this page did not start is already running — nothing failed. */
+  | "in_flight"
+  | "failed";
 
 const CAPTURE_LABEL: Record<CaptureState, string> = {
   idle: "Capture snapshot",
   busy: "Capturing…",
   done: "Captured",
   existing: "Already captured today",
+  in_flight: "Capturing in background…",
   failed: "Capture failed",
 };
 
@@ -28,6 +36,8 @@ const CAPTURE_TITLE: Record<CaptureState, string> = {
   done: "Today's snapshot is stored.",
   existing:
     "Today already has a snapshot. The first capture of a day is kept: it ran closest to the time it was timed for.",
+  in_flight:
+    "A capture for today was already running — opening this page starts one when the day is missing. It will finish on its own.",
   failed: "The source could not be read. Tonight's scheduled run will try again.",
 };
 

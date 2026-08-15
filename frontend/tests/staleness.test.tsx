@@ -47,6 +47,17 @@ describe("attributedDay", () => {
     expect(attributedDay(at(instant))).toBe(attributedDay(at("2026-08-16T13:15:00-05:00")));
   });
 
+  it("shifts into IST, not merely applies the cutoff to UTC", () => {
+    // Neither scheduled run discriminates on its own — both fall the same side
+    // of the IST and UTC cutoffs. These two do, and between them they kill both
+    // wrong implementations:
+    //   02:00Z is 07:30 IST, past the cutoff -> the 16th. UTC + the same cutoff
+    //   sees hour 2 and answers the 15th.
+    expect(attributedDay(at("2026-08-16T02:00:00Z"))).toBe("2026-08-16");
+    //   00:15Z is 05:45 IST, before it -> the 15th. A plain UTC date says 16th.
+    expect(attributedDay(at("2026-08-16T00:15:00Z"))).toBe("2026-08-15");
+  });
+
   it("expects yesterday, because today's own capture may not have run yet", () => {
     expect(lastExpectedDay(NOW)).toBe("2026-08-15");
   });
@@ -89,14 +100,24 @@ describe("staleness", () => {
     expect(state).toMatchObject({ kind: "stale", days: 15 });
   });
 
-  it("never reports a stale gap of one day", () => {
-    // A one-day gap is exactly the grace the cutoff buys, so the smallest
-    // honest complaint is two. A "1 days ago" banner would be both wrong and
-    // ungrammatical.
+  it("classifies every gap, and never reports a stale gap of one day", () => {
+    // Asserted unconditionally in both directions, so a classifier that simply
+    // stopped emitting "stale" would fail here rather than pass vacuously —
+    // which a `if (state.kind === "stale")` guard would have let it do.
+    //
+    // A one-day gap is exactly the grace the cutoff buys (today's own capture
+    // runs at 23:45 IST), so the smallest honest complaint is two. "1 days ago"
+    // would be both wrong and ungrammatical.
     for (let offset = 0; offset < 40; offset += 1) {
       const captured = new Date(NOW.getTime() - offset * 86_400_000);
       const state = staleness(captured.toISOString(), NOW);
-      if (state.kind === "stale") expect(state.days).toBeGreaterThanOrEqual(2);
+      if (offset <= 1) {
+        expect(state.kind).toBe("fresh");
+      } else {
+        expect(state.kind).toBe("stale");
+        expect(state).toMatchObject({ days: offset });
+        expect(state.kind === "stale" && state.days).toBeGreaterThanOrEqual(2);
+      }
     }
   });
 });

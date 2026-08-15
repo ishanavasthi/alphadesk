@@ -225,6 +225,12 @@ export default function PortfolioPage() {
         setLastCapturedAt(captured.last_captured_at);
       } else if (result.status === "already_captured") {
         setCaptureState("existing");
+      } else if (result.status === "in_flight") {
+        // Opening this page starts a capture when today's row is missing, so
+        // pressing the button a second later legitimately finds one running.
+        // Nothing failed, and saying "failed" would send the reader looking for
+        // a problem that does not exist.
+        setCaptureState("in_flight");
       } else {
         // `skipped` (no usable link) and `failed` (the source could not be
         // read) are both "no snapshot exists for today", and the button should
@@ -235,6 +241,20 @@ export default function PortfolioPage() {
       setCaptureState("failed");
     }
   }, []);
+
+  /**
+   * Return the button to "Capture snapshot" a few seconds after it settles.
+   *
+   * Every terminal state is a *result*, not a mode: "Captured" is worth reading
+   * once and then in the way. Without this the only route back to a usable
+   * button is a page reload — which is a silly thing to ask of someone whose
+   * capture just failed and who wants to try again.
+   */
+  useEffect(() => {
+    if (captureState === "idle" || captureState === "busy") return;
+    const timer = setTimeout(() => setCaptureState("idle"), 5000);
+    return () => clearTimeout(timer);
+  }, [captureState]);
 
   const connect = useCallback(async () => {
     setConnectBusy(true);
