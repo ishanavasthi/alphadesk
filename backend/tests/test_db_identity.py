@@ -1,0 +1,156 @@
+"""Schema-level guarantees of the three F1 tables, against a real Postgres.
+
+The schema under test is built by `alembic upgrade head` (see conftest), so
+these assertions cover the migration operators will actually run — not a
+`create_all()` that happens to agree with it today.
+"""
+
+from __future__ import annotations
+
+import pytest
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from db import crypto
+from db.models import BrokerLink, OAuthPending, User, utcnow
+
+ACCESS_TOKEN = "ind-access-tok-9f3c1a-DO-NOT-PERSIST-IN-CLEAR"
+REFRESH_TOKEN = "ind-refresh-tok-77bb02-DO-NOT-PERSIST-IN-CLEAR"
+CLIENT_SECRET = "dcr-client-secret-4411ff-DO-NOT-PERSIST-IN-CLEAR"
+
+
+async def _make_user(session: AsyncSession, user_id: str = "user_local") -> User:
+    user = User(id=user_id, email=f"{user_id}@example.com")
+    session.add(user)
+    await session.commit()
+    return user
+
+
+async def test_migration_created_the_three_tables(db_session: AsyncSession) -> None:
+    rows = await db_session.execute(
+        text(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'public' ORDER BY table_name"
+        )
+    )
+    names = {row[0] for row in rows}
+    assert {"users", "broker_links", "oauth_pending"} <= names
+    # Exactly these three plus alembic's bookkeeping — no speculative tables.
+    assert names == {"users", "broker_links", "oauth_pending", "alembic_version"}
+
+
+async def test_broker_link_round_trip_stores_only_ciphertext(
+    db_session: AsyncSession,
+) -> None:
+    """The card's headline guarantee: plaintext credentials never hit a column."""
+    await _make_user(db_session)
+
+    link = BrokerLink(
+        user_id="user_local",
+        source="ind_money",
+        access_token_enc=crypto.encrypt(ACCESS_TOKEN),
+        refresh_token_enc=crypto.encrypt(REFRESH_TOKEN),
+        expires_at=utcnow(),
+        client_id="dcr-client-id",
+        client_secret_enc=crypto.encrypt(CLIENT_SECRET),
+        token_url="https://example.invalid/oauth/token",
+        scope="read:portfolio",
+        supports_refresh=True,
+        status="active",
+    )
+    db_session.add(link)
+    await db_session.commit()
+
+    # Read the raw column values back, bypassing the ORM entirely.
+    raw = (
+        await db_session.execute(
+            text(
+                "SELECT access_token_enc, refresh_token_enc, client_secret_enc "
+                "FROM broker_links WHERE user_id = :uid"
+            ),
+            {"uid": "user_local"},
+        )
+    ).one()
+
+    for stored, plaintext in zip(raw, (ACCESS_TOKEN, REFRESH_TOKEN, CLIENT_SECRET)):
+        assert stored != plaintext
+        assert plaintext not in stored
+        assert crypto.decrypt(stored) == plaintext
+
+    # And nothing anywhere in the row leaks a secret.
+    whole_row = (
+        await db_session.execute(
+            text("SELECT broker_links::text FROM broker_links WHERE user_id = :uid"),
+            {"uid": "user_local"},
+        )
+    ).scalar_one()
+    for plaintext in (ACCESS_TOKEN, REFRESH_TOKEN, CLIENT_SECRET):
+        assert plaintext not in whole_row
+
+
+async def test_one_link_per_user_and_source(db_session: AsyncSession) -> None:
+    await _make_user(db_session)
+    db_session.add(BrokerLink(user_id="user_local", source="ind_money"))
+    await db_session.commit()
+
+    db_session.add(BrokerLink(user_id="user_local", source="ind_money"))
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()
+
+
+async def test_deleting_a_user_cascades_to_links_and_pending(
+    db_session: AsyncSession,
+) -> None:
+    """DB-level cascade, proven with raw SQL so no ORM relationship can fake it."""
+    await _make_user(db_session, "user_a")
+    await _make_user(db_session, "user_b")
+
+    db_session.add_all(
+        [
+            BrokerLink(user_id="user_a", source="ind_money"),
+            BrokerLink(user_id="user_b", source="ind_money"),
+            OAuthPending(
+                state="state-a",
+                user_id="user_a",
+                source="ind_money",
+                verifier="pkce-verifier-a",
+                redirect_uri="https://example.invalid/auth/callback",
+            ),
+            OAuthPending(
+                state="state-b",
+                user_id="user_b",
+                source="ind_money",
+                verifier="pkce-verifier-b",
+                redirect_uri="https://example.invalid/auth/callback",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    await db_session.execute(text("DELETE FROM users WHERE id = 'user_a'"))
+    await db_session.commit()
+
+    remaining_links = (
+        (await db_session.execute(select(BrokerLink.user_id))).scalars().all()
+    )
+    remaining_pending = (
+        (await db_session.execute(select(OAuthPending.user_id))).scalars().all()
+    )
+    assert remaining_links == ["user_b"]
+    assert remaining_pending == ["user_b"]
+
+
+async def test_link_requires_an_existing_user(db_session: AsyncSession) -> None:
+    db_session.add(BrokerLink(user_id="ghost", source="ind_money"))
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()
+
+
+async def test_timestamps_are_timezone_aware(db_session: AsyncSession) -> None:
+    """`timestamptz`, not naive `timestamp` — S1's IST day-cutoff maths needs it."""
+    await _make_user(db_session)
+    user = (await db_session.execute(select(User))).scalar_one()
+    assert user.created_at.tzinfo is not None
