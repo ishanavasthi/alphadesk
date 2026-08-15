@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlphaDesk — shadcn/ui treatment</title>
+<style>
+  :root{
+    --bg:#fafafa; --card:#ffffff; --border:#e4e4e7; --ink:#09090b;
+    --muted:#71717a; --faint:#a1a1aa; --accent:#2563eb;
+    --good:#059669; --bad:#dc2626; --radius:8px;
+    --cap1:#1d4ed8; --cap2:#60a5fa; --cap3:#bfdbfe;
+  }
+  *{box-sizing:border-box;margin:0}
+  body{background:var(--bg);color:var(--ink);
+    font:14px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  a{color:inherit}
+  .shell{max-width:1120px;margin:0 auto;padding:0 24px 64px}
+  header.top{display:flex;align-items:center;gap:12px;height:56px;
+    border-bottom:1px solid var(--border);margin-bottom:28px}
+  .logo{font-weight:600;letter-spacing:-.01em}
+  .logo b{color:var(--accent)}
+  .crumb{color:var(--muted);font-size:13px}
+  .top .spacer{flex:1}
+  .chip{font-size:12px;border:1px solid var(--border);border-radius:999px;
+    padding:3px 10px;color:var(--muted);background:var(--card)}
+  h1{font-size:20px;font-weight:600;letter-spacing:-.02em;margin-bottom:4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:24px}
+  .grid{display:grid;gap:16px}
+  .stats{grid-template-columns:repeat(4,1fr)}
+  .card{background:var(--card);border:1px solid var(--border);
+    border-radius:var(--radius);box-shadow:0 1px 2px rgba(0,0,0,.04);padding:20px}
+  .card h3{font-size:13px;font-weight:500;color:var(--muted);margin-bottom:2px}
+  .card .big{font-size:24px;font-weight:600;letter-spacing:-.02em;
+    font-variant-numeric:tabular-nums}
+  .card .note{font-size:12px;color:var(--faint);margin-top:2px}
+  .delta{font-size:13px;font-weight:500}
+  .delta.up{color:var(--good)} .delta.down{color:var(--bad)}
+  .two{grid-template-columns:2fr 1fr;margin-top:16px}
+  .halves{grid-template-columns:1fr 1fr;margin-top:16px}
+  .card h2{font-size:14px;font-weight:600;margin-bottom:2px}
+  .card .desc{font-size:12px;color:var(--muted);margin-bottom:14px}
+  svg text{font:11px ui-sans-serif,-apple-system,sans-serif;fill:var(--muted)}
+  .bars .row{display:grid;grid-template-columns:110px 1fr 130px;align-items:center;
+    gap:10px;padding:5px 0}
+  .bars .lbl{font-size:12.5px;color:var(--ink)}
+  .bars .track{height:18px;border-radius:4px;background:#f4f4f5;position:relative}
+  .bars .fill{position:absolute;inset:0 auto 0 0;border-radius:4px;background:var(--accent);
+    min-width:2px;transition:opacity .15s}
+  .bars .row:hover .fill{opacity:.75}
+  .bars .val{font-size:12px;color:var(--muted);text-align:right;
+    font-variant-numeric:tabular-nums}
+  .strip{display:flex;height:26px;border-radius:6px;overflow:hidden;gap:2px;
+    background:var(--card)}
+  .strip>div{position:relative}
+  .striplegend{display:flex;gap:16px;margin-top:12px;flex-wrap:wrap}
+  .striplegend .k{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+  .dot{width:10px;height:10px;border-radius:3px}
+  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+  thead th{font-size:12px;font-weight:500;color:var(--muted);text-align:left;
+    padding:8px 10px;border-bottom:1px solid var(--border);cursor:pointer;
+    user-select:none;white-space:nowrap}
+  thead th.num{text-align:right}
+  thead th:hover{color:var(--ink)}
+  thead th .arr{font-size:9px;color:var(--faint)}
+  tbody td{padding:10px;border-bottom:1px solid #f4f4f5;font-size:13px}
+  tbody tr:hover{background:#fafafa}
+  td.num{text-align:right}
+  .name{font-weight:500}
+  .tick{font-size:11.5px;color:var(--muted)}
+  .badge{display:inline-block;font-size:10.5px;font-weight:600;letter-spacing:.02em;
+    border-radius:4px;padding:1px 6px;margin-left:6px;vertical-align:1px}
+  .badge.us{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe}
+  .badge.type{background:#f4f4f5;color:var(--muted);border:1px solid var(--border)}
+  .pnl.up{color:var(--good)} .pnl.down{color:var(--bad)} .pnl.na{color:var(--faint)}
+  .empty{border:1px dashed var(--border);border-radius:var(--radius);
+    padding:14px 16px;color:var(--muted);font-size:13px;margin-top:14px;
+    display:flex;gap:10px;align-items:center}
+  .empty .ico{width:26px;height:26px;border-radius:6px;background:#f4f4f5;
+    display:grid;place-items:center;color:var(--faint);font-size:13px}
+  footer{margin-top:28px;color:var(--faint);font-size:12px;display:flex;gap:8px;align-items:center}
+  .tip{position:fixed;pointer-events:none;background:var(--ink);color:#fff;
+    font-size:12px;border-radius:6px;padding:6px 9px;opacity:0;transition:opacity .1s;
+    z-index:10;white-space:nowrap;font-variant-numeric:tabular-nums}
+  @media (max-width:840px){.stats{grid-template-columns:1fr 1fr}
+    .two,.halves{grid-template-columns:1fr}
+    .bars .row{grid-template-columns:90px 1fr 110px}}
+  @media (max-width:520px){.shell{padding:0 14px 48px}
+    .stats{grid-template-columns:1fr 1fr}.card .big{font-size:20px}
+    .hidesm{display:none}}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style></head>
+<body>
+<div class="shell">
+  <header class="top">
+    <span class="logo">alpha<b>Desk</b></span>
+    <span class="crumb">/ Portfolio</span>
+    <span class="spacer"></span>
+    <span class="chip">IND Money · linked</span>
+    <span class="chip">Demo data</span>
+  </header>
+
+  <h1>Portfolio</h1>
+  <div class="sub" id="subline"></div>
+
+  <div class="grid stats">
+    <div class="card"><h3>Net worth</h3><div class="big" id="s-net"></div>
+      <div class="note">after ₹<span id="s-liab"></span> liabilities</div></div>
+    <div class="card"><h3>Current value</h3><div class="big" id="s-cur"></div>
+      <div class="note">across <span id="s-count"></span> holdings</div></div>
+    <div class="card"><h3>Invested</h3><div class="big" id="s-inv"></div>
+      <div class="note">where cost basis is known</div></div>
+    <div class="card"><h3>Overall return</h3>
+      <div class="big delta" id="s-pnl"></div>
+      <div class="note" id="s-pct"></div></div>
+  </div>
+
+  <div class="grid two">
+    <div class="card">
+      <h2>Net-worth trend</h2>
+      <div class="desc">26 weeks · synthetic weekly history for this demo</div>
+      <svg id="trend" viewBox="0 0 640 220" width="100%" height="220"
+        role="img" aria-label="Net worth trend line over 26 weeks"></svg>
+    </div>
+    <div class="card">
+      <h2>Market cap mix</h2>
+      <div class="desc">Equity holdings by cap band</div>
+      <div class="strip" id="mcap"></div>
+      <div class="striplegend" id="mcaplegend"></div>
+    </div>
+  </div>
+
+  <div class="grid halves">
+    <div class="card">
+      <h2>Allocation by asset type</h2>
+      <div class="desc">Share of current value</div>
+      <div class="bars" id="alloc-type"></div>
+    </div>
+    <div class="card">
+      <h2>Allocation by sector</h2>
+      <div class="desc">Equity &amp; fund holdings</div>
+      <div class="bars" id="alloc-sector"></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>Holdings</h2>
+    <div class="desc">Click a column to sort · “—” means the source didn’t report a cost basis</div>
+    <div style="overflow-x:auto">
+    <table id="tbl">
+      <thead><tr>
+        <th data-k="name">Holding <span class="arr"></span></th>
+        <th data-k="asset_type" class="hidesm">Type <span class="arr"></span></th>
+        <th data-k="units" class="num hidesm">Units <span class="arr"></span></th>
+        <th data-k="invested" class="num">Invested <span class="arr"></span></th>
+        <th data-k="current" class="num">Current <span class="arr"></span></th>
+        <th data-k="pnl" class="num">P&amp;L <span class="arr"></span></th>
+        <th data-k="pnl_pct" class="num">Return <span class="arr"></span></th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    </div>
+    <div class="empty" id="emptyrow"></div>
+  </div>
+
+  <footer>
+    <span class="dot" style="background:var(--accent)"></span>
+    Synthetic demo data · descriptive analytics only · not investment advice
+  </footer>
+</div>
+<div class="tip" id="tip"></div>
+
+<script src="demo-data.js"></script>
+<script>
+const inr = n => '₹' + new Intl.NumberFormat('en-IN',{maximumFractionDigits:0}).format(n);
+const inrS = n => (n>=0?'+':'−') + inr(Math.abs(n)).slice(0);
+const $ = s => document.querySelector(s);
+const tip = $('#tip');
+function showTip(x,y,html){tip.innerHTML=html;tip.style.opacity=1;
+  tip.style.left=Math.min(x+14,innerWidth-170)+'px';tip.style.top=(y+14)+'px'}
+function hideTip(){tip.style.opacity=0}
+
+$('#subline').textContent = 'Linked account snapshot · last refreshed just now';
+$('#s-net').textContent = inr(DATA.net_worth);
+$('#s-liab').textContent = new Intl.NumberFormat('en-IN').format(DATA.liabilities);
+$('#s-cur').textContent = inr(DATA.gross);
+$('#s-count').textContent = DATA.holdings.length;
+$('#s-inv').textContent = inr(DATA.invested);
+const up = DATA.overall_pnl >= 0;
+$('#s-pnl').textContent = inrS(DATA.overall_pnl);
+$('#s-pnl').classList.add(up?'up':'down');
+$('#s-pct').textContent = (up?'+':'−') + Math.abs(DATA.overall_pct).toFixed(2) + '% on invested amount';
+
+/* trend line */
+(function(){
+  const svg=$('#trend'), W=640,H=220,P={l:56,r:14,t:12,b:26};
+  const xs=DATA.history.map(h=>h.value);
+  const min=Math.min(...xs)*0.985, max=Math.max(...xs)*1.01;
+  const X=i=>P.l+(W-P.l-P.r)*i/(xs.length-1);
+  const Y=v=>P.t+(H-P.t-P.b)*(1-(v-min)/(max-min));
+  let g='';
+  for(let t=0;t<4;t++){const v=min+(max-min)*t/3, y=Y(v);
+    g+=`<line x1="${P.l}" x2="${W-P.r}" y1="${y}" y2="${y}" stroke="#f0f0f1"/>`+
+       `<text x="${P.l-8}" y="${y+4}" text-anchor="end">${(v/100000).toFixed(1)}L</text>`}
+  const pts=xs.map((v,i)=>`${X(i)},${Y(v)}`).join(' ');
+  const area=`M${X(0)},${Y(xs[0])} L${pts.split(' ').join(' L')} L${X(xs.length-1)},${H-P.b} L${X(0)},${H-P.b} Z`;
+  g+=`<path d="${area}" fill="var(--accent)" opacity="0.07"/>`;
+  g+=`<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>`;
+  const li=xs.length-1;
+  g+=`<circle cx="${X(li)}" cy="${Y(xs[li])}" r="4" fill="var(--accent)" stroke="#fff" stroke-width="2"/>`;
+  g+=`<text x="${P.l}" y="${H-8}">W1</text><text x="${W-P.r}" y="${H-8}" text-anchor="end">W26</text>`;
+  g+=`<line id="ch" y1="${P.t}" y2="${H-P.b}" stroke="var(--faint)" stroke-dasharray="3 3" opacity="0"/>`;
+  g+=`<circle id="chd" r="3.5" fill="var(--accent)" stroke="#fff" stroke-width="1.5" opacity="0"/>`;
+  svg.innerHTML=g;
+  svg.addEventListener('mousemove',e=>{
+    const r=svg.getBoundingClientRect(), fx=(e.clientX-r.left)/r.width*W;
+    let i=Math.round((fx-P.l)/((W-P.l-P.r)/(xs.length-1)));
+    i=Math.max(0,Math.min(xs.length-1,i));
+    const ch=$('#ch'),chd=$('#chd');
+    ch.setAttribute('x1',X(i));ch.setAttribute('x2',X(i));ch.style.opacity=1;
+    chd.setAttribute('cx',X(i));chd.setAttribute('cy',Y(xs[i]));chd.style.opacity=1;
+    showTip(e.clientX,e.clientY,`Week ${i+1} · <b>${inr(xs[i])}</b>`);
+  });
+  svg.addEventListener('mouseleave',()=>{hideTip();$('#ch').style.opacity=0;$('#chd').style.opacity=0});
+})();
+
+/* sorted single-hue bars */
+function bars(el, rows){
+  const max=Math.max(...rows.map(r=>r.current_value));
+  el.innerHTML=rows.slice().sort((a,b)=>b.current_value-a.current_value).map(r=>`
+    <div class="row" data-t="${r.label} · ${inr(r.current_value)} · ${r.weight_pct}%">
+      <div class="lbl">${r.label.replace('Demo ','')}</div>
+      <div class="track"><div class="fill" style="width:${r.current_value/max*100}%"></div></div>
+      <div class="val">${inr(r.current_value)} · ${r.weight_pct}%</div>
+    </div>`).join('');
+  el.querySelectorAll('.row').forEach(row=>{
+    row.addEventListener('mousemove',e=>showTip(e.clientX,e.clientY,row.dataset.t));
+    row.addEventListener('mouseleave',hideTip);
+  });
+}
+const TYPE_LABEL={MF:'Mutual funds',IND_STOCK:'Indian stocks',US_STOCK:'US stocks',
+  US_STOCK_WALLET:'US wallet cash',FD:'Fixed deposits',SA:'Savings',EPF:'EPF'};
+bars($('#alloc-type'), DATA.by_asset_type.map(b=>({...b,label:TYPE_LABEL[b.asset_type]||b.label})));
+bars($('#alloc-sector'), DATA.by_sector);
+
+/* market-cap strip — sequential ramp, ordered bands */
+(function(){
+  const cols=['var(--cap1)','var(--cap2)','var(--cap3)'];
+  const total=DATA.by_market_cap.reduce((s,b)=>s+b.current_value,0);
+  $('#mcap').innerHTML=DATA.by_market_cap.map((b,i)=>
+    `<div style="flex:${b.current_value};background:${cols[i]}" data-t="${b.label.replace('Demo Cap Band ','')}cap · ${inr(b.current_value)} · ${(b.current_value/total*100).toFixed(1)}%"></div>`).join('');
+  $('#mcaplegend').innerHTML=DATA.by_market_cap.map((b,i)=>
+    `<span class="k"><span class="dot" style="background:${cols[i]}"></span>${b.label.replace('Demo Cap Band ','')} · ${(b.current_value/total*100).toFixed(0)}%</span>`).join('');
+  document.querySelectorAll('#mcap>div').forEach(d=>{
+    d.addEventListener('mousemove',e=>showTip(e.clientX,e.clientY,d.dataset.t));
+    d.addEventListener('mouseleave',hideTip);
+  });
+})();
+
+/* sortable holdings table */
+let sortK='current', sortDir=-1;
+function renderTable(){
+  const tb=$('#tbl tbody');
+  const rows=DATA.holdings.slice().sort((a,b)=>{
+    const av=a[sortK], bv=b[sortK];
+    if(av==null&&bv==null)return 0; if(av==null)return 1; if(bv==null)return -1;
+    return (av>bv?1:av<bv?-1:0)*sortDir;
+  });
+  tb.innerHTML=rows.map(h=>{
+    const pnl = h.pnl==null
+      ? `<span class="pnl na" title="Cost basis not reported by the source">—</span>`
+      : `<span class="pnl ${h.pnl>=0?'up':'down'}">${inrS(h.pnl)}</span>`;
+    const pct = h.pnl_pct==null
+      ? `<span class="pnl na" title="Cost basis not reported by the source">—</span>`
+      : `<span class="pnl ${h.pnl_pct>=0?'up':'down'}">${h.pnl_pct>=0?'+':'−'}${Math.abs(h.pnl_pct).toFixed(1)}%</span>`;
+    return `<tr>
+      <td><span class="name">${h.name.replace('Demo ','')}</span>${h.us?'<span class="badge us">US</span>':''}
+        ${h.symbol?`<div class="tick">${h.symbol}</div>`:''}</td>
+      <td class="hidesm"><span class="badge type">${TYPE_LABEL[h.asset_type]||h.asset_type}</span></td>
+      <td class="num hidesm">${h.units==null?'—':new Intl.NumberFormat('en-IN').format(h.units)}</td>
+      <td class="num">${h.invested==null?'<span class="pnl na" title="Cost basis not reported by the source">—</span>':inr(h.invested)}</td>
+      <td class="num">${inr(h.current)}</td>
+      <td class="num">${pnl}</td><td class="num">${pct}</td></tr>`;
+  }).join('');
+  document.querySelectorAll('#tbl thead th').forEach(th=>{
+    th.querySelector('.arr').textContent = th.dataset.k===sortK ? (sortDir<0?'▼':'▲') : '';
+  });
+}
+document.querySelectorAll('#tbl thead th').forEach(th=>th.addEventListener('click',()=>{
+  if(sortK===th.dataset.k) sortDir*=-1; else {sortK=th.dataset.k; sortDir=-1;}
+  renderTable();
+}));
+renderTable();
+
+/* honest empty state */
+$('#emptyrow').innerHTML = `<span class="ico">∅</span>
+  <span><b>EPF</b> appears in your snapshot (${inr(DATA.by_asset_type.find(b=>b.asset_type==='EPF').current_value)})
+  but the source returns no holding-level rows for it — totals include it, the table can’t.</span>`;
+</script>
+</body></html>

@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlphaDesk — passbook treatment</title>
+<style>
+  :root{
+    --paper:#fbfbf8; --ink:#14261c; --dim:#5c6f63; --faint:#93a399;
+    --rule:#dbe4d9; --rule2:#c3d2c3; --green:#1a6840; --green-soft:#eaf2ec;
+    --stamp:#8f3a5e; --up:#1a6840; --down:#a63232;
+    --cap1:#1a6840; --cap2:#57a274; --cap3:#b3d4bd;
+    --serif:Charter,Georgia,"Times New Roman",serif;
+    --mono:"SF Mono",ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0}
+  body{background:var(--paper);color:var(--ink);
+    font:14px/1.6 var(--serif)}
+  .book{max-width:880px;margin:0 auto;padding:40px 28px 80px;position:relative}
+  .book::before{content:"";position:absolute;top:0;bottom:0;left:88px;
+    width:1px;background:var(--rule2)}
+  .masthead{display:flex;justify-content:space-between;align-items:baseline;
+    border-bottom:2px solid var(--ink);padding-bottom:10px;margin-bottom:6px}
+  .masthead .bank{font-size:19px;font-weight:700;letter-spacing:.02em}
+  .masthead .bank i{font-style:normal;color:var(--green)}
+  .masthead .acct{font:11px var(--mono);color:var(--dim)}
+  .subrule{display:flex;justify-content:space-between;font:10.5px var(--mono);
+    letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
+    border-bottom:1px solid var(--rule);padding:6px 0 8px;margin-bottom:30px}
+  .balance{padding-left:104px;position:relative;margin-bottom:8px}
+  .balance .cap{font:10.5px var(--mono);letter-spacing:.14em;text-transform:uppercase;
+    color:var(--dim);margin-bottom:6px}
+  .balance .amt{font-size:52px;font-weight:700;letter-spacing:-.01em;line-height:1.05;
+    font-variant-numeric:tabular-nums}
+  .balance .words{font-style:italic;color:var(--dim);margin-top:8px;font-size:14.5px}
+  .stamp{position:absolute;right:0;top:6px;transform:rotate(-7deg);
+    border:2px solid var(--stamp);color:var(--stamp);border-radius:6px;
+    font:10px var(--mono);letter-spacing:.12em;text-transform:uppercase;
+    padding:7px 12px;text-align:center;opacity:.85}
+  .figures{display:flex;gap:0;padding-left:104px;margin:26px 0 34px;
+    border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+  .figures .f{flex:1;padding:12px 16px 12px 0;border-right:1px solid var(--rule)}
+  .figures .f:last-child{border-right:0}
+  .figures .k{font:10px var(--mono);letter-spacing:.12em;text-transform:uppercase;
+    color:var(--dim);margin-bottom:3px}
+  .figures .v{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
+  .figures .up{color:var(--up)} .figures .down{color:var(--down)}
+  section{padding-left:104px;margin-bottom:40px;position:relative}
+  .fig-no{position:absolute;left:0;top:2px;width:72px;text-align:right;
+    font:10px var(--mono);letter-spacing:.1em;color:var(--faint);text-transform:uppercase}
+  h2{font-size:17px;font-weight:700;margin-bottom:2px}
+  .note{font-size:12.5px;color:var(--dim);font-style:italic;margin-bottom:14px}
+  svg text{font:10px var(--mono);fill:var(--dim)}
+  .bars .row{display:grid;grid-template-columns:150px 1fr 150px;gap:12px;
+    align-items:center;padding:6px 0;border-bottom:1px solid var(--rule)}
+  .bars .row:last-child{border-bottom:0}
+  .bars .lbl{font-size:13.5px}
+  .bars .track{height:12px;position:relative;background:var(--green-soft)}
+  .bars .fill{position:absolute;inset:0 auto 0 0;background:var(--green);min-width:2px}
+  .bars .row:hover .fill{background:#27835a}
+  .bars .val{font:11.5px var(--mono);color:var(--dim);text-align:right}
+  .strip{display:flex;height:18px;gap:2px}
+  .legend{display:flex;gap:18px;margin-top:10px}
+  .legend .k{display:flex;align-items:center;gap:6px;font:11px var(--mono);color:var(--dim)}
+  .sw{width:9px;height:9px}
+  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+  thead th{font:10px var(--mono);letter-spacing:.1em;text-transform:uppercase;
+    color:var(--dim);text-align:left;padding:8px 8px;cursor:pointer;user-select:none;
+    border-top:2px solid var(--ink);border-bottom:1px solid var(--ink);white-space:nowrap}
+  thead th.num{text-align:right}
+  thead th:hover{color:var(--green)}
+  tbody td{padding:9px 8px;border-bottom:1px solid var(--rule);font-size:13.5px}
+  tbody tr:hover{background:var(--green-soft)}
+  td.num{text-align:right;font:12.5px var(--mono)}
+  .hname{font-weight:700}
+  .hsub{font:11px var(--mono);color:var(--faint)}
+  .tag{font:9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;
+    border:1px solid var(--rule2);padding:1px 6px;color:var(--dim)}
+  .tag.us{border-color:var(--stamp);color:var(--stamp)}
+  .up{color:var(--up)} .down{color:var(--down)} .na{color:var(--faint)}
+  .emptyline{border-bottom:1px solid var(--rule);padding:10px 8px;color:var(--dim);
+    font-style:italic;font-size:13px}
+  .emptyline b{font-style:normal;font-family:var(--mono);font-size:11px;
+    letter-spacing:.08em;text-transform:uppercase}
+  footer{padding-left:104px;font:10.5px var(--mono);letter-spacing:.1em;
+    text-transform:uppercase;color:var(--faint);border-top:2px solid var(--ink);
+    padding-top:12px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px}
+  .tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--paper);
+    font:11px var(--mono);padding:6px 9px;border-radius:3px;opacity:0;z-index:10;
+    white-space:nowrap}
+  @media (max-width:760px){
+    .book::before{left:16px}
+    .balance,section,.figures,footer{padding-left:36px}
+    .fig-no{display:none}
+    .balance .amt{font-size:38px}
+    .figures{flex-wrap:wrap}.figures .f{min-width:45%}
+    .bars .row{grid-template-columns:100px 1fr 120px}
+    .stamp{position:static;display:inline-block;margin-top:12px;transform:rotate(-4deg)}
+  }
+  :focus-visible{outline:2px solid var(--green);outline-offset:2px}
+</style></head>
+<body>
+<div class="book">
+  <div class="masthead">
+    <div class="bank">alpha<i>Desk</i> · Portfolio Passbook</div>
+    <div class="acct">A/C · DEMO-0001 · IND MONEY LINKED</div>
+  </div>
+  <div class="subrule">
+    <span>Statement of net worth</span><span>All figures in ₹ · synthetic demo data</span>
+  </div>
+
+  <div class="balance">
+    <div class="cap">Balance — all sources, after liabilities</div>
+    <div class="amt" id="nw"></div>
+    <div class="words" id="words"></div>
+    <div class="stamp">Synthetic data<br>demo · not advice</div>
+  </div>
+
+  <div class="figures">
+    <div class="f"><div class="k">Current value</div><div class="v" id="cur"></div></div>
+    <div class="f"><div class="k">Invested</div><div class="v" id="inv"></div></div>
+    <div class="f"><div class="k">Profit / loss</div><div class="v" id="pnl"></div></div>
+    <div class="f"><div class="k">Liabilities</div><div class="v down" id="liab"></div></div>
+  </div>
+
+  <section>
+    <div class="fig-no">Fig. 1<br>Trend</div>
+    <h2>Net worth, week by week</h2>
+    <div class="note">Twenty-six weekly entries · series invented for this demo</div>
+    <svg id="trend" viewBox="0 0 720 210" width="100%" height="210"
+      role="img" aria-label="Net worth trend over 26 weeks"></svg>
+  </section>
+
+  <section>
+    <div class="fig-no">Fig. 2<br>Alloc.</div>
+    <h2>Where the money sits</h2>
+    <div class="note">Share of current value, largest first</div>
+    <div class="bars" id="alloc"></div>
+  </section>
+
+  <section>
+    <div class="fig-no">Fig. 3<br>Detail</div>
+    <h2>Sector &amp; cap band</h2>
+    <div class="note">Equity and fund holdings only</div>
+    <div class="bars" id="sector" style="margin-bottom:20px"></div>
+    <div class="strip" id="mcap"></div>
+    <div class="legend" id="mcapleg"></div>
+  </section>
+
+  <section>
+    <div class="fig-no">Fig. 4<br>Ledger</div>
+    <h2>Holdings ledger</h2>
+    <div class="note">Click a column head to sort · a “—” entry means the source reported no cost basis</div>
+    <div style="overflow-x:auto">
+    <table id="tbl">
+      <thead><tr>
+        <th data-k="name">Holding</th>
+        <th data-k="asset_type">Class</th>
+        <th data-k="units" class="num">Units</th>
+        <th data-k="invested" class="num">Invested</th>
+        <th data-k="current" class="num">Current</th>
+        <th data-k="pnl" class="num">P/L</th>
+        <th data-k="pnl_pct" class="num">Return</th>
+      </tr></thead><tbody></tbody>
+    </table></div>
+    <div class="emptyline" id="empty"></div>
+  </section>
+
+  <footer>
+    <span>AlphaDesk · descriptive analytics only</span>
+    <span>Nothing here is investment advice</span>
+  </footer>
+</div>
+<div class="tip" id="tip"></div>
+
+<script src="demo-data.js"></script>
+<script>
+const inr=n=>'₹'+new Intl.NumberFormat('en-IN',{maximumFractionDigits:0}).format(n);
+const sgn=n=>(n>=0?'+':'−')+inr(Math.abs(n));
+const $=s=>document.querySelector(s);
+const tip=$('#tip');
+const showTip=(x,y,h)=>{tip.innerHTML=h;tip.style.opacity=1;
+  tip.style.left=Math.min(x+14,innerWidth-180)+'px';tip.style.top=(y+14)+'px'};
+const hideTip=()=>tip.style.opacity=0;
+const TYPE={MF:'Mutual fund',IND_STOCK:'Indian equity',US_STOCK:'US equity',
+  US_STOCK_WALLET:'US wallet',FD:'Fixed deposit',SA:'Savings',EPF:'EPF'};
+
+/* amount in words — Indian system, cheque-style */
+function inWords(n){
+  const ones=['','one','two','three','four','five','six','seven','eight','nine','ten',
+   'eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen'];
+  const tens=['','','twenty','thirty','forty','fifty','sixty','seventy','eighty','ninety'];
+  const two=x=>x<20?ones[x]:tens[Math.floor(x/10)]+(x%10?'-'+ones[x%10]:'');
+  const three=x=>(x>=100?ones[Math.floor(x/100)]+' hundred'+(x%100?' ':''):'')+(x%100?two(x%100):'');
+  let out=[],v=Math.round(n);
+  const lakh=Math.floor(v/100000);v%=100000;
+  const thou=Math.floor(v/1000);v%=1000;
+  if(lakh)out.push(three(lakh)+' lakh');
+  if(thou)out.push(three(thou)+' thousand');
+  if(v)out.push(three(v));
+  const s=out.join(' ');
+  return 'Rupees '+s.charAt(0).toUpperCase()+s.slice(1)+' only';
+}
+
+$('#nw').textContent=inr(DATA.net_worth);
+$('#words').textContent=inWords(DATA.net_worth);
+$('#cur').textContent=inr(DATA.gross);
+$('#inv').textContent=inr(DATA.invested);
+const up=DATA.overall_pnl>=0;
+$('#pnl').innerHTML=`<span class="${up?'up':'down'}">${sgn(DATA.overall_pnl)} · ${(up?'+':'−')+Math.abs(DATA.overall_pct).toFixed(1)}%</span>`;
+$('#liab').textContent='−'+inr(DATA.liabilities).slice(1);
+
+/* trend — ruled-paper line */
+(function(){
+  const svg=$('#trend'),W=720,H=210,P={l:64,r:14,t:12,b:26};
+  const xs=DATA.history.map(h=>h.value);
+  const min=Math.min(...xs)*0.985,max=Math.max(...xs)*1.01;
+  const X=i=>P.l+(W-P.l-P.r)*i/(xs.length-1);
+  const Y=v=>P.t+(H-P.t-P.b)*(1-(v-min)/(max-min));
+  let g='';
+  for(let t=0;t<5;t++){const v=min+(max-min)*t/4,y=Y(v);
+    g+=`<line x1="${P.l}" x2="${W-P.r}" y1="${y}" y2="${y}" stroke="var(--rule)"/>`+
+       `<text x="${P.l-8}" y="${y+3}" text-anchor="end">${(v/100000).toFixed(1)}L</text>`}
+  const pts=xs.map((v,i)=>`${X(i)},${Y(v)}`).join(' ');
+  g+=`<polyline points="${pts}" fill="none" stroke="var(--green)" stroke-width="2"
+      stroke-linejoin="round"/>`;
+  const li=xs.length-1;
+  g+=`<circle cx="${X(li)}" cy="${Y(xs[li])}" r="4" fill="var(--green)" stroke="var(--paper)" stroke-width="2"/>`;
+  g+=`<text x="${X(li)-6}" y="${Y(xs[li])-10}" text-anchor="end" fill="var(--ink)">${inr(xs[li])}</text>`;
+  g+=`<text x="${P.l}" y="${H-8}">Week 1</text><text x="${W-P.r}" y="${H-8}" text-anchor="end">Week 26</text>`;
+  g+=`<line id="ch" y1="${P.t}" y2="${H-P.b}" stroke="var(--faint)" stroke-dasharray="2 3" opacity="0"/>`;
+  svg.innerHTML=g;
+  svg.addEventListener('mousemove',e=>{
+    const r=svg.getBoundingClientRect(),fx=(e.clientX-r.left)/r.width*W;
+    let i=Math.round((fx-P.l)/((W-P.l-P.r)/(xs.length-1)));
+    i=Math.max(0,Math.min(xs.length-1,i));
+    const ch=$('#ch');ch.setAttribute('x1',X(i));ch.setAttribute('x2',X(i));ch.style.opacity=1;
+    showTip(e.clientX,e.clientY,`Week ${i+1} · ${inr(xs[i])}`);
+  });
+  svg.addEventListener('mouseleave',()=>{hideTip();$('#ch').style.opacity=0});
+})();
+
+function bars(el,rows,labelFn){
+  const max=Math.max(...rows.map(r=>r.current_value));
+  el.innerHTML=rows.slice().sort((a,b)=>b.current_value-a.current_value).map(r=>`
+    <div class="row" data-t="${labelFn(r)} · ${inr(r.current_value)} · ${r.weight_pct}%">
+      <div class="lbl">${labelFn(r)}</div>
+      <div class="track"><div class="fill" style="width:${r.current_value/max*100}%"></div></div>
+      <div class="val">${inr(r.current_value)} · ${r.weight_pct}%</div>
+    </div>`).join('');
+  el.querySelectorAll('.row').forEach(row=>{
+    row.addEventListener('mousemove',e=>showTip(e.clientX,e.clientY,row.dataset.t));
+    row.addEventListener('mouseleave',hideTip)});
+}
+bars($('#alloc'),DATA.by_asset_type,r=>TYPE[r.asset_type]||r.label);
+bars($('#sector'),DATA.by_sector,r=>r.label.replace('Demo ',''));
+
+(function(){
+  const cols=['var(--cap1)','var(--cap2)','var(--cap3)'];
+  const tot=DATA.by_market_cap.reduce((s,b)=>s+b.current_value,0);
+  $('#mcap').innerHTML=DATA.by_market_cap.map((b,i)=>
+    `<div style="flex:${b.current_value};background:${cols[i]}"
+      data-t="${b.label.replace('Demo Cap Band ','')}cap · ${inr(b.current_value)} · ${(b.current_value/tot*100).toFixed(1)}%"></div>`).join('');
+  $('#mcapleg').innerHTML=DATA.by_market_cap.map((b,i)=>
+    `<span class="k"><span class="sw" style="background:${cols[i]}"></span>${b.label.replace('Demo Cap Band ','')}cap · ${(b.current_value/tot*100).toFixed(0)}%</span>`).join('');
+  document.querySelectorAll('#mcap>div').forEach(d=>{
+    d.addEventListener('mousemove',e=>showTip(e.clientX,e.clientY,d.dataset.t));
+    d.addEventListener('mouseleave',hideTip)});
+})();
+
+let sortK='current',dir=-1;
+function render(){
+  const tb=$('#tbl tbody');
+  const rows=DATA.holdings.slice().sort((a,b)=>{
+    const av=a[sortK],bv=b[sortK];
+    if(av==null&&bv==null)return 0;if(av==null)return 1;if(bv==null)return -1;
+    return (av>bv?1:av<bv?-1:0)*dir});
+  tb.innerHTML=rows.map(h=>{
+    const pnl=h.pnl==null?`<span class="na" title="Cost basis not reported by the source">—</span>`
+      :`<span class="${h.pnl>=0?'up':'down'}">${sgn(h.pnl)}</span>`;
+    const pct=h.pnl_pct==null?`<span class="na">—</span>`
+      :`<span class="${h.pnl_pct>=0?'up':'down'}">${(h.pnl_pct>=0?'+':'−')+Math.abs(h.pnl_pct).toFixed(1)}%</span>`;
+    return `<tr>
+      <td><div class="hname">${h.name.replace('Demo ','')}</div>
+        ${h.symbol?`<div class="hsub">${h.symbol}</div>`:''}</td>
+      <td><span class="tag${h.us?' us':''}">${TYPE[h.asset_type]||h.asset_type}</span></td>
+      <td class="num">${h.units==null?'—':new Intl.NumberFormat('en-IN').format(h.units)}</td>
+      <td class="num">${h.invested==null?'<span class="na" title="Cost basis not reported by the source">—</span>':inr(h.invested)}</td>
+      <td class="num">${inr(h.current)}</td>
+      <td class="num">${pnl}</td><td class="num">${pct}</td></tr>`}).join('');
+}
+document.querySelectorAll('#tbl thead th').forEach(th=>th.addEventListener('click',()=>{
+  if(sortK===th.dataset.k)dir*=-1;else{sortK=th.dataset.k;dir=-1}render()}));
+render();
+
+$('#empty').innerHTML=`<b>EPF</b> — carried in the balance at ${inr(DATA.by_asset_type.find(b=>b.asset_type==='EPF').current_value)}, but the source returns no line entries for it. The balance above includes it; this ledger cannot show it.`;
+</script>
+</body></html>
