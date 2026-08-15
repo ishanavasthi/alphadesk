@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from portfolio.connectors.stub import DEMO_FIXTURES, StubConnector
-from portfolio.errors import PayloadShapeError, UserScopeError
+from portfolio.errors import PayloadShapeError, PortfolioSourceError, UserScopeError
 from portfolio.models import (
     AssetType,
     BreakdownBy,
@@ -108,6 +108,58 @@ async def test_an_empty_user_id_is_refused_before_any_file_is_read():
 async def test_a_missing_portfolio_directory_is_a_typed_error(tmp_path):
     with pytest.raises(PayloadShapeError, match="demo fixture missing"):
         await stub(default_dir=tmp_path / "nowhere").fetch_snapshot(USER)
+
+
+# --------------------------------------------------------------------------
+# Every failure is a PortfolioSourceError — the stub included
+# --------------------------------------------------------------------------
+
+def _broken(tmp_path: Path, name: str, doc: object) -> Path:
+    """A demo directory that is valid except for one deliberately broken file."""
+    for source in DEMO_FIXTURES.glob("*.json"):
+        (tmp_path / source.name).write_text(source.read_text(encoding="utf-8"),
+                                            encoding="utf-8")
+    (tmp_path / name).write_text(json.dumps(doc), encoding="utf-8")
+    return tmp_path
+
+
+@pytest.mark.asyncio
+async def test_a_holding_with_no_identity_is_a_typed_error(tmp_path):
+    """`row["external_id"]` used to raise a bare KeyError, which escapes the
+    PortfolioSourceError hierarchy every caller is told it can rely on."""
+    directory = _broken(tmp_path, "holdings.json", {
+        "MF": [{"asset_type": "MF", "name": "Demo Nameless", "current_value": 100.0}],
+    })
+    with pytest.raises(PortfolioSourceError) as excinfo:
+        await stub(default_dir=directory).fetch_holdings(USER, AssetType.MF)
+    assert isinstance(excinfo.value, PayloadShapeError)
+    assert "holdings.MF[0]" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_a_sip_with_no_identity_is_a_typed_error(tmp_path):
+    directory = _broken(tmp_path, "sips.json", {
+        "mf": [{"name": "Demo Nameless SIP", "amount": 100.0}], "ind_stock": [],
+    })
+    with pytest.raises(PayloadShapeError, match=r"sips\.mf\[0\]"):
+        await stub(default_dir=directory).fetch_sips(USER)
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_demo_timestamp_is_a_typed_error(tmp_path):
+    """A broken date is a broken fixture, not a missing value — so it raises,
+    but it raises inside the hierarchy rather than as a bare ValueError."""
+    directory = _broken(tmp_path, "sips.json", {
+        "mf": [{
+            "external_id": "DEMO-SIP-MF-0009", "name": "Demo SIP",
+            "amount": 100.0, "next_execution_at": "the fifth of never",
+        }],
+        "ind_stock": [],
+    })
+    with pytest.raises(PortfolioSourceError) as excinfo:
+        await stub(default_dir=directory).fetch_sips(USER)
+    assert isinstance(excinfo.value, PayloadShapeError)
+    assert "next_execution_at" in str(excinfo.value)
 
 
 # --------------------------------------------------------------------------

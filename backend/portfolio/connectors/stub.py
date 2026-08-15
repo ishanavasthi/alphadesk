@@ -74,6 +74,21 @@ def _decimal_at(path: str, value: Any) -> Optional[Decimal]:
         raise PayloadShapeError(f"demo fixture: {path} is not a usable number") from exc
 
 
+def _required_id(path: str, row: Any) -> str:
+    """The row's identity, or a typed error naming where it was missing.
+
+    A bare ``KeyError`` here would escape the `PortfolioSourceError` hierarchy,
+    which is the one promise every caller of this interface is allowed to rely
+    on. The stub is a real source; it fails like one.
+    """
+    if not isinstance(row, dict):
+        raise PayloadShapeError(f"demo fixture: {path} is not an object")
+    value = row.get("external_id")
+    if value is None or str(value).strip() == "":
+        raise PayloadShapeError(f"demo fixture: {path} has no external_id")
+    return str(value)
+
+
 class StubConnector(PortfolioConnector):
     """Serves an invented portfolio, with no network and no credential.
 
@@ -128,7 +143,7 @@ class StubConnector(PortfolioConnector):
     async def fetch_holdings(self, user_id: str, asset_type: AssetType) -> list[Holding]:
         buckets = _load(self._dir_for(user_id), "holdings.json")
         as_of = self._clock()
-        rows: list[dict] = []
+        holdings: list[Holding] = []
         for raw_type, bucket in buckets.items():
             # UNKNOWN collects every bucket whose label is outside the enum —
             # the stub can enumerate those, which the real source cannot.
@@ -138,8 +153,11 @@ class StubConnector(PortfolioConnector):
                 else raw_type == asset_type.value
             )
             if matches:
-                rows.extend(bucket)
-        return [self._holding(row, as_of) for row in rows]
+                holdings.extend(
+                    self._holding(row, index, raw_type, as_of)
+                    for index, row in enumerate(bucket or [])
+                )
+        return holdings
 
     async def fetch_allocation(
         self, user_id: str, asset_type: AssetType, by: BreakdownBy
@@ -162,16 +180,19 @@ class StubConnector(PortfolioConnector):
         as_of = self._clock()
         sips: list[Sip] = []
         for kind in (SipKind.MF, SipKind.IND_STOCK):
-            for row in doc.get(kind.value) or []:
+            for index, row in enumerate(doc.get(kind.value) or []):
+                at = f"sips.{kind.value}[{index}]"
                 sips.append(
                     Sip(
                         source=self.source,
-                        external_id=str(row["external_id"]),
+                        external_id=_required_id(at, row),
                         kind=kind,
                         name=row.get("name"),
-                        amount=_decimal_at(f"sips.{kind.value}.amount", row.get("amount")),
+                        amount=_decimal_at(f"{at}.amount", row.get("amount")),
                         frequency=row.get("frequency"),
-                        next_execution_at=_parse(row.get("next_execution_at")),
+                        next_execution_at=_parse(
+                            f"{at}.next_execution_at", row.get("next_execution_at")
+                        ),
                         status=row.get("status"),
                         as_of=as_of,
                         raw=row,
@@ -186,11 +207,12 @@ class StubConnector(PortfolioConnector):
         return self._health
 
     # ---------------------------------------------------------------- mapping
-    def _holding(self, row: dict, as_of: datetime) -> Holding:
-        at = f"holdings.{row.get('external_id')}"
+    def _holding(self, row: Any, index: int, asset_type_key: str, as_of: datetime) -> Holding:
+        at = f"holdings.{asset_type_key}[{index}]"
+        external_id = _required_id(at, row)
         current_value = _decimal_at(f"{at}.current_value", row.get("current_value"))
         if current_value is None:
-            raise PayloadShapeError(f"demo holding {row.get('external_id')!r} has no value")
+            raise PayloadShapeError(f"demo fixture: {at} has no value")
 
         invested = _decimal_at(f"{at}.invested_amount", row.get("invested_amount"))
         if invested == 0:
@@ -207,7 +229,7 @@ class StubConnector(PortfolioConnector):
         raw_type = str(row.get("asset_type") or "")
         return Holding(
             source=self.source,
-            external_id=str(row["external_id"]),
+            external_id=external_id,
             asset_type=AssetType.coerce(raw_type),
             asset_type_raw=raw_type or None,
             symbol=row.get("symbol"),
@@ -253,10 +275,20 @@ def _slices(rows: Any) -> list[AllocationSlice]:
     return out
 
 
-def _parse(value: Any) -> Optional[datetime]:
+def _parse(path: str, value: Any) -> Optional[datetime]:
+    """Parse a demo timestamp, or fail typed.
+
+    A malformed date is a broken fixture, not a missing value, so it raises
+    rather than degrading to ``None`` — but it raises inside the
+    `PortfolioSourceError` hierarchy, because a bare `ValueError` out of a
+    connector is exactly the untyped escape this card is meant to have none of.
+    """
     if not value:
         return None
-    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError) as exc:
+        raise PayloadShapeError(f"demo fixture: {path} is not a usable timestamp") from exc
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
