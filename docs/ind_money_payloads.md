@@ -242,6 +242,13 @@ The row bodies are identical to `networth_snapshot`'s `assets` / `sector` /
 `market_cap` arrays; only the discriminator key changes. Empty combinations
 return `{"asset_type": …, "breakdown_by": …, "data": []}`.
 
+> ⚠️ **`data` is not guaranteed to be present at all.** An empty slice returns
+> `data: []`, but a **throttled** call returns a completely different body with
+> no `data` key (§2.5) — and this is the tool most likely to be throttled,
+> since it is both the highest-volume call (48 in a full sweep) and the most
+> expensive per call. `payload["data"]` is therefore unsafe; check for an
+> `error` key first.
+
 Coverage in the capture: 8 of 48 `asset_type × breakdown_by` combinations
 returned rows; 40 returned an empty `data` list. Non-empty:
 MF/assets(2), MF/sector(13), MF/market_cap(3), US_STOCK/assets(1),
@@ -276,7 +283,52 @@ cashflow series XIRR needs. That is why Q1's conclusion does not soften here.
 Separately, SIPs cover only instruments bought on a schedule; a lumpsum
 purchase would leave no trace in either tool even if both were populated.
 
-### 2.5 Fields the payloads do **not** have
+### 2.5 Rate-limit errors arrive as a **normal, successful-looking response**
+
+> ⚠️ **This is the single most likely way M1's ingest breaks in production, and
+> nothing about it is visible in a happy-path capture.**
+
+The server enforces a **global per-minute rate limit** and reports a breach
+**in the response body**, with MCP-level `isError: false`. There is no HTTP
+error, no exception, and no header to check. The body replaces the expected
+payload entirely:
+
+```
+{ error:                "rate_limit_exceeded"
+  message:              str
+  scope:                "global"      (not per-tool)
+  tool:                 str           (the tool that tripped it)
+  window:               "min"
+  limit:                number        (calls allowed per window)
+  current:              number        (calls consumed)
+  cost:                 number        (what this call costs — not every call is 1)
+  retry_after_seconds:  number }
+```
+
+Consequences M1 must handle:
+
+1. **`isError` is not a success signal.** A throttled call is `isError: false`.
+   The only reliable check is *"does the unwrapped body contain an `error`
+   key?"* — test that **before** touching the payload.
+2. **`payload["data"]` / `payload["holdings"]` will `KeyError`.** The documented
+   shapes in §2.1–§2.4 are simply absent on a throttled call. Any parser that
+   indexes straight into them crashes rather than degrading.
+3. **Calls are not equally priced.** `cost` is per-tool, and
+   `networth_allocation_breakdown` costs more than one unit, so a full 16 × 3
+   breakdown sweep burns through the budget far faster than its call count
+   suggests. Budget by **cost**, not by number of calls.
+4. **`retry_after_seconds` is the backoff to honour.** It is the only
+   quantitative recovery signal the server gives.
+
+**Evidence basis:** this envelope is **not present in the capture set used to
+re-derive the rest of this document** — that run was paced slowly enough never
+to trip the limit, which is exactly why the original write-up missed it. It was
+observed in a separate, faster re-capture during the C2 audit and is reproduced
+from that run's notes. The field names and the `scope`/`window` values are as
+recorded; treat the specific `limit` and `cost` figures as one observation
+rather than a contract, and read them from the body at runtime.
+
+### 2.6 Fields the payloads do **not** have
 
 Confirmed absent everywhere by a key-name walk over all **67 payload captures**
 (1 snapshot + 16 holdings + 48 breakdowns + 2 SIP), which between them use
@@ -315,7 +367,7 @@ Evidence:
 
   So the field is *claimed* to be populated and simply is not, on this account.
 - **XIRR cannot be computed client-side either.** It needs dated cashflows;
-  the payloads carry **zero date fields** (§2.5), and the 15-tool inventory
+  the payloads carry **zero date fields** (§2.6), and the 15-tool inventory
   contains **no transaction-history or cashflow tool at all**. Both SIP tools
   returned **0 rows** — and, per §2.4, their own descriptions promise only the
   *next* execution date and the *current* month's installments, so even
@@ -324,16 +376,30 @@ Evidence:
 
 **Alternative return signal that IS present and non-zero:**
 
+**"Populated" means non-null, not non-zero — and the difference matters**, because
+these are the exact fields A1 and D1 are being told to display *instead of* XIRR.
+
 | Level | Field | Present & non-null | Non-zero |
 | --- | --- | --- | --- |
-| Per holding row | `pnl_per` (simple return %) | 14 of 14 | 11 of 14; `0` in 3 of 14 |
-| Per holding row | `total_pnl` (absolute) | 14 of 14 | 11 of 14; `0` in 3 of 14 |
-| Aggregate | `return`, `return_percentage` on `investments[]`/`assets[]`/`sector[]`/`market_cap[]` | 26 of 26 snapshot rows | 26 of 26 |
+| Per holding row | `pnl_per` (simple return %) | 14 of 14 | **11 of 14**; `0` in 3 |
+| Per holding row | `total_pnl` (absolute) | 14 of 14 | **11 of 14**; `0` in 3 |
+| Aggregate | `return`, `return_percentage` on `investments[]`/`assets[]`/`sector[]`/`market_cap[]` | 26 of 26 snapshot rows | **24 of 26**; `0` in 2 |
 
-`total_pnl` and `pnl_per` go to zero on **the same 3 rows**, all in one asset
-type where a return figure is not meaningful. So "populated" is true of both in
-the sense that the key is always there with a real number — but on 3 of 14 rows
-that number is `0`, and a renderer must not read that as "broke even".
+The zeros are not noise, and they are not a coincidence — **they are the
+cash-like buckets, and they line up exactly:**
+
+- The 3 zero `total_pnl` / `pnl_per` rows are **the same 3 rows**, all `SA`.
+- The 2 zero aggregate `return` / `return_percentage` rows are the **`SA` and
+  `US_STOCK_WALLET`** buckets in `investments[]` — and on both,
+  `invested_value == current_value` exactly. No row in `assets[]`, `sector[]`
+  or `market_cap[]` is zero.
+
+So a `0` here means **"this holding has no return by nature"**, not "it broke
+even after gains and losses". D1 must not render it as a computed `0.00%`
+performance figure alongside genuinely-performing rows, and A1 must not average
+it into a headline return. Treat cash-like rows as *not applicable*, the same
+way §3 Q2 says to treat `invested_amount == 0` as unknown cost basis rather
+than zero.
 
 These are **simple cumulative returns** (current vs invested), not
 time-weighted or money-weighted. They are a legitimate substitute for a
@@ -411,28 +477,38 @@ holdings rows — it will not balance, for a structural reason.**
   `networth_holdings` call for all 16 enum values (14 rows total) lands about
   **2.34% below** `total_current_value` — far too large to be rounding.
 
-**Root cause, re-derived bucket by bucket against the captures.** The
-unenumerable bucket accounts for essentially all of the gap, but *not* all of
-it, and the doc previously claimed otherwise without doing the arithmetic:
+**Principal cause, re-derived bucket by bucket against the captures.** The
+unenumerable bucket is the *principal* cause but **not the whole story**, and
+the doc previously claimed a single root cause without doing the arithmetic:
 
 - `snapshot.investments[]` contains a bucket whose `asset_type` is
   `US_STOCK_WALLET`, and that value **is not in the `networth_holdings`
   `asset_type` enum** (verified against the tool's own input schema — 16 values,
   `US_STOCK_WALLET` absent). No call can enumerate it. It is almost certainly
   uninvested wallet cash. Its `current_value` is **2.348% of
-  `total_current_value`** — slightly *more* than the 2.339% gap.
-- Bucket by bucket, every asset type that *can* be enumerated reconciles:
-  **SA and FD match to the paisa** (`investments[].current_value` == the sum of
-  that type's `market_value` rows, difference exactly `0.00`), and **US_STOCK**
-  matches to well under a rounding step.
-- **MF does not.** Its holdings rows sum **~0.015% above** the snapshot's MF
-  bucket. Every MF row's own `market_value` equals `total_units × unit_price` to
-  the paisa, so the rows are internally consistent; the aggregate and the rows
-  simply disagree. With **no `as_of` field anywhere** (§2.5) there is nothing in
-  the payload that can confirm it, but the most likely explanation is that the
-  snapshot aggregate and the holdings rows are priced from different NAV
-  refreshes. This residual is what remains of the gap after the wallet bucket,
-  and it runs the *opposite* way.
+  `total_current_value`** against a **2.339%** gap — so the wallet does not
+  merely fail to explain the gap exactly, it **over-explains** it by 0.4% of its
+  own size. Subtracting it leaves a residual of **−0.0088%** of the portfolio
+  total, with the sign pointing the other way.
+- That residual is not rounding. **Per-type buckets do not equal their own
+  holdings sums either**, and relative to each bucket the discrepancies are far
+  larger than the portfolio-level figure makes them look:
+
+  | bucket | rows | (holdings sum − bucket) / bucket |
+  | --- | --- | --- |
+  | `SA` | 3 | `0.000%` — exact to the paisa |
+  | `FD` | 1 | `0.000%` — exact to the paisa |
+  | `MF` | 9 | **+0.015%** |
+  | `US_STOCK` | 1 | **+0.944%** |
+
+- Every row's own `market_value` equals `total_units × unit_price` to the paisa,
+  so the **rows are internally consistent** and it is the aggregate that
+  disagrees with them. With **no `as_of` field anywhere** (§2.6) nothing in the
+  payload can confirm why, but the likeliest reading is that the snapshot
+  aggregate and the holdings rows are priced from different refreshes — which
+  would explain why the two market-priced types (`MF`, `US_STOCK`) drift while
+  the two cash-like ones (`SA`, `FD`) are exact, and why the thinly-held
+  `US_STOCK` bucket drifts most in relative terms.
 
 **The decisive fact about `IND_STOCK`, which the doc should have stated
 outright:** `snapshot.investments[]` has **no `IND_STOCK` bucket at all** — not
@@ -444,12 +520,18 @@ endpoint. That narrows the §2.2 warning: the 19-key envelope is real and its
 row shape is still unverified, but there is no sign of a suppressed or
 unreadable Indian-stock position hiding behind it.
 
-M1 implication, unchanged and now better supported: any `CHECK` or test
-asserting "sum of holdings == stored net worth" is guaranteed to fail — first
-by ~2.3% from the unenumerable wallet bucket, and then by a residual fraction
-of a percent that no field in the payload lets you explain away. Model the gap
-explicitly — a synthetic "unallocated / wallet cash" line item plus a
-documented tolerance, not equality.
+**M1 implication, and it is stronger than "add the wallet back".** Any `CHECK`
+or test asserting `sum(holdings) == stored net worth` is guaranteed to fail, by
+~2.3% from the unenumerable wallet bucket alone. But **do not "fix" it by
+asserting `sum(holdings) + wallet == total` either** — that check fails too, on
+this very capture, because the per-type sums do not equal their own buckets.
+There is no arrangement of these fields that balances exactly.
+
+Model the gap explicitly: a synthetic "unallocated / wallet cash" line item for
+the unenumerable bucket, **plus a documented tolerance** for the residual. A
+tolerance of ~1% of any single asset-type bucket would have accommodated
+everything observed here; anything tighter than that is betting on two
+independently-refreshed price sets agreeing, which they demonstrably do not.
 
 ### Q4 — Is any value non-INR? Is there a currency field?
 
@@ -490,9 +572,12 @@ position settles it.
 
 ### Q5 — Does DCR tolerate one client per user?
 
-**Answer: yes. Repeat registration is not merely tolerated, it is what the app
-already does on every single login — and those clients complete the full
-auth-code exchange in production. F3 does not need a pre-registered client.**
+**Answer: yes — per-user/per-login DCR is VIABLE, so F3's plan default (per-user
+DCR, client id/secret stored on the link row, reused on re-link) STANDS
+UNCHANGED.** Repeat registration is not merely tolerated, it is what the app
+already does on every single login, and those clients complete the full
+auth-code exchange in production. The first write-up of this section recommended
+a pre-registered client instead; that was wrong, and it is corrected below.
 
 > **Evidence basis — read this before relying on the bullets below.** The raw
 > DCR probe capture was lost with the original capture set, and it was
@@ -503,6 +588,11 @@ auth-code exchange in production. F3 does not need a pre-registered client.**
 > on disk, and they are marked accordingly. The corroborating evidence below
 > them is independently checkable in this repo and in normal operation, and it
 > is what actually carries the conclusion.
+>
+> One asymmetry worth knowing: the **discovery document is a plain
+> unauthenticated `GET` with no side effect**, so anything sourced from it
+> (including the two fields F3 depends on, below) *can* be re-verified freely at
+> any time. It is only `POST /register` that must not be casually repeated.
 
 **From the run-1 probe, as recorded (not re-verifiable from captures):**
 
@@ -518,8 +608,11 @@ auth-code exchange in production. F3 does not need a pre-registered client.**
 - The granted `scope` came back as **`portfolio:read` only** — read-only, and
   the same scope the app requests (`_SCOPE` in `tools/ind_money_auth.py`,
   overridable via `IND_MONEY_OAUTH_SCOPE`).
-- **No rate-limit signal:** `Retry-After`, `X-RateLimit-*` and `RateLimit-*`
-  headers were absent on both responses (0 of 2).
+- **No rate-limit *headers*:** `Retry-After`, `X-RateLimit-*` and `RateLimit-*`
+  were absent on both responses (0 of 2). **Do not read that as "no rate
+  limit."** §2.5 shows this vendor signals throttling **in the response body**,
+  not in headers — so on this server, absent headers are the expected case
+  whether or not a limit exists. This bullet says nothing either way.
 - **DCR is fully unauthenticated** — the registration POST carried no token at
   all and still succeeded. By contrast, an unauthenticated `list_tools` **fails**
   (`ok: false`). So `/register` carries **no user identity whatsoever**; the
@@ -531,6 +624,16 @@ auth-code exchange in production. F3 does not need a pre-registered client.**
   `response_types_supported = [code]`,
   `code_challenge_methods_supported = [S256]`. All consistent with the existing
   backend-mediated callback design.
+- **Two discovery fields F3 depends on**, both easy to miss:
+  - `revocation_endpoint`, with `revocation_endpoint_auth_methods_supported`.
+    So **F3 can revoke a user's tokens on unlink** rather than just forgetting
+    them locally — which is the difference between "we deleted our copy" and
+    "the grant is dead". Note the scope of that carefully: RFC 7009 revocation
+    kills **tokens**, not client *registrations* (see the gaps below).
+  - `scopes_supported = [portfolio:read, market:read]` — the whole scope
+    universe is **two read scopes**. There is no write scope to accidentally
+    request, which is worth stating plainly in a repo whose headline promise is
+    that no order is ever placed. The app requests `portfolio:read`.
 - The existing token/client was **not** invalidated (no logout, no revocation
   call was made).
 
@@ -559,29 +662,48 @@ Checkable in this repo, no probe required:
   broken by a concurrent re-link.
 
 **Remaining gaps.** Two probe calls plus routine app usage say nothing about
-behaviour at **N-user volume** — no rate-limit headers appeared, but absence of
-a header is not a guarantee of absence of a limit. No `registration_access_token`
-was captured, so client lifecycle (update/revoke/expiry) is unknown, and
-registrations appear to accumulate server-side with no cleanup path we know of.
+behaviour at **N-user volume**, and the absent rate-limit headers are no comfort
+at all now that §2.5 shows this server throttles **in the body** — a
+registration limit could exist and would look exactly like this until it fired.
+Separately, `revocation_endpoint` covers **tokens, not client registrations**:
+no `registration_access_token` was captured, so RFC 7592 client lifecycle
+(update / delete / expiry) remains unknown and **DCR clients accumulate
+server-side with no cleanup path we know of**. One client per login makes that
+accumulation linear in logins, not in users.
 
-**F3 recommendation — CHANGED from the original write-up.** Keep the existing
-**per-login DCR**: register a confidential client per link, carry it through
-`/authorize` + `/token`, and store the per-user refresh token in the F1
-`broker_links` table. **No pre-registered client is required on this evidence**,
-and adding one would mean replacing a path that demonstrably works end-to-end
-with one that has never been exercised against this server. What F3 *should*
-add is the storage of `client_id` / `client_secret` alongside the refresh token
-per user (the single-tenant code already keeps them together), and a watch on
-registration volume, since nothing here proves the server tolerates one
-registration per login at scale.
+**F3 recommendation — the plan's default STANDS; the original write-up inverted
+it.** The plan's default was per-user DCR: register per user, store
+`client_id` / `client_secret` on the link row, reuse on re-link. The first
+write-up replaced that with "one pre-registered client" — but the fallback it
+was invoking is conditioned on *C2 finding per-user DCR unviable*, and **that
+trigger never fired**. Per-user/per-login DCR is viable on both the probe
+evidence and operational proof: every real login completes `/authorize` +
+`/token` with a freshly DCR'd client, including two distinct clients minted
+during the 2026-08-15 re-auth.
+
+So:
+
+- **Keep the plan default.** F3 stores `client_id` / `client_secret` on the
+  `broker_links` row beside the per-user refresh token and reuses them on
+  re-link. That is *less* registration churn than today's code, which mints a
+  fresh client on every login — a refinement of the current behaviour, not a
+  change of approach.
+- **Adopting a pre-registered client would change shipped code**, since
+  `begin_login()` registers per login today, and would swap a path proven
+  end-to-end for one never exercised against this server. That is the more
+  dangerous direction, not the safer one.
+- **One pre-registered confidential client stays documented as the fallback**,
+  to be adopted only if a restriction actually appears — a registration rate
+  limit, a per-account client cap, or DCR being withdrawn. Watch registration
+  volume for exactly that.
 
 ---
 
 ## Go/no-go
 
-**Verdict: GO for M1 — with scope changes to all five downstream cards and one
-blocking unknown that M1 must design around rather than assume away. The kill
-criterion is NOT triggered.**
+**Verdict: GO for M1 — with scope changes to four downstream cards (A1, D1, M1,
+S1), F3's plan default confirmed, and one blocking unknown that M1 must design
+around rather than assume away. The kill criterion is NOT triggered.**
 
 The kill criterion in the plan was: *if `networth_snapshot`/`networth_holdings`
 return no usable per-holding values, D1/S1/A1 as specified are dead.* They do
@@ -595,32 +717,47 @@ total. D1, S1 and A1 survive.
 - **A1 (AI overview) — CHANGED. Its XIRR metric is dead.** `xirr` was `0` in
   14 of 14 rows, there are no dated cashflows in any payload, and no tool in the
   inventory supplies them. Replace with `return_percentage` from
-  `networth_snapshot` (simple cumulative return), and do not call it XIRR.
+  `networth_snapshot` (simple cumulative return), and do not call it XIRR. Note
+  the substitute is itself `0` on 2 of 26 aggregate rows — the cash-like `SA`
+  and `US_STOCK_WALLET` buckets, where `invested_value == current_value`. Those
+  are "no return by nature", not zero performance; do not average them into a
+  headline figure (Q1).
 - **D1 (dashboard) — CHANGED, twice.** (a) Drop the holdings-table XIRR column
-  or relabel it `Return %` sourced from per-row `pnl_per`. (b) Headline totals
-  must not silently blend `US_STOCK`/`US_STOCK_WALLET` into an INR figure —
-  exclude them or label the assumption (Q4).
+  or relabel it `Return %` sourced from per-row `pnl_per` — which is `0` on 3 of
+  14 rows (all `SA`, cash-like), so render those as "—", not `0.00%` (Q1).
+  (b) Headline totals must not silently blend `US_STOCK`/`US_STOCK_WALLET` into
+  an INR figure — exclude them or label the assumption (Q4).
 - **M1 (model) — CHANGED, three ways.** (a) One holdings model does **not**
   fit: `IND_STOCK` returns a structurally different 19-key live-trading
   envelope, not the 14-key aggregator row. (b) All money/percent fields must be
   `float`/`Decimal`, never `int` — the API emits both for the same field.
   (c) `invested_amount == 0` means *unknown cost basis* (vendor-documented for
   linked brokers) and must be nullable in the model, never fed into a P&L
-  calculation.
+  calculation. (d) **Rate-limit errors arrive as a normal response with
+  `isError: false`** and an `error` body that replaces the payload entirely
+  (§2.5) — ingest must check for an `error` key *before* indexing into `data` /
+  `holdings`, or a throttled call becomes a `KeyError` instead of a retry.
+  Budget by the per-call `cost`, not by call count, and honour
+  `retry_after_seconds`.
 - **S1 (snapshots) — CHANGED, mildly.** There is **no `as_of` field in any
   payload**. S1's calendar-day attribution must stamp its own capture time at
   ingest; the vendor gives it nothing to anchor to. Also: do not add a
   reconciliation constraint between stored holdings and stored net worth — the
   unenumerable `US_STOCK_WALLET` bucket makes it ~2.3% off by construction, and
-  a smaller MF residual (Q3) means even a wallet-aware constraint would not
-  balance to the paisa.
-- **F3 (per-user linking) — CHANGED from the first write-up, which got this
-  backwards.** Keep the **per-login DCR the app already does** and store the
-  minted `client_id`/`client_secret` with the per-user refresh token. A
-  pre-registered client is *not* required: per-login registration is the only
-  auth path this codebase has ever used and it completes `/authorize` +
-  `/token` in production today (Q5). Open risk is volume, not viability —
-  nothing proves the server tolerates one registration per login at scale.
+  **adding the wallet back does not fix it**: per-type sums miss their own
+  buckets by up to `0.944%` (Q3), so no exact equality holds. Use a documented
+  tolerance.
+- **F3 (per-user linking) — plan default CONFIRMED. The first write-up of
+  Q5 inverted it and is corrected.** Per-user DCR is **viable**, so F3 keeps the
+  plan's default: register per user, store `client_id`/`client_secret` on the
+  link row, reuse on re-link. The "one pre-registered client" fallback is
+  conditioned on C2 finding per-user DCR unviable — that trigger never fired,
+  and adopting it would *change shipped code*, since `begin_login()` registers
+  per login today and completes `/authorize` + `/token` in production. The
+  fallback stays documented for the day a restriction appears. Open risk is
+  volume, not viability: registrations accumulate with no known client-deletion
+  path, and this server signals limits in response bodies (§2.5), so the absent
+  rate-limit headers prove nothing.
 
 **The one blocking unknown a human must weigh before M1 writes the
 `IND_STOCK` model:** `IND_STOCK` — the entire point of AlphaDesk — returned **zero holdings
