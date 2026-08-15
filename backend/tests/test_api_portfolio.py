@@ -60,6 +60,24 @@ def admin_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ALPHADESK_SINGLE_TENANT", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def no_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    """This module tests the D1 surface **without** a database.
+
+    `api.main` calls `load_dotenv()`, so a developer's `backend/.env` puts a real
+    `DATABASE_URL` into the environment — and these assertions would then depend
+    on whatever rows happen to be in that developer's local Postgres. (That is
+    not hypothetical: `test_summary_shape` started failing the moment an
+    end-to-end run left snapshots in the dev database.)
+
+    Clearing it also stops these tests from firing S1's opportunistic background
+    capture at a database nobody asked them to write to. Snapshot behaviour
+    against a real database lives in `test_snapshots_api.py`, which points the
+    session dependency at the throwaway test DB on purpose.
+    """
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+
 class _RaisingConnector(PortfolioConnector):
     """A connector that fails the same way on every call.
 
@@ -202,7 +220,8 @@ def test_summary_shape(client: TestClient) -> None:
     assert body["source"] == "stub"
     assert body["currency"] == "INR"
     assert body["link_health"] == LinkHealth.LINKED.value
-    # Snapshots arrive in S1; claiming a capture time now would be a lie.
+    # No database configured here (see the `no_database` fixture), so there is
+    # honestly nothing captured — and a fabricated timestamp would be a lie.
     assert body["last_captured_at"] is None
     # Money is a string, never a JSON number.
     for key in ("net_worth", "current_value", "invested_total", "pnl", "pnl_pct"):
