@@ -1,0 +1,112 @@
+{
+  "MF": [
+    {
+      "external_id": "DEMO-MF-0001",
+      "asset_type": "MF",
+      "symbol": null,
+      "name": "Demo Bluechip Equity Fund",
+      "isin": "INF000DEMO01",
+      "units": 2450.0,
+      "invested_amount": 180000.0,
+      "current_value": 214497.5,
+      "current_price": 87.55
+    },
+    {
+      "external_id": "DEMO-MF-0002",
+      "asset_type": "MF",
+      "symbol": null,
+      "name": "Demo Balanced Advantage Fund",
+      "isin": "INF000DEMO02",
+      "units": 1500,
+      "invested_amount": 0,
+      "current_value": 63450,
+      "current_price": 42.3
+    },
+    {
+      "external_id": "DEMO-MF-0003",
+      "asset_type": "MF",
+      "symbol": null,
+      "name": "Demo Small Cap Discovery Fund",
+      "isin": "INF000DEMO03",
+      "units": 0.0,
+      "invested_amount": 12000.0,
+      "current_value": 0.0,
+      "current_price": 0.0
+    }
+  ],
+  "IND_STOCK": [
+    {
+      "external_id": "DEMO-INDSTK-0001",
+      "asset_type": "IND_STOCK",
+      "symbol": "DEMOANVIL",
+      "name": "Demo Anvil Industries Ltd",
+      "isin": "INE000DEMO01",
+      "units": 300.0,
+      "invested_amount": 195000.0,
+      "current_value": 222780.0,
+      "current_price": 742.6
+    },
+    {
+      "external_id": "DEMO-INDSTK-0002",
+      "asset_type": "IND_STOCK",
+      "symbol": "DEMOBEACON",
+      "name": "Demo Beacon Logistics Ltd",
+      "isin": "INE000DEMO02",
+      "units": 850.0,
+      "invested_amount": 88000.0,
+      "current_value": 100512.5,
+      "current_price": 118.25
+    }
+  ],
+  "US_STOCK": [
+    {
+      "external_id": "DEMO-USSTK-0001",
+      "asset_type": "US_STOCK",
+      "symbol": "DEMOORB",
+      "name": "Demo Orbital Systems Inc",
+      "isin": null,
+      "units": 14.5,
+      "invested_amount": 96000.0,
+      "current_value": 107590.0,
+      "current_price": 7420.0
+    }
+  ],
+  "FD": [
+    {
+      "external_id": "DEMO-FD-0001",
+      "asset_type": "FD",
+      "symbol": null,
+      "name": "Demo Fixed Deposit 18M",
+      "isin": null,
+      "units": null,
+      "invested_amount": 240000,
+      "current_value": 250000,
+      "current_price": null
+    }
+  ],
+  "SA": [
+    {
+      "external_id": "DEMO-SA-0001",
+      "asset_type": "SA",
+      "symbol": null,
+      "name": "Demo Savings Sweep",
+      "isin": null,
+      "units": null,
+      "current_value": 86500.0,
+      "current_price": null
+    }
+  ],
+  "US_STOCK_WALLET": [
+    {
+      "external_id": "DEMO-WALLET-0001",
+      "asset_type": "US_STOCK_WALLET",
+      "symbol": null,
+      "name": "Demo US Wallet Cash",
+      "isin": null,
+      "units": null,
+      "invested_amount": 18250.0,
+      "current_value": 18250.0,
+      "current_price": null
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "mf": [
+    {
+      "external_id": "DEMO-SIP-MF-0001",
+      "name": "Demo Bluechip Equity Fund",
+      "amount": 10000.0,
+      "frequency": "monthly",
+      "next_execution_at": "2099-01-05T00:00:00+05:30",
+      "status": "active"
+    },
+    {
+      "external_id": "DEMO-SIP-MF-0002",
+      "name": "Demo Balanced Advantage Fund",
+      "amount": 5000,
+      "frequency": "monthly",
+      "next_execution_at": "2099-01-12T00:00:00+05:30",
+      "status": "paused"
+    }
+  ],
+  "ind_stock": [
+    {
+      "external_id": "DEMO-SIP-STK-0001",
+      "name": "Demo Anvil Industries Ltd",
+      "amount": 7500.0,
+      "frequency": "monthly",
+      "next_execution_at": "2099-01-07T00:00:00+05:30",
+      "status": "active"
+    }
+  ]
+}
