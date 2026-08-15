@@ -11,6 +11,7 @@ import {
 } from "recharts";
 import { Card, CardHead, EmptyCallout } from "./ui";
 import { inr, lakh, num } from "./format";
+import { attributedDay } from "./staleness";
 import type { HistoryPoint } from "@/lib/api";
 
 export interface TrendPoint {
@@ -86,6 +87,11 @@ export function NetWorthTrend({
   lastCapturedAt: string | null;
 }) {
   const hasHistory = points.length > 1;
+  // The **attributed** day, not the raw timestamp: a capture that ran at 01:00
+  // IST belongs to the previous day, and printing its wall-clock time here would
+  // contradict the last point on the axis beside it. (It is also what stops a
+  // microsecond-precision ISO string from appearing in a card subtitle.)
+  const lastDay = lastCapturedAt ? attributedDay(new Date(lastCapturedAt)) : null;
 
   return (
     <Card className="flex flex-col">
@@ -93,7 +99,7 @@ export function NetWorthTrend({
         title="Net-worth trend"
         desc={
           hasHistory
-            ? `${points.length} captured snapshots · ${lastCapturedAt ? `last ${lastCapturedAt}` : "daily"}`
+            ? `${points.length} captured snapshots · ${lastDay ? `last ${lastDay}` : "daily"}`
             : "Daily snapshots · nothing captured yet"
         }
       />
