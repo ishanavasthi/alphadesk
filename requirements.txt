@@ -38,3 +38,14 @@ alembic==1.19.1
 asyncpg==0.31.0
 cryptography==49.0.0
 greenlet==3.5.5
+
+# --- Identity (card F2) ---------------------------------------------------
+# Verifies Clerk session tokens in `api/deps.py`: RS256 against the instance's
+# published JWKS, cached in-process so steady-state verification makes no
+# network call. Deliberately **not** `clerk-backend-api` — that SDK's
+# `authenticate_request()` wants a CLERK_SECRET_KEY and an httpx Request object
+# to do the same local signature check this does in ten lines.
+# Already present as a transitive dep of `mcp`; pinned because it is now a
+# *direct* dep and an unpinned bump would change what "verified" means.
+# RS256 needs PyJWT's `crypto` extra, which is `cryptography` — pinned above.
+PyJWT==2.13.0
