@@ -40,8 +40,11 @@ the implementation vehicle.
 - Allocation (asset type, sector): **sorted horizontal single-hue bars**,
   accent fill on `#f4f4f5` track, label left / `₹value · weight%` right.
   Identity lives in labels — never a multi-hue categorical palette.
-- Market cap: 3-segment stacked strip, the sequential ramp above, 2px gaps,
-  legend chips below.
+- Market cap: stacked strip on the sequential ramp above, 2px gaps, legend
+  chips below. The live source can return FOUR bands (Mega + Large/Mid/Small):
+  sample the ramp per band count with per-channel-monotonic interpolation —
+  at three bands the locked hexes reproduce exactly (amended 2026-08-16, D1
+  review).
 - Trend: 2px accent line, 7% opacity area, emphasized endpoint dot,
   crosshair + tooltip on hover, y-axis in lakh (`10.2L`), synthetic/paused
   state labeled in the caption.
