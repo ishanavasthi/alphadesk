@@ -1,0 +1,15 @@
+# Test-only dependencies. Same pin policy as requirements.txt: every direct
+# dep pinned with `==`, bumps are deliberate commits.
+#
+# These are deliberately NOT installed in the Docker image — the Hugging Face
+# Space runs the app, not the test suite, and every extra wheel is image weight
+# and attack surface. `Dockerfile` installs requirements.txt only.
+#
+#   pip install -r requirements.txt -r requirements-dev.txt
+#   cd backend && pytest
+#
+# The DB tests need a Postgres; see docs/TESTING/F1.md for the one-line local
+# Docker container. They skip (loudly, with the URL they tried) if none is
+# reachable, so `pytest` is green on a machine without Docker.
+pytest==9.1.1
+pytest-asyncio==1.4.0

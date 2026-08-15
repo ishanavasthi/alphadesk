@@ -18,3 +18,15 @@ pydantic==2.13.4
 mcp==1.28.1
 httpx==0.28.1
 python-dotenv==1.2.2
+
+# --- Persistence (card F1) ------------------------------------------------
+# Postgres over asyncpg; Alembic runs migrations on the same async engine, so
+# there is deliberately no second (sync) Postgres driver here. greenlet is
+# what SQLAlchemy's asyncio layer runs sync ORM code on — a transitive dep in
+# name only, pinned because the async engine does not work without it.
+# Test-only deps live in requirements-dev.txt and stay out of the image.
+sqlmodel==0.0.39
+alembic==1.19.1
+asyncpg==0.31.0
+cryptography==49.0.0
+greenlet==3.5.5
