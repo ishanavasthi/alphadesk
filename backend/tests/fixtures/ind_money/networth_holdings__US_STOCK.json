@@ -1,0 +1,20 @@
+{
+  "holdings": [
+    {
+      "asset_type": "US_STOCK",
+      "assetclass_l2": "Fixture Offshore Assets",
+      "market_cap": "Fixture Cap Band A",
+      "investment": "Fixture Overseas Growth Co",
+      "investment_code": "FIXT000501",
+      "broker": "FIXBRK03",
+      "invested_amount": 90000.0,
+      "market_value": 96000.0,
+      "total_units": 12.5,
+      "unit_price": 7680.0,
+      "total_pnl": 6000.0,
+      "pnl_per": 6.67,
+      "holding_percent": 9.6,
+      "xirr": 0
+    }
+  ]
+}

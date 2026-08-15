@@ -1,0 +1,21 @@
+{
+  "holdings": [],
+  "positions": null,
+  "intra_day_positions": null,
+  "mtf_positions": null,
+  "derivative_positions": null,
+  "drv_intra_day_positions": null,
+  "commodity_positions": null,
+  "commodity_intra_day_positions": null,
+  "strategy_positions": null,
+  "open_orders": [],
+  "open_derivative_orders": [],
+  "open_commodity_orders": null,
+  "open_gtt_commodity_orders": null,
+  "meta_info": {},
+  "holding_error": false,
+  "position_error": false,
+  "is_cached_response": false,
+  "is_pledge_eligible": true,
+  "is_mtf_pledge_required": false
+}

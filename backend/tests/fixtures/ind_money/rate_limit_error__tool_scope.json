@@ -1,0 +1,11 @@
+{
+  "error": "rate_limit_exceeded",
+  "message": "Fixture rate limit exceeded for this tool: 9 calls per min. Try again in 30s.",
+  "window": "tool:min",
+  "scope": "tool",
+  "limit": 9,
+  "current": 8,
+  "cost": 2,
+  "retry_after_seconds": 30,
+  "tool": "networth_allocation_breakdown"
+}

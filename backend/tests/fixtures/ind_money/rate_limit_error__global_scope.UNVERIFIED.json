@@ -1,0 +1,11 @@
+{
+  "error": "rate_limit_exceeded",
+  "message": "Fixture rate limit exceeded: 20 calls per min. Try again in 15s.",
+  "window": "min",
+  "scope": "global",
+  "limit": 20,
+  "current": 19,
+  "cost": 2,
+  "retry_after_seconds": 15,
+  "tool": "networth_snapshot"
+}

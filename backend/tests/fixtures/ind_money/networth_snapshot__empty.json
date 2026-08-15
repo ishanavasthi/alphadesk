@@ -1,0 +1,16 @@
+{
+  "total_networth": 0.0,
+  "total_current_value": 0.0,
+  "total_invested": 0.0,
+  "liabilities": {
+    "total": 0.0,
+    "total_loan_balance": 0.0,
+    "total_credit_card_due": 0.0,
+    "loans": [],
+    "credit_cards": []
+  },
+  "investments": [],
+  "assets": [],
+  "sector": [],
+  "market_cap": []
+}
