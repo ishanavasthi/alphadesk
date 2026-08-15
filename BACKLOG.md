@@ -5,9 +5,10 @@ the reason it's parked and what has to be true before it's picked up.
 `V2_PLAN.md` is the plan of record; this file is the queue behind it.
 
 Grilling session of 2026-08-14 settled the frame these are judged against:
-public but **invite-gated**; **one normalized portfolio model** with per-source
-connectors; **descriptive analytics + scenario projection only** (no forward
-forecasts, no instrument-level advice on real holdings).
+public but **waitlist-gated**; **one normalized portfolio model** with per-source
+connectors; **descriptive analytics only** in v2 — scenario projection is itself
+deferred to this backlog (no forward forecasts, no instrument-level advice on
+real holdings; `V2_PLAN.md` §8.3 is the wording of record).
 
 ---
 
@@ -159,3 +160,43 @@ Verified against the live tool schema (`indmcp` v1.26.0): the signature is
 `segments` parameter its US counterpart has. The Research agent currently never
 passes it, so analyst ratings and news sentiment are available and unused.
 Cheap win for the Lab section whenever it gets attention. Not v2 scope.
+
+### Bring-your-own LLM key
+Let a user supply their own OpenAI (or compatible) API key in the frontend and
+run the whole workflow on it, instead of the project's shared credits.
+
+**Status:** deferred. Invite-only means a small, known user set, and project
+credits cover it. Until then all users run on the project key; testing uses those
+credits conservatively.
+
+**Why it's wanted:** removes the project's LLM spend as a scaling ceiling and
+removes the shared-quota abuse surface entirely — each user's usage is bounded by
+their own billing.
+
+**Design constraints when picked up (this is a credential feature, not a form
+field):**
+- Prefer **never persisting it server-side**: hold it in the browser session and
+  send it per-request. If it must persist, it is Fernet-encrypted exactly like
+  broker refresh tokens, never logged, never returned to the frontend.
+- Either way the key **transits your backend**, so you can spend the user's
+  money. That needs an explicit consent screen and a visible per-user usage
+  readout, not a silent text input.
+- Validate with one cheap call at entry so a bad key fails at setup, not
+  mid-pipeline.
+- Falling back to the project key when the user's key fails must be a deliberate,
+  disclosed choice — never an invisible default.
+- Privacy policy consequence: with a user's own key, prompts go to *their*
+  provider account under *their* retention terms. The policy text differs between
+  the two modes and must say which applies.
+
+### Third-party error tracking
+Sentry (or equivalent) on backend + frontend. Deferred in v2: with fewer than ten
+waitlist-approved users you can ask them directly what broke, and structured
+logging covers the rest.
+
+**Why it isn't free to add:** Sentry captures request context, and this app's
+requests carry financial data — it would need aggressive scrubbing (no request
+bodies, no query params on portfolio routes) and would become a **third
+subprocessor** named in the privacy policy alongside Groq and OpenAI.
+
+**Pick up when:** user count outgrows "ask them directly", or before open sign-up.
