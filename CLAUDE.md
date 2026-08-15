@@ -15,10 +15,9 @@ AlphaDesk is a multi-agent Indian-equity research desk: a LangGraph pipeline (Fa
 
 ```bash
 source .venv/bin/activate                       # repo-root venv
-pip install -r requirements.txt
+pip install -r requirements.txt                  # every dep pinned; bumps are deliberate commits
 cd backend
 cp .env.example .env                             # then fill values
-python -m rag.ingest                             # (re)build ChromaDB from data/nse_docs
 uvicorn api.main:app --reload --port 8000        # API + interactive docs at /docs
 ```
 
@@ -51,7 +50,7 @@ scanner → research → analyst → risk_manager ─┬─(any PASS/FLAG)→ ex
 
 **IND Money MCP** (`backend/tools/ind_money.py`, `ind_money_auth.py`): market data over streamable HTTP, wrapped as LangGraph tools. Two integration facts drive most of the code: (1) instruments are keyed by `ind_key` (e.g. `INDS00577`), **not** ticker — resolve tickers with `lookup_ind_keys`; (2) responses are wrapped as `{"result": "<stringified JSON>"}` and must be unwrapped. Auth is OAuth 2.0 with hourly-expiring access tokens auto-refreshed from a stored refresh token, cached to `backend/.ind_money_token.json` (gitignored). The in-app Connect button drives the full auth-code + PKCE + dynamic-client-registration flow; the OAuth callback is served by the **backend**, so `IND_MONEY_AUTH_REDIRECT` must be the public backend URL.
 
-**RAG** (`backend/rag/`): ChromaDB with the built-in ONNX MiniLM embedding function (no torch, no paid embedding API). `ingest.py` chunks NSE PDFs from `data/nse_docs/` into the `nse_filings` collection at `data/chroma_db/`; the Analyst agent queries it via `retriever.py`. Scanned/image-only PDFs are skipped (no OCR).
+**RAG is dormant as of C1.** The code stays in `backend/rag/` — `ingest.py` chunks NSE PDFs from `data/nse_docs/` into the `nse_filings` ChromaDB collection at `data/chroma_db/`, and the Analyst queries it via `retriever.py` — but the corpus is empty, `chromadb`/`pypdf`/`langchain-text-splitters` are **not installed**, and `retriever.get_relevant_context()` degrades to `[]`. Do not add RAG-dependent behavior without re-enabling it first; the path is in `docs/SPECS/C1.md`.
 
 **State persistence is in-memory** (`_RUNS`, `_ANALYSES`, `_PAPER_WATCHLIST`, `_ACTIONS` dicts in `backend/api/main.py`). Runs, stored analyses, and the paper watchlist survive a browser refresh but **not a backend restart**. This is a known limitation — swap for a DB to make durable.
 
@@ -65,7 +64,7 @@ scanner → research → analyst → risk_manager ─┬─(any PASS/FLAG)→ ex
 
 ## Deployment
 
-Frontend → Vercel (Root Directory = `frontend`, set `NEXT_PUBLIC_API_URL`). Backend → Hugging Face Spaces (Docker, port 7860; the repo-root `Dockerfile` runs `uvicorn api.main:app --app-dir backend` and bakes the ChromaDB index at build). See `DEPLOY.md` for the full env-var wiring — the three cross-references that must agree are `IND_MONEY_AUTH_REDIRECT` = `<backend>/auth/callback`, `CORS_ALLOW_ORIGINS` containing the live frontend origin, and `NEXT_PUBLIC_API_URL` = the backend URL.
+Frontend → Vercel (Root Directory = `frontend`, set `NEXT_PUBLIC_API_URL`). Backend → Hugging Face Spaces (Docker, port 7860; the repo-root `Dockerfile` runs `uvicorn api.main:app --app-dir backend`; it copies `backend/` only — no `data/`, no ingest step, no apt layer). See `DEPLOY.md` for the full env-var wiring — the three cross-references that must agree are `IND_MONEY_AUTH_REDIRECT` = `<backend>/auth/callback`, `CORS_ALLOW_ORIGINS` containing the live frontend origin, and `NEXT_PUBLIC_API_URL` = the backend URL.
 
 ## Conventions
 
