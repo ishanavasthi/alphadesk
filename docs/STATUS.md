@@ -3,13 +3,13 @@
 Plan of record: [`../V2_PLAN.md`](../V2_PLAN.md). The orchestrator updates this
 file at every card completion and gate. Newest facts win; keep entries terse.
 
-**Last updated:** 2026-08-15 (C1 merged: RAG unplugged, all deps pinned, screenshot binaries dropped; `space-deploy` dance stays — HF scans pushed *history*, so a direct `main` push is still rejected)
+**Last updated:** 2026-08-15 (F1 built on `v2-foundation`, awaiting review; C1 merged: RAG unplugged, all deps pinned, screenshot binaries dropped; `space-deploy` dance stays — HF scans pushed *history*, so a direct `main` push is still rejected)
 
 | Card | Status | Notes |
 | --- | --- | --- |
 | C0 lockdown | ✅ **done 2026-08-15** | Admin gate on `/auth/login`+`/auth/logout` (`ALPHADESK_ADMIN_SECRET`, fail-closed); ambient credential fallbacks gated behind `ALPHADESK_SINGLE_TENANT` (local only). Verified live on the Space: 9/9 checks (401s, read-only 200s, status unauthenticated). Security review: no findings. |
 | C1 slim image | ✅ **done 2026-08-15** | Merge `8d2e8bd`. chromadb/pypdf/text-splitters dropped (rag-only, grep-proven); all 10 direct deps pinned from verified freeze; Dockerfile loses `build-essential`, `COPY data/`, ingest step (image 370MB, builds+boots verified); screenshots PNGs removed from HEAD; README/DEPLOY/CLAUDE RAG claims corrected; docs/SPECS+TESTING/C1.md added. Review: 1 Critical (real run data in TESTING doc) fixed via branch history rewrite pre-merge. **The PNG removal does NOT retire the `space-deploy` dance** — verified 2026-08-15: HF's pre-receive hook scans all pushed history and rejects the historical PNGs; only a `main` history rewrite would fix that, not worth it. |
-| F1 persistence | ⏭ **next** | Identity tables only (`users`, `broker_links`, `oauth_pending`) + pytest/Alembic/crypto scaffolding + `portfolio_runnable_config()` tracing-off helper. M1/S1 add their own tables post-C2. No Neon yet — verify on local Docker Postgres; Neon provisioning is an operator task before S1. |
+| F1 persistence | 🔨 **built, awaiting review** | Branch `v2-foundation`. Three identity tables (`users`, `broker_links`, `oauth_pending`) with **DB-level** `ON DELETE CASCADE`; Fernet crypto on `TOKEN_ENCRYPTION_KEY`; async Alembic (asyncpg only — no second sync driver); pytest wired (22 tests, 6 need Postgres and skip loudly without it); `portfolio_runnable_config()` tracing kill switch. New env vars: `DATABASE_URL`, `TOKEN_ENCRYPTION_KEY`. Runtime deps +5 pinned (image 370→426MB); test deps split into `requirements-dev.txt` so the image stays clean. `git diff main -- backend/api backend/agents backend/graph/graph.py backend/tools` is empty. Verified on local Docker Postgres 16 (`:5433`); still no Neon. Docs: `docs/SPECS/F1.md`, `docs/TESTING/F1.md`. |
 | C2 data spike | queued — **HUMAN GATE** | Operator's real IND Money link is live on prod (admin-secret login, 2026-08-15), so live `networth_*` calls are possible. |
 | M1 model + connectors | queued | Blocked on C2 gate. |
 | D0 design bake-off | queued — **HUMAN GATE** | 4–5 Fable-built dashboard demos (shadcn/ui, Bloomberg-terminal, +2–3 others); human picks; lock in DECISION.md + plan §2 + memory. Blocks all real dashboard frontend. |
@@ -52,3 +52,16 @@ file at every card completion and gate. Newest facts win; keep entries terse.
   returned URL. F3 makes links durable (Postgres, per user).
 - **Local dev needs `ALPHADESK_SINGLE_TENANT=1`** in `backend/.env` (already
   set on the operator's machine) or the local Connect button 401s.
+- **There is no `RunnableConfig` field that disables LangSmith tracing**
+  (verified against langchain-core 1.4.9 / langsmith 0.10.3): `callbacks=[]`,
+  `callbacks=None` and an empty `CallbackManager` all still resolve to a live
+  `LangChainTracer` when `LANGCHAIN_TRACING_V2=true`. F1's
+  `portfolio_runnable_config()` works by occupying the tracer slot with an
+  inert `LangChainTracer` subclass — i.e. it **rides on a langchain-core
+  internal**. Re-run `backend/tests/test_portfolio_config.py` and
+  `tests/check_tracing_in_image.py` after **any** langchain/langsmith/langgraph
+  bump. The image also floats langchain-core transitively (1.5.5 there vs 1.4.9
+  in the venv), so the in-image check is not optional.
+- **Losing `TOKEN_ENCRYPTION_KEY` means every stored broker link is
+  undecryptable** and every user must re-link. It is a Space *secret*; back it
+  up before rotating anything.

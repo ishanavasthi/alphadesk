@@ -11,14 +11,17 @@ AlphaDesk is a multi-agent Indian-equity research desk: a LangGraph pipeline (Fa
 
 ## Commands
 
-**Backend** — imports resolve with `backend/` as the root (modules are `api.main`, `graph.*`, `agents.*`, `tools.*`, `rag.*` — there is **no `backend.` prefix**). Always run from inside `backend/`, or pass `--app-dir backend`.
+**Backend** — imports resolve with `backend/` as the root (modules are `api.main`, `graph.*`, `agents.*`, `tools.*`, `db.*`, `rag.*` — there is **no `backend.` prefix**). Always run from inside `backend/`, or pass `--app-dir backend`.
 
 ```bash
 source .venv/bin/activate                       # repo-root venv
 pip install -r requirements.txt                  # every dep pinned; bumps are deliberate commits
+pip install -r requirements-dev.txt              # test-only deps; NOT in the Docker image
 cd backend
 cp .env.example .env                             # then fill values
+alembic upgrade head                             # needs DATABASE_URL (Postgres)
 uvicorn api.main:app --reload --port 8000        # API + interactive docs at /docs
+pytest                                           # 22 tests; DB ones need Postgres
 ```
 
 **Frontend**
@@ -31,7 +34,7 @@ npm run build
 npm run lint
 ```
 
-There is no automated test runner wired up; `backend/evals/test_cases.py` is a stub.
+**Tests:** `pytest` from inside `backend/` (config in `backend/pytest.ini`, suite in `backend/tests/`). The DB tests need a Postgres — one-line Docker container and the full walkthrough are in `docs/TESTING/F1.md`; without one they skip loudly rather than failing. `backend/evals/test_cases.py` is a separate, still-unwritten eval stub.
 
 ## Architecture
 
@@ -53,6 +56,8 @@ scanner → research → analyst → risk_manager ─┬─(any PASS/FLAG)→ ex
 **RAG is dormant as of C1.** The code stays in `backend/rag/` — `ingest.py` chunks NSE PDFs from `data/nse_docs/` into the `nse_filings` ChromaDB collection at `data/chroma_db/`, and the Analyst queries it via `retriever.py` — but the corpus is empty, `chromadb`/`pypdf`/`langchain-text-splitters` are **not installed**, and `retriever.get_relevant_context()` degrades to `[]`. Do not add RAG-dependent behavior without re-enabling it first; the path is in `docs/SPECS/C1.md`.
 
 **State persistence is in-memory** (`_RUNS`, `_ANALYSES`, `_PAPER_WATCHLIST`, `_ACTIONS` dicts in `backend/api/main.py`). Runs, stored analyses, and the paper watchlist survive a browser refresh but **not a backend restart**. This is a known limitation — swap for a DB to make durable.
+
+**Postgres (`backend/db/`, added by F1) exists but is not wired in yet.** SQLModel tables (`users`, `broker_links`, `oauth_pending`, all with DB-level `ON DELETE CASCADE`), an async engine + `async_session` FastAPI dependency, Fernet helpers for the `*_enc` columns (`TOKEN_ENCRYPTION_KEY`), and Alembic migrations run on asyncpg — there is deliberately no sync Postgres driver. `api/main.py` still imports none of it; F3/M1 are the first consumers. Details in `docs/SPECS/F1.md`. Any future portfolio-graph invocation must pass `graph.portfolio_config.portfolio_runnable_config()`, which keeps LangSmith tracing off for holdings data even when `LANGCHAIN_TRACING_V2=true`.
 
 **API ↔ frontend** (`backend/api/main.py` ↔ `frontend/lib/api.ts`): `POST /analyze` refuses with **409** unless IND Money is connected (an unauthenticated run can only yield an empty "0 candidates" pipeline), then streams Server-Sent Events (`start`, one `update` per agent node, then `complete` with recommendations/risk/`action_id`, or `error`). `POST /approve` resumes the paused graph. CORS: localhost/127.0.0.1 (any port) is always allowed; production origins come from `CORS_ALLOW_ORIGINS` (comma-separated) and optional `CORS_ALLOW_ORIGIN_REGEX`.
 
