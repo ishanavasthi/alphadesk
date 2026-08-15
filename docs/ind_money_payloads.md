@@ -490,18 +490,34 @@ position settles it.
 
 ### Q5 — Does DCR tolerate one client per user?
 
-**Answer: mechanically yes — a second registration succeeded identically. But
-the flow was never proven past `/register`, so F3 should ship one
-pre-registered client.**
+**Answer: yes. Repeat registration is not merely tolerated, it is what the app
+already does on every single login — and those clients complete the full
+auth-code exchange in production. F3 does not need a pre-registered client.**
+
+> **Evidence basis — read this before relying on the bullets below.** The raw
+> DCR probe capture was lost with the original capture set, and it was
+> **deliberately not re-run**: every probe registration mints a real OAuth
+> client on the vendor's server, and repeating a side-effecting call to
+> re-create a file is not a trade worth making. So the probe bullets are
+> reproduced **as recorded in the run-1 notes**, not re-derived from a capture
+> on disk, and they are marked accordingly. The corroborating evidence below
+> them is independently checkable in this repo and in normal operation, and it
+> is what actually carries the conclusion.
+
+**From the run-1 probe, as recorded (not re-verifiable from captures):**
 
 - Discovery (`/.well-known/oauth-authorization-server`) returned **200** and
   advertises a `registration_endpoint`.
-- **Two** back-to-back registrations with distinct client names: attempt 1
-  **201**, attempt 2 **201**. Both returned `client_id` and `client_secret`,
-  with an **identical 9-key response shape** (`client_id`,
-  `client_id_issued_at`, `client_name`, `client_secret`, `grant_types`,
-  `redirect_uris`, `response_types`, `scope`, `token_endpoint_auth_method`).
-  Not deduped, not rejected, not bound to the existing client.
+- **Two** back-to-back unauthenticated `POST /register` calls with distinct
+  fresh client names: attempt 1 **201**, attempt 2 **201**. Both returned an
+  **independent** `client_id` + `client_secret` pair, with an **identical
+  9-key response shape** (`client_id`, `client_id_issued_at`, `client_name`,
+  `client_secret`, `grant_types`, `redirect_uris`, `response_types`, `scope`,
+  `token_endpoint_auth_method`). Not deduped, not rejected, not bound to the
+  existing client.
+- The granted `scope` came back as **`portfolio:read` only** — read-only, and
+  the same scope the app requests (`_SCOPE` in `tools/ind_money_auth.py`,
+  overridable via `IND_MONEY_OAUTH_SCOPE`).
 - **No rate-limit signal:** `Retry-After`, `X-RateLimit-*` and `RateLimit-*`
   headers were absent on both responses (0 of 2).
 - **DCR is fully unauthenticated** — the registration POST carried no token at
@@ -518,24 +534,54 @@ pre-registered client.**
 - The existing token/client was **not** invalidated (no logout, no revocation
   call was made).
 
-**Gaps.** Neither attempt exercised `/authorize` or `/token` with the newly
-minted credentials, so there is no proof a DCR client can actually complete an
-auth-code exchange. Two calls say nothing about behaviour at N-user volume, and
-no `registration_access_token` was captured, so client lifecycle
-(update/revoke/expiry) is unknown.
+**Corroborating operational fact — this is the load-bearing evidence.**
+Checkable in this repo, no probe required:
 
-**F3 recommendation:** **one pre-registered confidential client**, reused for
-every user's `/authorize` + `/token`, with per-user refresh tokens in the F1
-`broker_links` table. Per-user DCR is not ruled out — it is unproven, and it
-buys nothing, because `/register` carries no identity anyway.
+- **AlphaDesk already performs DCR on every login.**
+  `tools/ind_money_auth.begin_login()` calls `_register_client()`
+  unconditionally, with the comment *"Always register a client bound to our
+  redirect_uri (don't reuse a cached client registered for a different
+  redirect)"*. There is no cache, no reuse branch, no pre-registered-client
+  path in the code at all.
+- **It has been doing so in production, repeatedly.** Two distinct clients were
+  minted minutes apart during the 2026-08-15 re-authentication. Note the app
+  sends a **constant** `client_name` (`"AlphaDesk"`), not a fresh random one —
+  so the server does not dedupe on client name either, which is a stronger
+  result than the probe's distinct-names test.
+- **Those clients complete the full exchange.** This is what closes the gap the
+  probe left open: a DCR-minted client is carried through `/authorize` with
+  PKCE (`S256`) and then through `/token`, and the resulting refresh token
+  drives the hourly access-token refresh that produced every capture in this
+  document. Per-login DCR is not a hypothesis; it is the only auth path this
+  codebase has ever used.
+- `_register_client` also **does not disturb the live token chain** — the new
+  client is adopted only once login completes, so an in-flight refresh is not
+  broken by a concurrent re-link.
+
+**Remaining gaps.** Two probe calls plus routine app usage say nothing about
+behaviour at **N-user volume** — no rate-limit headers appeared, but absence of
+a header is not a guarantee of absence of a limit. No `registration_access_token`
+was captured, so client lifecycle (update/revoke/expiry) is unknown, and
+registrations appear to accumulate server-side with no cleanup path we know of.
+
+**F3 recommendation — CHANGED from the original write-up.** Keep the existing
+**per-login DCR**: register a confidential client per link, carry it through
+`/authorize` + `/token`, and store the per-user refresh token in the F1
+`broker_links` table. **No pre-registered client is required on this evidence**,
+and adding one would mean replacing a path that demonstrably works end-to-end
+with one that has never been exercised against this server. What F3 *should*
+add is the storage of `client_id` / `client_secret` alongside the refresh token
+per user (the single-tenant code already keeps them together), and a watch on
+registration volume, since nothing here proves the server tolerates one
+registration per login at scale.
 
 ---
 
 ## Go/no-go
 
-**Verdict: GO for M1 — with three scope changes and one blocking unknown that
-M1 must design around rather than assume away. The kill criterion is NOT
-triggered.**
+**Verdict: GO for M1 — with scope changes to all five downstream cards and one
+blocking unknown that M1 must design around rather than assume away. The kill
+criterion is NOT triggered.**
 
 The kill criterion in the plan was: *if `networth_snapshot`/`networth_holdings`
 return no usable per-holding values, D1/S1/A1 as specified are dead.* They do
@@ -568,8 +614,13 @@ total. D1, S1 and A1 survive.
   unenumerable `US_STOCK_WALLET` bucket makes it ~2.3% off by construction, and
   a smaller MF residual (Q3) means even a wallet-aware constraint would not
   balance to the paisa.
-- **F3 (per-user linking) — CONFIRMED, not changed.** Use one pre-registered
-  OAuth client, per-user tokens (Q5).
+- **F3 (per-user linking) — CHANGED from the first write-up, which got this
+  backwards.** Keep the **per-login DCR the app already does** and store the
+  minted `client_id`/`client_secret` with the per-user refresh token. A
+  pre-registered client is *not* required: per-login registration is the only
+  auth path this codebase has ever used and it completes `/authorize` +
+  `/token` in production today (Q5). Open risk is volume, not viability —
+  nothing proves the server tolerates one registration per login at scale.
 
 **The one blocking unknown a human must weigh before M1 writes the
 `IND_STOCK` model:** `IND_STOCK` — the entire point of AlphaDesk — returned **zero holdings
