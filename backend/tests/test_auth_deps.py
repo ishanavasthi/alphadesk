@@ -525,3 +525,134 @@ async def test_an_expired_token_creates_no_user_row(
     headers = _auth(signing_key, iat=now - 7200, nbf=now - 7200, exp=now - 60)
     assert (await client.get("/me", headers=headers)).status_code == 401
     assert (await db_session.execute(select(User))).scalars().all() == []
+
+
+# --------------------------------------------------------------------------- #
+# F3 hardening — the three latent findings from F2's review
+# --------------------------------------------------------------------------- #
+def test_a_token_without_sid_is_401(
+    jwks_server: _JwksServer, signing_key: rsa.RSAPrivateKey
+) -> None:
+    """Clerk signs JWT-template tokens with the same key pair as session tokens.
+
+    A template token can be minted for another purpose and can be long-lived, and
+    it verifies identically. `sid` is the evidence that this is a *session*
+    token, which is the only thing that should authenticate a request here.
+    """
+    token = _sign(signing_key, _claims(sid=None))
+    assert "not a session token" in _assert_401(deps.verify_token, token)
+
+
+@pytest.mark.parametrize("sid", ["", "   "])
+def test_a_blank_sid_is_401(
+    jwks_server: _JwksServer, signing_key: rsa.RSAPrivateKey, sid: str
+) -> None:
+    assert _assert_401(deps.verify_token, _sign(signing_key, _claims(sid=sid)))
+
+
+def test_random_kids_cannot_drive_one_fetch_each(
+    jwks_server: _JwksServer, signing_key: rsa.RSAPrivateKey
+) -> None:
+    """The amplification bug, pinned by counting.
+
+    `PyJWKClient.get_signing_key` refreshes the key set on every `kid` miss, and
+    the `kid` is attacker-chosen — so 50 junk tokens meant 50 requests from our
+    IP to Clerk. The cooldown caps that: one refresh, then nothing, however many
+    distinct unknown `kid`s arrive.
+    """
+    assert deps.verify_token(_sign(signing_key, _claims()))["sub"] == USER_ID
+    baseline = jwks_server.fetches
+    assert baseline == 1
+
+    for index in range(50):
+        _assert_401(deps.verify_token, _sign(signing_key, _claims(), kid=f"junk-{index}"))
+
+    assert jwks_server.fetches - baseline == 1, (
+        "50 unknown kids must cost at most one refresh, not fifty"
+    )
+    # And a legitimate token still verifies, from cache, with no further fetch.
+    assert deps.verify_token(_sign(signing_key, _claims()))["sub"] == USER_ID
+    assert jwks_server.fetches - baseline == 1
+
+
+def test_a_rotated_signing_key_is_picked_up(
+    jwks_server: _JwksServer,
+    signing_key: rsa.RSAPrivateKey,
+    other_key: rsa.RSAPrivateKey,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rotation must still work — the cooldown delays a refresh, never blocks it.
+
+    Clerk publishes a new key alongside the old one under a new `kid`. The first
+    token signed by it misses the cached set and is allowed to refresh; a second
+    unknown `kid` inside the cooldown is not; once the cooldown lapses (the clock
+    is moved rather than slept on) a refresh is allowed again.
+    """
+    assert deps.verify_token(_sign(signing_key, _claims()))["sub"] == USER_ID
+
+    rotated_kid = "ins_rotatedKeY"
+    document = _jwks(signing_key)
+    document["keys"].extend(_jwks(other_key, rotated_kid)["keys"])
+    jwks_server.document = document
+
+    assert deps.verify_token(_sign(other_key, _claims(), kid=rotated_kid))["sub"] == USER_ID
+
+    fetches = jwks_server.fetches
+    _assert_401(deps.verify_token, _sign(signing_key, _claims(), kid="ins_stillUnknown"))
+    assert jwks_server.fetches == fetches
+
+    base = time.monotonic
+    monkeypatch.setattr(
+        deps.time,
+        "monotonic",
+        lambda: base() + deps.UNKNOWN_KID_COOLDOWN_SECONDS + 1,
+    )
+    _assert_401(deps.verify_token, _sign(signing_key, _claims(), kid="ins_stillUnknown"))
+    assert jwks_server.fetches == fetches + 1
+
+
+def test_a_malformed_jwks_document_is_503_not_401(
+    jwks_server: _JwksServer,
+    signing_key: rsa.RSAPrivateKey,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reachable but unusable is still our outage, not the caller's bad token."""
+    monkeypatch.setattr(
+        PyJWKClient, "fetch_data", lambda _self=None: ["not", "an", "object"]
+    )
+    deps.reset_jwk_clients()
+    with pytest.raises(Exception) as excinfo:
+        deps.verify_token(_sign(signing_key, _claims()))
+    assert excinfo.value.status_code == 503  # type: ignore[attr-defined]
+
+
+async def test_a_bad_token_401s_before_the_database_is_touched(
+    jwks_server: _JwksServer, signing_key: rsa.RSAPrivateKey
+) -> None:
+    """Verification is a dependency of its own, resolved ahead of the session.
+
+    The session factory here raises on use. If `current_user` still resolved the
+    database first, a garbage token would answer 500 — which is both the wrong
+    status and a free liveness oracle on our Postgres for an unauthenticated
+    caller. The good-token control at the end is what makes this an assertion
+    about ordering rather than about the token.
+    """
+    app = FastAPI()
+
+    @app.get("/me")
+    async def me(user_id: str = Depends(deps.current_user)) -> dict[str, str]:
+        return {"user_id": user_id}
+
+    async def _exploding_session() -> AsyncIterator[AsyncSession]:
+        raise RuntimeError("DATABASE_URL is not set")
+        yield  # pragma: no cover
+
+    app.dependency_overrides[async_session] = _exploding_session
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as http:
+        for headers in ({}, {"Authorization": "Bearer garbage"}):
+            assert (await http.get("/me", headers=headers)).status_code == 401
+        with pytest.raises(RuntimeError):
+            await http.get("/me", headers=_auth(signing_key))

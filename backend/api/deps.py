@@ -226,7 +226,14 @@ def _jwk_set(client: PyJWKClient, url: str, *, refresh: bool) -> PyJWKSet:
         age = time.monotonic() - entry[0]
         if age < JWKS_LIFESPAN_SECONDS:
             return entry[1]
-    jwk_set = PyJWKSet.from_dict(client.fetch_data())
+    data = client.fetch_data()
+    if not isinstance(data, dict):
+        # `PyJWKSet.from_dict` would raise `AttributeError` here, which the
+        # caller cannot tell from "this token's key type is unloadable" and
+        # would answer 401 for. A JWKS endpoint returning a non-object is our
+        # provider misbehaving.
+        raise PyJWKSetError("The JWKS endpoint did not return a JSON object")
+    jwk_set = PyJWKSet.from_dict(data)
     _jwk_sets[url] = (time.monotonic(), jwk_set)
     return jwk_set
 
