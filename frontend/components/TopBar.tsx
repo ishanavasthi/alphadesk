@@ -1,5 +1,6 @@
 import { Github } from "lucide-react";
 import { AuthButton } from "@/components/AuthButton";
+import { UserMenu } from "@/components/UserMenu";
 import { WatchlistButton } from "@/components/WatchlistButton";
 
 export function TopBar() {
@@ -13,6 +14,10 @@ export function TopBar() {
           <span className="hidden eyebrow sm:inline">NSE Research Terminal</span>
         </div>
         <div className="flex items-center gap-3">
+          {/* Two different questions, side by side: `UserMenu` is "who are
+              you" (Clerk, flag-gated — renders and downloads nothing when the
+              flag is off), `AuthButton` is "is a broker linked". */}
+          <UserMenu />
           <AuthButton />
           <WatchlistButton />
           <a

@@ -1,10 +1,10 @@
 "use client";
 
 import { AlertTriangle, KeyRound, Loader2, LogOut, ShieldCheck } from "lucide-react";
-import { useAuth } from "@/components/AuthProvider";
+import { useIndMoney } from "@/components/AuthProvider";
 
 export function AuthButton() {
-  const { authed, waking, busy, error, connect, disconnect } = useAuth();
+  const { authed, waking, busy, error, connect, disconnect } = useIndMoney();
 
   if (authed) {
     return (

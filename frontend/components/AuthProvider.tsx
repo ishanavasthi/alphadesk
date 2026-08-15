@@ -147,8 +147,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useAuth(): AuthContextValue {
+/**
+ * The IND Money link state — **not** "is the visitor signed in to AlphaDesk".
+ *
+ * Renamed from `useAuth` by card F2 for two reasons. It collided outright with
+ * Clerk's `useAuth`, and an `import { useAuth }` whose meaning depended on which
+ * file it came from is exactly the kind of ambiguity that ends with a page
+ * gating on the wrong thing. And the old name was never accurate: this hook
+ * answers "has a broker been linked", which after F3 will be a per-user fact
+ * distinct from identity.
+ */
+export function useIndMoney(): AuthContextValue {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used inside <AuthProvider>");
+  if (!ctx) throw new Error("useIndMoney must be used inside <AuthProvider>");
   return ctx;
 }

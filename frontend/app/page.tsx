@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ArrowRight, KeyRound, Loader2, Plug } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useAuth } from "@/components/AuthProvider";
+import { useIndMoney } from "@/components/AuthProvider";
 import { ResultsDashboard } from "@/components/ResultsDashboard";
 
 const SAMPLES = [
@@ -17,7 +17,7 @@ const PIPELINE = ["SCAN", "RESEARCH", "ANALYSE", "RISK", "EXECUTE"];
 export default function Home() {
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState<string | null>(null);
-  const { authed, busy, connect } = useAuth();
+  const { authed, busy, connect } = useIndMoney();
 
   // Every agent is fed by the IND Money MCP, so a query run while logged out can
   // only return an empty "0 candidates" pipeline. Gate the form instead.
