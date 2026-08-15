@@ -50,7 +50,12 @@ from db.models import (
 from db.session import ENV_VAR as DATABASE_URL_ENV
 from db.session import get_sessionmaker
 from portfolio.connectors import LOCAL_USER_ID, PortfolioConnector
-from portfolio.errors import NotLinked, PortfolioSourceError, RateLimited
+from portfolio.errors import (
+    NotLinked,
+    PortfolioSourceError,
+    RateLimited,
+    UnsupportedAssetType,
+)
 from portfolio.models import AssetType, Holding, PortfolioSnapshot
 
 log = logging.getLogger(__name__)
@@ -170,6 +175,31 @@ SKIPPED = "skipped"
 FAILED = "failed"
 
 
+#: Why one bucket's rows could not be read. Our own vocabulary, never the
+#: source's message text.
+BUCKET_THROTTLED = "throttled"
+BUCKET_UNSUPPORTED = "unsupported"
+BUCKET_SOURCE_ERROR = "source_error"
+
+
+@dataclass(frozen=True)
+class BucketFailure:
+    """One asset type the snapshot reported but whose rows could not be read.
+
+    Persisted, not merely reported. Without a stored record, a day captured with
+    an unreadable bucket is **indistinguishable from a day where that bucket was
+    genuinely empty** — the rows are absent either way, and "you held no mutual
+    funds on the 14th" is a false statement about somebody's money rather than a
+    missing log line.
+    """
+
+    asset_type: str
+    reason: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {"asset_type": self.asset_type, "reason": self.reason}
+
+
 @dataclass(frozen=True)
 class UserOutcome:
     user_id: str
@@ -179,8 +209,10 @@ class UserOutcome:
     holdings: int = 0
     #: Buckets the snapshot reported but whose rows could not be read. The day
     #: is still written — `total_value` is the figure history is drawn from, and
-    #: it comes from the snapshot call, not from these.
-    buckets_failed: tuple[str, ...] = ()
+    #: it comes from the snapshot call, not from these — and the list is stored
+    #: on the row (`snapshot_days.buckets_failed`) so the partiality outlives
+    #: this response.
+    buckets_failed: tuple[BucketFailure, ...] = ()
     #: True when the day's row exists but carries no FX rate.
     fx_missing: bool = False
 
@@ -190,7 +222,7 @@ class UserOutcome:
             "status": self.status,
             "reason": self.reason,
             "holdings": self.holdings,
-            "buckets_failed": list(self.buckets_failed),
+            "buckets_failed": [f.as_dict() for f in self.buckets_failed],
             "fx_missing": self.fx_missing,
         }
 
@@ -374,16 +406,16 @@ async def capture_user(
     raws.append((snapshot.source, {"kind": "snapshot", "asset_type": None, "payload": snapshot.raw}))
 
     holdings: list[Holding] = []
-    failed: list[str] = []
+    failed: list[BucketFailure] = []
     for asset_type in _capture_buckets(snapshot):
         # Paced before the *first* bucket too: the snapshot call above already
         # spent a unit of the same global budget a moment ago.
         await sleep(call_spacing)
-        rows, raw, ok = await _fetch_bucket(
+        rows, raw, failure = await _fetch_bucket(
             connector, user_id, asset_type, sleep=sleep
         )
-        if not ok:
-            failed.append(asset_type.value)
+        if failure is not None:
+            failed.append(failure)
             continue
         holdings.extend(rows)
         raws.append(
@@ -399,6 +431,10 @@ async def capture_user(
         total_value=snapshot.net_worth,
         currency=snapshot.currency,
         usd_inr_rate=rate,
+        # NULL, not [], when nothing failed: a clean day leaves no marker, so
+        # `buckets_failed IS NOT NULL` is the whole query for "which days are
+        # incomplete".
+        buckets_failed=[f.as_dict() for f in failed] or None,
         captured_at=now.astimezone(timezone.utc),
     )
     try:
@@ -422,9 +458,17 @@ async def capture_user(
             )
         await session.commit()
     except IntegrityError:
-        # Another run committed this day between our read and our insert. The
-        # unique constraint is the authority; the first row wins, as above.
         await session.rollback()
+        # **Only** a losing race on `(user_id, captured_on)` may be reported as
+        # "already captured". Any other constraint failure — a holdings row that
+        # violates a FK or a length, say — is a genuine bug, and swallowing it
+        # here would file it under the one status nobody investigates: the run
+        # would look like a free no-op while that day silently never got written.
+        # Re-reading the day is driver-independent, unlike matching a constraint
+        # name off an asyncpg exception.
+        if not await _day_exists(session, user_id, day):
+            log.exception("snapshot: %s failed to write %s", user_id, day)
+            raise
         log.info("snapshot: %s already captured for %s (raced)", user_id, day)
         return UserOutcome(user_id=user_id, status=ALREADY_CAPTURED, captured_on=day)
 
@@ -434,7 +478,7 @@ async def capture_user(
             user_id,
             day,
             len(failed),
-            ", ".join(failed),
+            ", ".join(f"{f.asset_type}({f.reason})" for f in failed),
         )
     return UserOutcome(
         user_id=user_id,
@@ -452,8 +496,13 @@ async def _fetch_bucket(
     asset_type: AssetType,
     *,
     sleep: Callable[[float], Awaitable[None]],
-) -> tuple[list[Holding], dict[str, Any], bool]:
+) -> tuple[list[Holding], dict[str, Any], Optional[BucketFailure]]:
     """One bucket's rows, honouring a throttle once before giving up.
+
+    Returns ``(rows, raw, None)`` on success and ``([], {}, BucketFailure)``
+    otherwise — the failure is a value rather than a flag because it is
+    **persisted** onto the day (`snapshot_days.buckets_failed`), so the reason
+    has to survive this function.
 
     The connector has already retried on the source's own ``retry_after`` by the
     time a :class:`RateLimited` escapes it, so this is a second, longer-horizon
@@ -477,7 +526,16 @@ async def _fetch_bucket(
                 await sleep(wait)
                 continue
             log.warning("snapshot: %s still throttled on %s", user_id, asset_type.value)
-            return [], {}, False
+            return [], {}, BucketFailure(asset_type.value, BUCKET_THROTTLED)
+        except UnsupportedAssetType:
+            # The source reported a bucket it will not enumerate. Distinct from
+            # an outage: no retry, ever, will produce those rows.
+            log.warning(
+                "snapshot: %s cannot enumerate %s at this source",
+                user_id,
+                asset_type.value,
+            )
+            return [], {}, BucketFailure(asset_type.value, BUCKET_UNSUPPORTED)
         except PortfolioSourceError as exc:
             log.warning(
                 "snapshot: %s could not read %s (%s)",
@@ -485,11 +543,11 @@ async def _fetch_bucket(
                 asset_type.value,
                 type(exc).__name__,
             )
-            return [], {}, False
+            return [], {}, BucketFailure(asset_type.value, BUCKET_SOURCE_ERROR)
         # `raw` is the source row as it arrived; the bucket's payload is the
         # list of them, which is what `snapshot_raw` stores for forensics.
-        return rows, {"rows": [row.raw for row in rows]}, True
-    return [], {}, False
+        return rows, {"rows": [row.raw for row in rows]}, None
+    return [], {}, BucketFailure(asset_type.value, BUCKET_THROTTLED)
 
 
 async def capture_users(session: AsyncSession) -> list[str]:
@@ -687,28 +745,34 @@ async def capture_if_missing(
     *,
     connector: PortfolioConnector,
     now: Optional[datetime] = None,
+    session: Optional[AsyncSession] = None,
 ) -> Optional[UserOutcome]:
     """Capture the current attributed day if it has no row yet.
 
     The third net. The two scheduled runs are the plan; this is what covers the
     week GitHub quietly disables the workflow, or the night the Space refused to
-    wake. It opens its own session because its usual caller is a background task
-    with no request scope to borrow one from.
+    wake.
+
+    ``session`` is optional because the two callers have genuinely different
+    scopes: the awaited button press hands in the request's session, while the
+    fire-and-forget background task has no request to borrow one from and must
+    open (and close) its own — a request-scoped session is gone by the time that
+    task runs.
 
     Returns ``None`` when it did not run at all (no database, or a capture for
     this user was already in flight).
     """
-    if not database_configured():
+    if session is None and not database_configured():
         return None
     async with single_flight(user_id) as won:
         if not won:
             log.debug("opportunistic capture for %s already in flight", user_id)
             return None
+        if session is not None:
+            return await capture_user(session, user_id, connector=connector, now=now)
         maker = get_sessionmaker()
-        async with maker() as session:
-            return await capture_user(
-                session, user_id, connector=connector, now=now
-            )
+        async with maker() as owned:
+            return await capture_user(owned, user_id, connector=connector, now=now)
 
 
 def schedule_capture_if_missing(user_id: str, connector: PortfolioConnector) -> None:
@@ -742,8 +806,12 @@ def schedule_capture_if_missing(user_id: str, connector: PortfolioConnector) -> 
 __all__ = [
     "ALREADY_CAPTURED",
     "ATTRIBUTION_CUTOFF_HOUR",
+    "BUCKET_SOURCE_ERROR",
+    "BUCKET_THROTTLED",
+    "BUCKET_UNSUPPORTED",
     "CAPTURED",
     "FAILED",
+    "BucketFailure",
     "FX_URL",
     "IST",
     "RAW_RETENTION_DAYS",

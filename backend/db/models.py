@@ -179,6 +179,25 @@ class SnapshotDay(SQLModel, table=True):
     usd_inr_rate: Decimal | None = Field(
         default=None, sa_column=Column(Numeric(18, 6), nullable=True)
     )
+    #: Buckets the snapshot reported but whose rows could not be read, as
+    #: ``[{"asset_type": "MF", "reason": "throttled"}, …]``. **NULL means the
+    #: capture was complete** — a clean day leaves no marker at all.
+    #:
+    #: This lives on the day, not in `snapshot_raw`, precisely because
+    #: `snapshot_raw` is pruned at 90 days while the day is kept forever. A
+    #: two-year-old partial capture whose evidence had been pruned would read as
+    #: a complete one, and "you held nothing in that bucket" is a false statement
+    #: about someone's money, not a missing log line.
+    #:
+    #: ``none_as_null=True`` is load-bearing, not decoration: a JSONB column
+    #: stores Python ``None`` as the JSON value ``null``, which reads back as
+    #: ``None`` in Python while being **NOT NULL** in SQL. Without it,
+    #: ``WHERE buckets_failed IS NOT NULL`` matches every clean day — the query
+    #: this column exists to answer would return the opposite of the truth, and
+    #: an ORM-side assertion would never notice. A test pins it.
+    buckets_failed: list | None = Field(
+        default=None, sa_column=Column(JSONB(none_as_null=True), nullable=True)
+    )
     #: When the capture actually ran (UTC). `max(captured_at)` per user is what
     #: the dashboard's staleness banner is derived from.
     captured_at: datetime = Field(default_factory=utcnow, sa_column=_ts_column())

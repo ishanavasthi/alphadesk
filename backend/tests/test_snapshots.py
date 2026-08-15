@@ -19,6 +19,7 @@ from typing import Any, Optional
 
 import pytest
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import SnapshotDay, SnapshotHolding, SnapshotRaw, User
@@ -138,10 +139,21 @@ def test_attribution_cutoff_on_both_sides() -> None:
 
 
 def test_attribution_is_ist_not_utc_and_not_server_local() -> None:
-    """18:15 UTC is 23:45 IST *the same day*; 19:30 UTC is 01:00 IST the next.
+    """The zone itself is asserted, not just the schedule.
 
-    Expressed in UTC because that is what the GitHub cron actually fires at, and
-    a helper that quietly used UTC "today" would pass an IST-only test.
+    Both scheduled runs are expressed in UTC because that is what the GitHub
+    cron fires at — but note that neither of them discriminates on its own: a
+    helper applying the same 06:00 cutoff to *UTC* would answer identically for
+    both, because they fall the same side of both cutoffs.
+
+    The last two assertions are the ones that actually pin the zone:
+
+    - **02:00 UTC** is 07:30 IST, *past* the cutoff → the IST day. A UTC-based
+      helper sees hour 2, applies the cutoff, and answers the day before.
+    - **00:15 UTC** is 05:45 IST, *before* the cutoff → the previous day. A
+      helper that took the plain UTC date with no cutoff answers the 16th.
+
+    Between them they kill both wrong implementations.
     """
     assert svc.attributed_day(PRIMARY_RUN) == date(2026, 8, 16)
     assert svc.attributed_day(RETRY_RUN) == date(2026, 8, 16)
@@ -149,7 +161,11 @@ def test_attribution_is_ist_not_utc_and_not_server_local() -> None:
     assert svc.attributed_day(datetime(2026, 8, 16, 9, 0, tzinfo=timezone.utc)) == date(
         2026, 8, 16
     )
-    # ...but early UTC is before 06:00 IST only up to 00:30 UTC.
+    # 07:30 IST — past the cutoff. UTC + the same cutoff would say the 15th.
+    assert svc.attributed_day(datetime(2026, 8, 16, 2, 0, tzinfo=timezone.utc)) == date(
+        2026, 8, 16
+    )
+    # 05:45 IST — before it. A plain UTC date would say the 16th.
     assert svc.attributed_day(datetime(2026, 8, 16, 0, 15, tzinfo=timezone.utc)) == date(
         2026, 8, 15
     )
@@ -308,11 +324,66 @@ async def test_an_unreadable_bucket_still_writes_the_day(
     outcome = await _capture(db_session, connector=connector)
 
     assert outcome.status == svc.CAPTURED
-    assert outcome.buckets_failed == ("MF",)
+    assert outcome.buckets_failed == (
+        svc.BucketFailure("MF", svc.BUCKET_SOURCE_ERROR),
+    )
     assert len(await _days(db_session)) == 1
     stored = (await db_session.execute(select(SnapshotHolding.asset_type))).scalars().all()
     assert "MF" not in stored
     assert stored, "the other buckets still landed"
+
+
+async def test_a_partial_capture_leaves_queryable_evidence(
+    db_session: AsyncSession,
+) -> None:
+    """**The partiality has to outlive the response body.**
+
+    Without a stored marker, this day and a day where the user genuinely held no
+    mutual funds are byte-identical in the database — the rows are absent either
+    way. "You held nothing in that bucket" would then be a false statement about
+    somebody's money that no later query could correct, because the source is
+    point-in-time and cannot be re-asked.
+
+    It lives on `snapshot_days`, not in `snapshot_raw`, because raw payloads are
+    pruned at 90 days and the day is kept forever.
+    """
+    connector = ScriptedConnector(
+        holdings_errors={
+            AssetType.MF: SourceUnavailable("mf: transport blew up"),
+            AssetType.FD: UnsupportedAssetType("fd: nope"),
+        }
+    )
+    await _capture(db_session, connector=connector)
+
+    day = (await _days(db_session))[0]
+    assert day.buckets_failed is not None
+    assert {(f["asset_type"], f["reason"]) for f in day.buckets_failed} == {
+        ("MF", svc.BUCKET_SOURCE_ERROR),
+        ("FD", svc.BUCKET_UNSUPPORTED),
+    }
+
+    # And it is queryable as a set: "which days are incomplete" is one predicate.
+    incomplete = await db_session.scalar(
+        select(func.count())
+        .select_from(SnapshotDay)
+        .where(SnapshotDay.buckets_failed.is_not(None))
+    )
+    assert incomplete == 1
+
+
+async def test_a_clean_capture_leaves_no_marker(db_session: AsyncSession) -> None:
+    """NULL, not `[]`. A clean day carries no marker at all, so
+    `buckets_failed IS NOT NULL` is the whole query for "incomplete"."""
+    await _capture(db_session)
+    day = (await _days(db_session))[0]
+    assert day.buckets_failed is None
+
+    incomplete = await db_session.scalar(
+        select(func.count())
+        .select_from(SnapshotDay)
+        .where(SnapshotDay.buckets_failed.is_not(None))
+    )
+    assert incomplete == 0
 
 
 async def test_a_throttled_bucket_is_retried_once_then_given_up(
@@ -341,9 +412,13 @@ async def test_a_throttled_bucket_is_retried_once_then_given_up(
     )
 
     assert outcome.status == svc.CAPTURED
-    assert outcome.buckets_failed == ("MF",)
+    assert outcome.buckets_failed == (svc.BucketFailure("MF", svc.BUCKET_THROTTLED),)
     assert connector.holdings_calls.count(AssetType.MF) == 2
     assert 1.0 in waits
+    # A throttle and an outage are different diagnoses and are stored as such:
+    # one says "ask again tomorrow", the other says "something is broken".
+    day = (await _days(db_session))[0]
+    assert day.buckets_failed == [{"asset_type": "MF", "reason": svc.BUCKET_THROTTLED}]
 
 
 async def test_an_unsupported_bucket_is_not_fatal(db_session: AsyncSession) -> None:
@@ -354,7 +429,9 @@ async def test_an_unsupported_bucket_is_not_fatal(db_session: AsyncSession) -> N
     )
     outcome = await _capture(db_session, connector=connector)
     assert outcome.status == svc.CAPTURED
-    assert outcome.buckets_failed == ("FD",)
+    assert outcome.buckets_failed == (
+        svc.BucketFailure("FD", svc.BUCKET_UNSUPPORTED),
+    )
 
 
 async def test_a_dead_link_is_skipped_not_failed(db_session: AsyncSession) -> None:
@@ -400,6 +477,62 @@ async def test_a_failed_attempt_leaves_no_row_for_the_retry_to_collide_with(
     days = await _days(db_session)
     assert [d.captured_on for d in days] == [date(2026, 8, 16)]
     assert second.holdings > 0
+
+
+async def test_a_non_unique_constraint_failure_is_not_reported_as_already_captured(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only a losing race on `(user_id, captured_on)` may report `already_captured`.
+
+    Every other `IntegrityError` is a bug, and reporting it as "already captured"
+    would file it under the one status nobody investigates: the run looks like a
+    free no-op while that day silently never got written — and a day cannot be
+    written later.
+
+    Forced with a holdings row pointing at a snapshot id that does not exist, so
+    the failing constraint is a foreign key rather than the unique index.
+    """
+    real_holding_row = svc._holding_row
+
+    def _broken(snapshot_id: int, holding: Holding) -> SnapshotHolding:
+        row = real_holding_row(snapshot_id, holding)
+        row.snapshot_id = 10_000_000  # no such snapshot_days row
+        return row
+
+    monkeypatch.setattr(svc, "_holding_row", _broken)
+
+    with pytest.raises(IntegrityError):
+        await _capture(db_session)
+
+    await db_session.rollback()
+    assert await _days(db_session) == [], "nothing partial was left behind"
+
+
+async def test_the_batch_records_that_failure_instead_of_swallowing_it(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """...and `capture_all` turns it into a visible error, not a silent skip."""
+    real_holding_row = svc._holding_row
+
+    def _broken(snapshot_id: int, holding: Holding) -> SnapshotHolding:
+        row = real_holding_row(snapshot_id, holding)
+        row.snapshot_id = 10_000_000
+        return row
+
+    monkeypatch.setattr(svc, "_holding_row", _broken)
+
+    report = await svc.capture_all(
+        db_session,
+        connector=ScriptedConnector(),
+        user_ids=[USER],
+        now=PRIMARY_RUN,
+        fx=_fx_ok,
+        sleep=_no_sleep,
+        call_spacing=0,
+    )
+    assert report.errors == 1
+    assert report.skipped == 0
+    assert report.outcomes[0].reason == "unexpected:IntegrityError"
 
 
 async def test_fx_failure_stores_null_and_still_writes_the_row(
