@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlphaDesk — insights &amp; SIP surface (shadcn)</title>
+<link rel="stylesheet" href="shadcn.css">
+<style>
+  .tiles{grid-template-columns:repeat(4,1fr)}
+  .tile .gauge{height:6px;border-radius:99px;background:#f4f4f5;margin-top:10px;position:relative}
+  .tile .gauge .g{position:absolute;inset:0 auto 0 0;border-radius:99px;background:var(--accent)}
+  .tile .gauge .marker{position:absolute;top:-3px;width:2px;height:12px;background:var(--ink)}
+  .duo{grid-template-columns:1fr 1fr;margin-top:16px}
+  .conc .crow{display:grid;grid-template-columns:22px 1fr 120px;gap:10px;align-items:center;padding:5px 0}
+  .conc .n{font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums}
+  .conc .track{height:14px;border-radius:4px;background:#f4f4f5;position:relative}
+  .conc .fill{position:absolute;inset:0 auto 0 0;border-radius:4px;background:var(--accent)}
+  .conc .cum{position:absolute;top:-4px;bottom:-4px;width:1.5px;background:var(--faint)}
+  .conc .val{font-size:12px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+  .proj{position:relative;overflow:hidden}
+  .proj .veil{position:absolute;inset:0;backdrop-filter:none;pointer-events:none}
+  .statuspill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:500;
+    border-radius:999px;padding:2px 9px}
+  .statuspill.on{background:#ecfdf5;color:#047857}
+  .statuspill.paused{background:var(--warn-bg);color:var(--warn-ink)}
+  .statuspill .d{width:6px;height:6px;border-radius:99px;background:currentColor}
+  @media (max-width:840px){.tiles{grid-template-columns:1fr 1fr}.duo{grid-template-columns:1fr}}
+  @media (max-width:520px){.shell{padding:0 14px 48px}.tiles{grid-template-columns:1fr 1fr}}
+</style></head>
+<body>
+<div class="shell">
+  <header class="top">
+    <span class="logo">alpha<b>Desk</b></span>
+    <span class="crumb">/ Portfolio / Insights</span>
+    <span class="spacer"></span>
+    <span class="btnrow">
+      <span class="tabs">
+        <span class="tab">1M</span><span class="tab active">6M</span>
+        <span class="tab">1Y</span><span class="tab">All</span>
+      </span>
+      <span class="btn outline sm"><span class="ico">⇩</span> Export CSV</span>
+      <span class="avatar">IA</span>
+    </span>
+  </header>
+
+  <h1>Insights</h1>
+  <div class="sub">Computed nightly from your snapshots · all figures verified in Python before any narration</div>
+
+  <div class="grid tiles">
+    <div class="card tile">
+      <h3>Concentration (HHI)</h3><div class="big">0.14</div>
+      <div class="gauge"><div class="g" style="width:34%"></div><div class="marker" style="left:52%"></div></div>
+      <div class="note">moderate · caution above 0.25</div>
+    </div>
+    <div class="card tile">
+      <h3>Top holding weight</h3><div class="big">21.7%</div>
+      <div class="gauge"><div class="g" style="width:43%"></div><div class="marker" style="left:60%"></div></div>
+      <div class="note">Fixed Deposit 18M · flag above 30%</div>
+    </div>
+    <div class="card tile">
+      <h3>Heaviest sector</h3><div class="big">43.2%</div>
+      <div class="gauge"><div class="g" style="width:62%"></div><div class="marker" style="left:70%"></div></div>
+      <div class="note">Sector Delta · equity book only</div>
+    </div>
+    <div class="card tile">
+      <h3>4-week Δ net worth</h3><div class="big delta up">+₹31,842</div>
+      <div class="note" style="margin-top:12px">+3.3% · from captured snapshots</div>
+    </div>
+  </div>
+
+  <div class="grid duo">
+    <div class="card conc">
+      <h2>Concentration curve</h2>
+      <div class="desc">Top holdings by weight · tick marks the running total</div>
+      <div id="conc"></div>
+      <div class="note" style="margin-top:10px">Top 3 hold 59.6% of current value — the number the
+        overview cites when it calls concentration “moderate”.</div>
+    </div>
+    <div class="card">
+      <h2>SIP health <span class="badge type" style="margin-left:6px">4 active</span></h2>
+      <div class="desc">Standing instructions read from the linked account · names invented for this demo</div>
+      <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>SIP</th><th class="num">Amount</th><th>Cadence</th><th>Next run</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td><span class="name">Alpha Largecap Fund</span></td><td class="num">₹10,000</td>
+            <td>Monthly · 5th</td><td>in 6 days</td>
+            <td><span class="statuspill on"><span class="d"></span>On track</span></td></tr>
+          <tr><td><span class="name">Balanced Advantage Fund</span></td><td class="num">₹5,000</td>
+            <td>Monthly · 12th</td><td>in 13 days</td>
+            <td><span class="statuspill on"><span class="d"></span>On track</span></td></tr>
+          <tr><td><span class="name">Beacon Logistics Ltd</span> <span class="tick">DEMOBEACON</span></td>
+            <td class="num">₹2,500</td><td>Weekly · Mon</td><td>in 3 days</td>
+            <td><span class="statuspill on"><span class="d"></span>On track</span></td></tr>
+          <tr><td><span class="name">Gamma Nano Fund</span></td><td class="num">₹1,000</td>
+            <td>Monthly · 28th</td><td>—</td>
+            <td><span class="statuspill paused"><span class="d"></span>Paused at source</span></td></tr>
+        </tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card proj" style="margin-top:16px">
+    <h2>Projection <span class="badge soon" style="margin-left:6px">Planned — not built yet</span></h2>
+    <div class="desc">Scenario arithmetic only (“if SIPs continue at the current rate”) — no forecasts,
+      no market assumptions. Shown here to settle the visual language before the feature exists.</div>
+    <svg id="proj" viewBox="0 0 900 220" width="100%" height="220"
+      role="img" aria-label="Projection mock: captured history and a dashed scenario extension"></svg>
+    <div class="note">Solid: captured history. Dashed: contribution-only arithmetic at ₹18,500/month —
+      a sum, not a prediction. Descriptive framing is the product rule; anything predictive stays out.</div>
+  </div>
+
+  <footer class="foot">
+    <span class="dot"></span>
+    <span>Synthetic demo data · descriptive analytics only · not investment advice</span>
+    <span style="flex:1"></span>
+    <span>Privacy</span><span>Terms</span>
+  </footer>
+</div>
+
+<script src="demo-data.js"></script>
+<script>
+const inr=n=>'₹'+new Intl.NumberFormat('en-IN',{maximumFractionDigits:0}).format(n);
+/* concentration curve */
+(function(){
+  const rows=DATA.holdings.filter(h=>h.current>0).sort((a,b)=>b.current-a.current).slice(0,5);
+  const total=DATA.gross; let cum=0;
+  document.getElementById('conc').innerHTML=rows.map((h,i)=>{
+    const w=h.current/total*100; cum+=w;
+    return `<div class="crow"><span class="n">${i+1}</span>
+      <div class="track"><div class="fill" style="width:${w*3.2}%"></div>
+        <div class="cum" style="left:${Math.min(cum*3.2,100)}%"></div></div>
+      <div class="val">${w.toFixed(1)}% · Σ ${cum.toFixed(1)}%</div></div>`;
+  }).join('');
+})();
+/* projection mock: history solid + dashed flat-contribution extension */
+(function(){
+  const svg=document.getElementById('proj'),W=900,H=220,P={l:60,r:16,t:14,b:26};
+  const hist=DATA.history.map(h=>h.value);
+  const monthly=18500, weeks=26;
+  const proj=[...Array(weeks)].map((_,i)=>hist[hist.length-1]+monthly*((i+1)/4.33));
+  const all=[...hist,...proj];
+  const min=Math.min(...all)*0.985,max=Math.max(...all)*1.01;
+  const N=all.length;
+  const X=i=>P.l+(W-P.l-P.r)*i/(N-1);
+  const Y=v=>P.t+(H-P.t-P.b)*(1-(v-min)/(max-min));
+  let g='';
+  for(let t=0;t<4;t++){const v=min+(max-min)*t/3,y=Y(v);
+    g+=`<line x1="${P.l}" x2="${W-P.r}" y1="${y}" y2="${y}" stroke="#f0f0f1"/>`+
+       `<text x="${P.l-8}" y="${y+4}" text-anchor="end">${(v/100000).toFixed(1)}L</text>`}
+  const hpts=hist.map((v,i)=>`${X(i)},${Y(v)}`).join(' ');
+  g+=`<polyline points="${hpts}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>`;
+  const ppts=[`${X(hist.length-1)},${Y(hist[hist.length-1])}`,
+    ...proj.map((v,i)=>`${X(hist.length+i)},${Y(v)}`)].join(' ');
+  g+=`<polyline points="${ppts}" fill="none" stroke="var(--faint)" stroke-width="2"
+      stroke-dasharray="5 5" stroke-linejoin="round"/>`;
+  g+=`<line x1="${X(hist.length-1)}" x2="${X(hist.length-1)}" y1="${P.t}" y2="${H-P.b}"
+      stroke="var(--border)"/>`;
+  g+=`<text x="${X(hist.length-1)-6}" y="${P.t+10}" text-anchor="end">today</text>`;
+  g+=`<circle cx="${X(hist.length-1)}" cy="${Y(hist[hist.length-1])}" r="4" fill="var(--accent)" stroke="#fff" stroke-width="2"/>`;
+  g+=`<text x="${X(N-1)-4}" y="${Y(proj[proj.length-1])-8}" text-anchor="end">${inr(proj[proj.length-1])} <tspan fill="var(--faint)">scenario</tspan></text>`;
+  g+=`<text x="${P.l}" y="${H-8}">26 weeks captured</text><text x="${W-P.r}" y="${H-8}" text-anchor="end">+26 weeks scenario</text>`;
+  svg.innerHTML=g;
+})();
+</script>
+</body></html>

@@ -1,0 +1,112 @@
+/* D1 portfolio surface — the locked shadcn direction, scoped.
+ *
+ * `docs/design/DECISION.md` is the binding contract and `docs/design/shadcn.css`
+ * is its canonical token file; the values below are that file, converted to the
+ * HSL triplets Tailwind's tokens expect.
+ *
+ * Why scoped instead of global: this app already ships a Tailwind theme — the
+ * dark Bloomberg terminal on `/` and `/a/[id]`, base colour neutral, radius
+ * 0.25rem. Redefining those tokens globally would restyle two shipped pages
+ * that nobody asked to change. So every token is redeclared on the
+ * `[data-adp]` wrapper instead, which means the ordinary shadcn utilities
+ * (`bg-card`, `border-border`, `rounded-lg`) resolve to the DECISION palette
+ * inside this route and to the terminal palette everywhere else.
+ *
+ * Flipping the app-wide default to these tokens is U1's call, not D1's.
+ */
+
+[data-adp] {
+  /* --- shadcn tokens, DECISION values ------------------------------------ */
+  --background: 0 0% 98%; /* #fafafa ground   */
+  --foreground: 240 10% 4%; /* #09090b ink      */
+  --card: 0 0% 100%; /* #ffffff          */
+  --card-foreground: 240 10% 4%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 4%;
+  --primary: 240 6% 10%; /* ink-950 buttons  */
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 5% 96%; /* #f4f4f5          */
+  --secondary-foreground: 240 10% 4%;
+  --muted: 240 5% 96%; /* #f4f4f5 track    */
+  --muted-foreground: 240 4% 46%; /* #71717a          */
+  --accent: 240 5% 96%;
+  --accent-foreground: 240 10% 4%;
+  --destructive: 0 72% 51%; /* #dc2626          */
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 6% 90%; /* #e4e4e7          */
+  --input: 240 6% 90%;
+  --ring: 221 83% 53%; /* accent focus     */
+  --radius: 0.5rem; /* 8px cards        */
+
+  /* --- D1 extras the shadcn token set has no slot for --------------------- */
+  --adp-accent: #2563eb; /* charts, links, primary emphasis */
+  --adp-accent-soft: #eff6ff;
+  --adp-accent-ring: #bfdbfe;
+  --adp-good: #059669; /* P&L only — never a chart series */
+  --adp-bad: #dc2626;
+  --adp-faint: #a1a1aa;
+  --adp-track: #f4f4f5;
+  --adp-hairline: #f4f4f5;
+  --adp-warn-bg: #fffbeb;
+  --adp-warn-bd: #fde68a;
+  --adp-warn-ink: #92400e;
+  /* Ordered cap-band ramp, L -> M -> S (OKLab-monotonic, validated at D0) */
+  --adp-cap-1: #1d4ed8;
+  --adp-cap-2: #60a5fa;
+  --adp-cap-3: #bfdbfe;
+
+  color: hsl(var(--foreground));
+  background: hsl(var(--background));
+  /* DECISION: system sans, not the terminal's Inter/IBM Plex pairing. */
+  font-family:
+    ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Every figure on this surface is read in a column. */
+[data-adp] .adp-num {
+  font-variant-numeric: tabular-nums;
+}
+
+[data-adp] :focus-visible {
+  outline: 2px solid var(--adp-accent);
+  outline-offset: 2px;
+}
+
+/* Allocation bars: a track and a single-hue fill. Identity lives in the label
+   beside the bar — never in a colour (DECISION, chart rules). */
+[data-adp] .adp-track {
+  position: relative;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--adp-track);
+}
+[data-adp] .adp-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 2px;
+  border-radius: 4px;
+  background: var(--adp-accent);
+  transition: opacity 0.15s;
+}
+[data-adp] .adp-bar-row:hover .adp-fill {
+  opacity: 0.75;
+}
+
+/* Recharts paints its own SVG; these keep it inside the design language. */
+[data-adp] .recharts-surface {
+  overflow: visible;
+}
+[data-adp] .recharts-cartesian-axis-tick text {
+  fill: hsl(var(--muted-foreground));
+  font-size: 11px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-adp] * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

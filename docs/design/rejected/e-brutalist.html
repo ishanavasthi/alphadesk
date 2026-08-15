@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlphaDesk — brutalist treatment</title>
+<style>
+  :root{
+    --paper:#f5f4ef; --ink:#0a0a0a; --dim:#565656;
+    --yellow:#ffd60a; --blue:#3a86ff; --blue-soft:#dbe9ff;
+    --up:#0a7a44; --down:#d1223f;
+    --cap1:#1d3fbf; --cap2:#3a86ff; --cap3:#a8cbff;
+    --sans:"Helvetica Neue",Helvetica,Arial,sans-serif;
+    --mono:"SF Mono",ui-monospace,Menlo,monospace;
+    --bd:3px solid var(--ink);
+    --shadow:6px 6px 0 var(--ink);
+  }
+  *{box-sizing:border-box;margin:0}
+  body{background:var(--paper);color:var(--ink);font:14px/1.5 var(--sans)}
+  .wrap{max-width:1100px;margin:0 auto;padding:28px 24px 80px}
+  header{display:flex;align-items:center;gap:14px;margin-bottom:26px;flex-wrap:wrap}
+  .logo{background:var(--ink);color:var(--paper);font-weight:800;font-size:18px;
+    letter-spacing:-.02em;padding:8px 14px}
+  .logo span{color:var(--yellow)}
+  .tag{border:var(--bd);background:#fff;font:11px var(--mono);font-weight:700;
+    letter-spacing:.06em;text-transform:uppercase;padding:6px 10px}
+  .tag.demo{background:var(--yellow)}
+  header .sp{flex:1}
+  .hero{border:var(--bd);background:#fff;box-shadow:var(--shadow);
+    padding:28px;margin-bottom:28px;position:relative}
+  .hero .k{font:12px var(--mono);font-weight:700;letter-spacing:.12em;
+    text-transform:uppercase;margin-bottom:10px}
+  .hero .nw{font-size:clamp(52px,9vw,96px);font-weight:800;letter-spacing:-.04em;
+    line-height:.95;font-variant-numeric:tabular-nums}
+  .hero .strap{display:flex;gap:0;margin-top:24px;flex-wrap:wrap}
+  .hero .cell{border:var(--bd);margin:-3px 0 0 -3px;padding:12px 18px;background:#fff}
+  .hero .cell .k2{font:10px var(--mono);font-weight:700;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--dim)}
+  .hero .cell .v{font-size:19px;font-weight:800;font-variant-numeric:tabular-nums}
+  .hero .cell.hl{background:var(--yellow)}
+  .up{color:var(--up)} .down{color:var(--down)} .na{color:#9a9a9a}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-bottom:28px}
+  .box{border:var(--bd);background:#fff;box-shadow:var(--shadow);padding:22px}
+  .box h2{font-size:16px;font-weight:800;text-transform:uppercase;
+    letter-spacing:.02em;margin-bottom:2px}
+  .box .sub{font:11px var(--mono);color:var(--dim);margin-bottom:16px}
+  .mosaic{display:flex;flex-wrap:wrap;gap:0;border:var(--bd)}
+  .mosaic .blk{border:var(--bd);margin:-3px 0 0 -3px;background:#fff;
+    padding:10px;display:flex;flex-direction:column;justify-content:space-between;
+    min-height:86px;min-width:96px;flex-grow:1}
+  .mosaic .blk.top{background:var(--yellow)}
+  .mosaic .blk:hover{background:var(--blue-soft)}
+  .mosaic .blk.top:hover{background:var(--yellow)}
+  .mosaic .n{font-size:12px;font-weight:800;text-transform:uppercase;line-height:1.2}
+  .mosaic .w{font:12px var(--mono);font-weight:700}
+  .mosaic .v{font:10.5px var(--mono);color:var(--dim)}
+  svg text{font:10px var(--mono);fill:var(--dim);font-weight:700}
+  .bars .row{display:grid;grid-template-columns:130px 1fr 140px;gap:12px;
+    align-items:center;padding:6px 0}
+  .bars .lbl{font-size:12.5px;font-weight:700;text-transform:uppercase}
+  .bars .track{height:20px;border:2px solid var(--ink);position:relative;background:#fff}
+  .bars .fill{position:absolute;inset:0 auto 0 0;background:var(--blue);min-width:3px}
+  .bars .row:hover .fill{background:var(--cap1)}
+  .bars .val{font:11px var(--mono);font-weight:700;text-align:right}
+  .strip{display:flex;height:26px;border:2px solid var(--ink);gap:0}
+  .strip>div{border-right:2px solid var(--ink)}
+  .strip>div:last-child{border-right:0}
+  .legend{display:flex;gap:16px;margin-top:12px;flex-wrap:wrap}
+  .legend .k{display:flex;align-items:center;gap:6px;font:11px var(--mono);font-weight:700}
+  .sw{width:12px;height:12px;border:2px solid var(--ink)}
+  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+  thead th{font:11px var(--mono);font-weight:700;letter-spacing:.06em;
+    text-transform:uppercase;text-align:left;padding:10px 8px;cursor:pointer;
+    user-select:none;border-bottom:3px solid var(--ink);white-space:nowrap;background:#fff}
+  thead th.num{text-align:right}
+  thead th:hover{background:var(--yellow)}
+  tbody td{padding:11px 8px;border-bottom:2px solid var(--ink);font-size:13.5px}
+  tbody tr:hover{background:var(--blue-soft)}
+  td.num{text-align:right;font:12.5px var(--mono);font-weight:700}
+  .hname{font-weight:800}
+  .hsub{font:10.5px var(--mono);color:var(--dim)}
+  .chipus{display:inline-block;background:var(--ink);color:var(--yellow);
+    font:9px var(--mono);font-weight:700;letter-spacing:.1em;padding:2px 6px;
+    margin-left:8px;vertical-align:2px}
+  .chiptype{display:inline-block;border:2px solid var(--ink);font:9.5px var(--mono);
+    font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:1px 6px}
+  .emptyblock{border:var(--bd);background:repeating-linear-gradient(45deg,#fff,#fff 8px,#f0efe8 8px,#f0efe8 16px);
+    padding:14px 18px;margin-top:18px;font-size:13px;font-weight:600}
+  footer{margin-top:32px;display:flex;gap:0;flex-wrap:wrap}
+  footer .f{border:var(--bd);margin:-3px 0 0 -3px;background:#fff;
+    font:10.5px var(--mono);font-weight:700;letter-spacing:.08em;
+    text-transform:uppercase;padding:8px 14px}
+  .tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--paper);
+    font:11px var(--mono);font-weight:700;padding:7px 10px;opacity:0;z-index:10;
+    white-space:nowrap;border:2px solid var(--yellow)}
+  @media (max-width:860px){.cols{grid-template-columns:1fr}
+    .bars .row{grid-template-columns:100px 1fr 110px}}
+  @media (max-width:600px){
+    .wrap{padding:18px 14px 60px}
+    .hero{padding:18px;box-shadow:4px 4px 0 var(--ink)}
+    .box{box-shadow:4px 4px 0 var(--ink);padding:16px}
+    .hero .cell{padding:9px 12px}
+    .hero .cell .v{font-size:15px}
+    .mosaic .blk{min-width:74px;min-height:74px}
+    .bars .row{grid-template-columns:84px 1fr 100px;gap:8px}
+    .bars .val{font-size:10px}}
+  :focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+</style></head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">alpha<span>Desk</span></div>
+    <div class="tag">Portfolio</div>
+    <span class="sp"></span>
+    <div class="tag">IND Money · linked</div>
+    <div class="tag demo">Synthetic demo data</div>
+  </header>
+
+  <div class="hero">
+    <div class="k">Net worth — everything, minus what you owe</div>
+    <div class="nw" id="nw"></div>
+    <div class="strap">
+      <div class="cell"><div class="k2">Current</div><div class="v" id="cur"></div></div>
+      <div class="cell"><div class="k2">Invested</div><div class="v" id="inv"></div></div>
+      <div class="cell hl"><div class="k2">P&amp;L</div><div class="v" id="pnl"></div></div>
+      <div class="cell"><div class="k2">Liabilities</div><div class="v down" id="liab"></div></div>
+      <div class="cell"><div class="k2">Holdings</div><div class="v" id="cnt"></div></div>
+    </div>
+  </div>
+
+  <div class="box" style="margin-bottom:28px">
+    <h2>Allocation mosaic</h2>
+    <div class="sub">Block area ∝ share of current value · biggest block wears yellow</div>
+    <div class="mosaic" id="mosaic"></div>
+  </div>
+
+  <div class="cols">
+    <div class="box">
+      <h2>26-week trend</h2>
+      <div class="sub">Synthetic weekly series · demo only</div>
+      <svg id="trend" viewBox="0 0 560 220" width="100%" height="220"
+        role="img" aria-label="Net worth trend line over 26 weeks"></svg>
+    </div>
+    <div class="box">
+      <h2>Sector + cap band</h2>
+      <div class="sub">Equity &amp; funds · caps ordered L→S</div>
+      <div class="bars" id="sector" style="margin-bottom:18px"></div>
+      <div class="strip" id="mcap"></div>
+      <div class="legend" id="mcapleg"></div>
+    </div>
+  </div>
+
+  <div class="box">
+    <h2>Holdings</h2>
+    <div class="sub">Click a header to sort · “—” = the source gave no cost basis, so no return is invented</div>
+    <div style="overflow-x:auto">
+    <table id="tbl">
+      <thead><tr>
+        <th data-k="name">Holding</th>
+        <th data-k="asset_type">Type</th>
+        <th data-k="units" class="num">Units</th>
+        <th data-k="invested" class="num">Invested</th>
+        <th data-k="current" class="num">Current</th>
+        <th data-k="pnl" class="num">P&amp;L</th>
+        <th data-k="pnl_pct" class="num">Ret%</th>
+      </tr></thead><tbody></tbody>
+    </table></div>
+    <div class="emptyblock" id="empty"></div>
+  </div>
+
+  <footer>
+    <div class="f">Descriptive analytics only</div>
+    <div class="f">No orders. Ever.</div>
+    <div class="f">Not investment advice</div>
+  </footer>
+</div>
+<div class="tip" id="tip"></div>
+
+<script src="demo-data.js"></script>
+<script>
+const inr=n=>'₹'+new Intl.NumberFormat('en-IN',{maximumFractionDigits:0}).format(n);
+const sgn=n=>(n>=0?'+':'−')+inr(Math.abs(n));
+const $=s=>document.querySelector(s);
+const tip=$('#tip');
+const showTip=(x,y,h)=>{tip.innerHTML=h;tip.style.opacity=1;
+  tip.style.left=Math.min(x+16,innerWidth-190)+'px';tip.style.top=(y+16)+'px'};
+const hideTip=()=>tip.style.opacity=0;
+const TYPE={MF:'Mutual funds',IND_STOCK:'IN stocks',US_STOCK:'US stocks',
+  US_STOCK_WALLET:'US wallet',FD:'Fixed dep.',SA:'Savings',EPF:'EPF'};
+
+$('#nw').textContent=inr(DATA.net_worth);
+$('#cur').textContent=inr(DATA.gross);
+$('#inv').textContent=inr(DATA.invested);
+const up=DATA.overall_pnl>=0;
+$('#pnl').innerHTML=`${sgn(DATA.overall_pnl)} · ${(up?'+':'−')+Math.abs(DATA.overall_pct).toFixed(1)}%`;
+$('#liab').textContent='−'+inr(DATA.liabilities).slice(1);
+$('#cnt').textContent=DATA.holdings.length;
+
+/* mosaic — identity by label; area by share; top block highlighted */
+(function(){
+  const rows=DATA.by_asset_type.slice().sort((a,b)=>b.current_value-a.current_value);
+  $('#mosaic').innerHTML=rows.map((b,i)=>
+    `<div class="blk${i===0?' top':''}" style="flex-basis:${b.weight_pct*1.6}%"
+       data-t="${TYPE[b.asset_type]||b.label} · ${inr(b.current_value)} · ${b.weight_pct}%">
+       <div class="n">${TYPE[b.asset_type]||b.label}</div>
+       <div><div class="w">${b.weight_pct}%</div><div class="v">${inr(b.current_value)}</div></div>
+     </div>`).join('');
+  document.querySelectorAll('.blk').forEach(d=>{
+    d.addEventListener('mousemove',e=>showTip(e.clientX,e.clientY,d.dataset.t));
+    d.addEventListener('mouseleave',hideTip)});
+})();
+
+/* trend */
+(function(){
+  const svg=$('#trend'),W=560,H=220,P={l:56,r:12,t:12,b:26};
+  const xs=DATA.history.map(h=>h.value);
+  const min=Math.min(...xs)*0.985,max=Math.max(...xs)*1.01;
+  const X=i=>P.l+(W-P.l-P.r)*i/(xs.length-1);
+  const Y=v=>P.t+(H-P.t-P.b)*(1-(v-min)/(max-min));
+  let g='';
+  for(let t=0;t<4;t++){const v=min+(max-min)*t/3,y=Y(v);
+    g+=`<line x1="${P.l}" x2="${W-P.r}" y1="${y}" y2="${y}" stroke="#dedcd2" stroke-width="1.5"/>`+
+       `<text x="${P.l-8}" y="${y+3}" text-anchor="end">${(v/100000).toFixed(1)}L</text>`}
+  const pts=xs.map((v,i)=>`${X(i)},${Y(v)}`).join(' ');
+  g+=`<polyline points="${pts}" fill="none" stroke="var(--blue)" stroke-width="3.5"
+      stroke-linejoin="round"/>`;
+  const li=xs.length-1;
+  g+=`<rect x="${X(li)-5}" y="${Y(xs[li])-5}" width="10" height="10" fill="var(--yellow)"
+      stroke="var(--ink)" stroke-width="2.5"/>`;
+  g+=`<text x="${P.l}" y="${H-8}">W1</text><text x="${W-P.r}" y="${H-8}" text-anchor="end">W26</text>`;
+  g+=`<line id="ch" y1="${P.t}" y2="${H-P.b}" stroke="var(--ink)" stroke-dasharray="4 4" opacity="0" stroke-width="1.5"/>`;
+  svg.innerHTML=g;
+  svg.addEventListener('mousemove',e=>{
+    const r=svg.getBoundingClientRect(),fx=(e.clientX-r.left)/r.width*W;
+    let i=Math.round((fx-P.l)/((W-P.l-P.r)/(xs.length-1)));
+    i=Math.max(0,Math.min(xs.length-1,i));
+    const ch=$('#ch');ch.setAttribute('x1',X(i));ch.setAttribute('x2',X(i));ch.style.opacity=1;
+    showTip(e.clientX,e.clientY,`W${i+1} · ${inr(xs[i])}`);
+  });
+  svg.addEventListener('mouseleave',()=>{hideTip();$('#ch').style.opacity=0});
+})();
+
+/* sector bars */
+(function(){
+  const rows=DATA.by_sector.slice().sort((a,b)=>b.current_value-a.current_value);
+  const max=Math.max(...rows.map(r=>r.current_value));
+  $('#sector').innerHTML=rows.map(r=>`
+    <div class="row" data-t="${r.label.replace('Demo ','')} · ${inr(r.current_value)} · ${r.weight_pct}%">
+      <div class="lbl">${r.label.replace('Demo ','')}</div>
+      <div class="track"><div class="fill" style="width:${r.current_value/max*100}%"></div></div>
+      <div class="val">${inr(r.current_value)} · ${r.weight_pct}%</div>
+    </div>`).join('');
+  document.querySelectorAll('#sector .row').forEach(row=>{
+    row.addEventListener('mousemove',e=>showTip(e.clientX,e.clientY,row.dataset.t));
+    row.addEventListener('mouseleave',hideTip)});
+})();
+
+/* cap strip */
+(function(){
+  const cols=['var(--cap1)','var(--cap2)','var(--cap3)'];
+  const tot=DATA.by_market_cap.reduce((s,b)=>s+b.current_value,0);
+  $('#mcap').innerHTML=DATA.by_market_cap.map((b,i)=>
+    `<div style="flex:${b.current_value};background:${cols[i]}"
+      data-t="${b.label.replace('Demo Cap Band ','')}cap · ${inr(b.current_value)} · ${(b.current_value/tot*100).toFixed(1)}%"></div>`).join('');
+  $('#mcapleg').innerHTML=DATA.by_market_cap.map((b,i)=>
+    `<span class="k"><span class="sw" style="background:${cols[i]}"></span>${b.label.replace('Demo Cap Band ','').toUpperCase()} ${(b.current_value/tot*100).toFixed(0)}%</span>`).join('');
+  document.querySelectorAll('#mcap>div').forEach(d=>{
+    d.addEventListener('mousemove',e=>showTip(e.clientX,e.clientY,d.dataset.t));
+    d.addEventListener('mouseleave',hideTip)});
+})();
+
+/* table */
+let sortK='current',dir=-1;
+function render(){
+  const tb=$('#tbl tbody');
+  const rows=DATA.holdings.slice().sort((a,b)=>{
+    const av=a[sortK],bv=b[sortK];
+    if(av==null&&bv==null)return 0;if(av==null)return 1;if(bv==null)return -1;
+    return (av>bv?1:av<bv?-1:0)*dir});
+  tb.innerHTML=rows.map(h=>{
+    const pnl=h.pnl==null?`<span class="na" title="Cost basis not reported by the source">—</span>`
+      :`<span class="${h.pnl>=0?'up':'down'}">${sgn(h.pnl)}</span>`;
+    const pct=h.pnl_pct==null?`<span class="na">—</span>`
+      :`<span class="${h.pnl_pct>=0?'up':'down'}">${(h.pnl_pct>=0?'+':'−')+Math.abs(h.pnl_pct).toFixed(1)}%</span>`;
+    return `<tr>
+      <td><span class="hname">${h.name.replace('Demo ','')}</span>${h.us?'<span class="chipus">US</span>':''}
+        ${h.symbol?`<div class="hsub">${h.symbol}</div>`:''}</td>
+      <td><span class="chiptype">${TYPE[h.asset_type]||h.asset_type}</span></td>
+      <td class="num">${h.units==null?'—':new Intl.NumberFormat('en-IN').format(h.units)}</td>
+      <td class="num">${h.invested==null?'<span class="na" title="Cost basis not reported by the source">—</span>':inr(h.invested)}</td>
+      <td class="num">${inr(h.current)}</td>
+      <td class="num">${pnl}</td><td class="num">${pct}</td></tr>`}).join('');
+}
+document.querySelectorAll('#tbl thead th').forEach(th=>th.addEventListener('click',()=>{
+  if(sortK===th.dataset.k)dir*=-1;else{sortK=th.dataset.k;dir=-1}render()}));
+render();
+
+$('#empty').innerHTML=`EPF: in the totals at ${inr(DATA.by_asset_type.find(b=>b.asset_type==='EPF').current_value)},
+ absent from this table — the source returns the bucket with zero rows. We show the gap instead of hiding it.`;
+</script>
+</body></html>

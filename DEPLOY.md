@@ -117,6 +117,22 @@ future work.
    `NEXT_PUBLIC_*` var, so **redeploy after changing it**.
 4. Deploy.
 
+> ### ⚠ Never set `NEXT_PUBLIC_ALPHADESK_ADMIN_SECRET` on Vercel
+>
+> Every `NEXT_PUBLIC_*` value is **inlined into the JavaScript bundle that each
+> visitor downloads**. It is not a server-side setting and there is no way to
+> scope it to you. Setting the admin secret here would hand every visitor the
+> key to `/portfolio/*` and `/auth/*` - that is, the operator's **real holdings,
+> net worth and IND Money link** - and it would stay in the bundles of every
+> previous deployment even after you removed it. Rotate
+> `ALPHADESK_ADMIN_SECRET` on the backend if it was ever set here.
+>
+> It belongs only in `frontend/.env.local` (gitignored) on the operator's own
+> machine. Deployed, `/portfolio` is *supposed* to render the locked state; it
+> unlocks for real users when card **F3** replaces the interim gate with
+> per-user accounts. The same rule covers any future secret: if it must not be
+> public, it must not be `NEXT_PUBLIC_*`.
+
 ### 2a. Custom domain
 
 1. Vercel -> Project -> Settings -> Domains -> add `alphadesk.ishanavasthi.in`.

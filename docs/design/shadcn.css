@@ -1,0 +1,115 @@
+/* D0 · shadcn direction — shared tokens + components for the a-family demos.
+   Matches a-shadcn.html exactly; pages layer their own layout on top. */
+:root{
+  --bg:#fafafa; --card:#ffffff; --border:#e4e4e7; --ink:#09090b;
+  --muted:#71717a; --faint:#a1a1aa; --accent:#2563eb;
+  --good:#059669; --bad:#dc2626; --warn-bg:#fffbeb; --warn-bd:#fde68a; --warn-ink:#92400e;
+  --radius:8px;
+  --cap1:#1d4ed8; --cap2:#60a5fa; --cap3:#bfdbfe;
+}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--ink);
+  font:14px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased}
+a{color:inherit}
+.shell{max-width:1120px;margin:0 auto;padding:0 24px 64px}
+header.top{display:flex;align-items:center;gap:12px;height:56px;
+  border-bottom:1px solid var(--border);margin-bottom:24px}
+.logo{font-weight:600;letter-spacing:-.01em}
+.logo b{color:var(--accent)}
+.crumb{color:var(--muted);font-size:13px}
+.top .spacer{flex:1}
+.chip{font-size:12px;border:1px solid var(--border);border-radius:999px;
+  padding:3px 10px;color:var(--muted);background:var(--card)}
+.chip.ok::before{content:"";display:inline-block;width:7px;height:7px;
+  border-radius:99px;background:var(--good);margin-right:6px}
+.avatar{width:28px;height:28px;border-radius:99px;background:#e4e4e7;
+  display:grid;place-items:center;font-size:12px;font-weight:600;color:var(--muted)}
+h1{font-size:20px;font-weight:600;letter-spacing:-.02em;margin-bottom:4px}
+.sub{color:var(--muted);font-size:13px;margin-bottom:20px}
+.grid{display:grid;gap:16px}
+.card{background:var(--card);border:1px solid var(--border);
+  border-radius:var(--radius);box-shadow:0 1px 2px rgba(0,0,0,.04);padding:20px}
+.card h2{font-size:14px;font-weight:600;margin-bottom:2px}
+.card h3{font-size:13px;font-weight:500;color:var(--muted);margin-bottom:2px}
+.card .big{font-size:24px;font-weight:600;letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums}
+.card .note{font-size:12px;color:var(--faint);margin-top:2px}
+.card .desc{font-size:12px;color:var(--muted);margin-bottom:14px}
+.delta.up,.up{color:var(--good)} .delta.down,.down{color:var(--bad)} .na{color:var(--faint)}
+/* buttons — static mockups, deliberately inert */
+.btn{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:500;
+  border-radius:6px;padding:7px 14px;border:1px solid transparent;cursor:default;
+  user-select:none;white-space:nowrap}
+.btn.primary{background:var(--ink);color:#fff}
+.btn.accent{background:var(--accent);color:#fff}
+.btn.outline{background:var(--card);border-color:var(--border);color:var(--ink)}
+.btn.ghost{color:var(--muted)}
+.btn.destructive{color:var(--bad)}
+.btn.sm{padding:4px 10px;font-size:12px;border-radius:5px}
+.btn .ico{font-size:13px;line-height:1}
+.btnrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+/* banner */
+.banner{display:flex;gap:10px;align-items:center;border:1px solid var(--warn-bd);
+  background:var(--warn-bg);color:var(--warn-ink);border-radius:var(--radius);
+  padding:10px 14px;font-size:13px;margin-bottom:16px}
+.banner .grow{flex:1}
+/* badges */
+.badge{display:inline-block;font-size:10.5px;font-weight:600;letter-spacing:.02em;
+  border-radius:4px;padding:1px 6px;vertical-align:1px}
+.badge.us{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe}
+.badge.type{background:#f4f4f5;color:var(--muted);border:1px solid var(--border)}
+.badge.good{background:#ecfdf5;color:#047857;border:1px solid #a7f3d0}
+.badge.warn{background:var(--warn-bg);color:var(--warn-ink);border:1px solid var(--warn-bd)}
+.badge.lab{background:#faf5ff;color:#7e22ce;border:1px solid #e9d5ff}
+.badge.soon{background:#f4f4f5;color:var(--faint);border:1px dashed var(--border)}
+/* tabs (static) */
+.tabs{display:inline-flex;background:#f4f4f5;border-radius:7px;padding:3px;gap:2px}
+.tabs .tab{font-size:12px;font-weight:500;color:var(--muted);padding:4px 12px;
+  border-radius:5px;cursor:default}
+.tabs .tab.active{background:var(--card);color:var(--ink);
+  box-shadow:0 1px 2px rgba(0,0,0,.06)}
+/* bars */
+.bars .row{display:grid;grid-template-columns:110px 1fr 130px;align-items:center;
+  gap:10px;padding:5px 0}
+.bars .lbl{font-size:12.5px;color:var(--ink)}
+.bars .track{height:18px;border-radius:4px;background:#f4f4f5;position:relative}
+.bars .fill{position:absolute;inset:0 auto 0 0;border-radius:4px;background:var(--accent);min-width:2px}
+.bars .val{font-size:12px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+/* tables */
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+thead th{font-size:12px;font-weight:500;color:var(--muted);text-align:left;
+  padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+thead th.num{text-align:right}
+tbody td{padding:10px;border-bottom:1px solid #f4f4f5;font-size:13px}
+tbody tr:hover{background:#fafafa}
+td.num{text-align:right}
+.name{font-weight:500}
+.tick{font-size:11.5px;color:var(--muted)}
+/* metric chips inline in narrative */
+.mchip{display:inline-block;font-size:11.5px;font-weight:600;color:var(--accent);
+  background:#eff6ff;border:1px solid #bfdbfe;border-radius:5px;padding:0 6px;
+  font-variant-numeric:tabular-nums;vertical-align:0.5px}
+/* agent chips */
+.agents{display:flex;gap:8px;flex-wrap:wrap}
+.agent{display:inline-flex;align-items:center;gap:6px;font-size:12px;
+  border:1px solid var(--border);border-radius:999px;padding:4px 12px;background:var(--card)}
+.agent .st{width:7px;height:7px;border-radius:99px;background:var(--good)}
+.agent.run .st{background:var(--accent);animation:pulse 1.2s infinite}
+.agent.idle .st{background:var(--faint)}
+@keyframes pulse{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.agent.run .st{animation:none}}
+/* skeleton for streaming/generated states */
+.skel{height:10px;border-radius:5px;background:linear-gradient(90deg,#f4f4f5,#e9e9ec,#f4f4f5);
+  background-size:200% 100%;animation:sh 1.4s infinite}
+@keyframes sh{to{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.skel{animation:none}}
+/* empty / dashed states */
+.empty{border:1px dashed var(--border);border-radius:var(--radius);
+  padding:14px 16px;color:var(--muted);font-size:13px;display:flex;gap:10px;align-items:center}
+.empty .ico{width:26px;height:26px;border-radius:6px;background:#f4f4f5;
+  display:grid;place-items:center;color:var(--faint);font-size:13px;flex:none}
+footer.foot{margin-top:28px;color:var(--faint);font-size:12px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+footer.foot .dot{width:10px;height:10px;border-radius:3px;background:var(--accent)}
+svg text{font:11px ui-sans-serif,-apple-system,sans-serif;fill:var(--muted)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}

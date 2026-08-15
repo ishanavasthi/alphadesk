@@ -224,9 +224,20 @@ export async function getAuthStatus(): Promise<AuthStatus> {
   return response.json();
 }
 
-/** POST /auth/login — begin OAuth; returns the URL to open in a browser. */
+/**
+ * POST /auth/login — begin OAuth; returns the URL to open in a browser.
+ *
+ * The backend guards this with the same `_require_admin` dependency as
+ * `/portfolio/*` (linking an account links the whole server), so the operator
+ * secret rides along when this build has one. Without it the call only succeeds
+ * in single-tenant dev mode — which is exactly why the `/portfolio` Connect gate
+ * needs the header: it renders in the gated configuration too.
+ */
 export async function startAuthLogin(): Promise<string> {
-  const response = await fetch(`${API_BASE}/auth/login`, { method: "POST" });
+  const response = await fetch(`${API_BASE}/auth/login`, {
+    method: "POST",
+    headers: ADMIN_SECRET ? { "x-alphadesk-admin-secret": ADMIN_SECRET } : undefined,
+  });
   if (!response.ok) throw new Error(`Login start failed (${response.status}).`);
   const data = await response.json();
   return data.authorization_url as string;
@@ -259,6 +270,211 @@ export async function removeFromWatchlist(symbol: string): Promise<void> {
     method: "DELETE",
   });
   if (!response.ok) throw new Error(`Remove failed (${response.status}).`);
+}
+
+// --------------------------------------------------------------------------- //
+// Portfolio dashboard (card D1) — read-only, and gated
+// --------------------------------------------------------------------------- //
+/**
+ * The interim C0 admin secret, sent on every `/portfolio/*` request.
+ *
+ * **Never set this in Vercel (or any hosted environment).** `NEXT_PUBLIC_*` values are
+ * inlined into the JavaScript bundle every visitor downloads, so setting it in a
+ * deployment publishes the operator's portfolio to the world. It belongs in
+ * `frontend/.env.local` (gitignored) on the operator's own machine and nowhere
+ * else. Production stays locked until F3 replaces this with per-user auth.
+ */
+export const ADMIN_SECRET = process.env.NEXT_PUBLIC_ALPHADESK_ADMIN_SECRET || "";
+
+/** Money arrives as a decimal string — see `backend/api/routes/portfolio.py`. */
+export type Money = string | null;
+
+export interface AllocationSlice {
+  label: string;
+  asset_type: string | null;
+  asset_type_raw: string | null;
+  invested_amount: Money;
+  current_value: string;
+  pnl: Money;
+  pnl_pct: Money;
+  weight_pct: Money;
+  us_exposure: boolean;
+  currency: string;
+}
+
+export interface PortfolioSummary {
+  user_id: string;
+  source: string;
+  as_of: string;
+  currency: string;
+  net_worth: string;
+  current_value: Money;
+  invested_total: Money;
+  liabilities_total: Money;
+  pnl: Money;
+  pnl_pct: Money;
+  by_asset_type: AllocationSlice[];
+  by_asset_class: AllocationSlice[];
+  by_sector: AllocationSlice[];
+  by_market_cap: AllocationSlice[];
+  link_health: "linked" | "expiring" | "needs_relink" | "revoked";
+  last_captured_at: string | null;
+}
+
+export interface PortfolioHolding {
+  source: string;
+  external_id: string;
+  asset_type: string;
+  asset_type_raw: string | null;
+  symbol: string | null;
+  name: string | null;
+  isin: string | null;
+  units: Money;
+  avg_cost: Money;
+  invested_amount: Money;
+  current_price: Money;
+  current_value: string;
+  pnl: Money;
+  pnl_pct: Money;
+  us_exposure: boolean;
+  currency: string;
+  as_of: string;
+}
+
+export interface HoldingsResponse {
+  asset_type: string;
+  currency: string;
+  holdings: PortfolioHolding[];
+}
+
+export interface AllocationResponse {
+  source: string;
+  asset_type: string;
+  by: "assets" | "sector" | "market_cap";
+  as_of: string;
+  currency: string;
+  slices: AllocationSlice[];
+}
+
+/** One point of captured history. Empty until card S1 starts capturing. */
+export interface HistoryPoint {
+  date: string;
+  net_worth: string;
+}
+
+export interface HistoryResponse {
+  points: HistoryPoint[];
+  last_captured_at: string | null;
+  days: number;
+  currency: string;
+  note?: string;
+}
+
+/**
+ * A `/portfolio/*` failure the UI can branch on.
+ *
+ * The backend never returns a bare 500 for a source failure, so `code` is
+ * always one the dashboard has a state for: `not_linked` (Connect gate),
+ * `rate_limited` (quiet retry notice), `unverified_shape` (the IND_STOCK
+ * boundary), `locked` (no admin secret configured here).
+ */
+export class PortfolioError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly retryAfter: number | null;
+
+  constructor(status: number, code: string, message: string, retryAfter: number | null = null) {
+    super(message);
+    this.name = "PortfolioError";
+    this.status = status;
+    this.code = code;
+    this.retryAfter = retryAfter;
+  }
+}
+
+async function portfolioFetch<T>(path: string, signal?: AbortSignal): Promise<T> {
+  if (!ADMIN_SECRET) {
+    throw new PortfolioError(
+      0,
+      "locked",
+      "No admin secret is configured in this build.",
+    );
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      headers: { "x-alphadesk-admin-secret": ADMIN_SECRET },
+      cache: "no-store",
+      signal,
+    });
+  } catch (err) {
+    if ((err as Error).name === "AbortError") throw err;
+    throw new PortfolioError(0, "unreachable", `Cannot reach AlphaDesk API at ${API_BASE}.`);
+  }
+
+  if (response.ok) return response.json() as Promise<T>;
+
+  // FastAPI puts our structured body in `detail`; a proxy error page will not.
+  type Detail = { code?: string; message?: string; retry_after?: number };
+  let detail: Detail | string = "";
+  try {
+    detail = ((await response.json()) as { detail?: Detail | string }).detail ?? "";
+  } catch {
+    detail = "";
+  }
+  if (typeof detail === "string") {
+    throw new PortfolioError(
+      response.status,
+      response.status === 401 ? "unauthorized" : "http_error",
+      detail || `Request failed (${response.status}).`,
+    );
+  }
+  throw new PortfolioError(
+    response.status,
+    detail.code || "http_error",
+    detail.message || `Request failed (${response.status}).`,
+    typeof detail.retry_after === "number" ? detail.retry_after : null,
+  );
+}
+
+/** GET /portfolio/summary — totals, the snapshot's breakdowns, link health. */
+export function getPortfolioSummary(signal?: AbortSignal): Promise<PortfolioSummary> {
+  return portfolioFetch<PortfolioSummary>("/portfolio/summary", signal);
+}
+
+/**
+ * GET /portfolio/holdings — rows for **one** asset type.
+ *
+ * Singular on purpose: the source is queried per asset type and rate-limits per
+ * tool, so callers ask for the buckets the summary actually reported instead of
+ * walking the enum.
+ */
+export function getPortfolioHoldings(
+  assetType: string,
+  signal?: AbortSignal,
+): Promise<HoldingsResponse> {
+  return portfolioFetch<HoldingsResponse>(
+    `/portfolio/holdings?asset_type=${encodeURIComponent(assetType)}`,
+    signal,
+  );
+}
+
+/** GET /portfolio/allocation — one (asset_type, by) slice, fetched on demand. */
+export function getPortfolioAllocation(
+  assetType: string,
+  by: "assets" | "sector" | "market_cap",
+  signal?: AbortSignal,
+): Promise<AllocationResponse> {
+  return portfolioFetch<AllocationResponse>(
+    `/portfolio/allocation?asset_type=${encodeURIComponent(assetType)}&by=${by}`,
+    signal,
+  );
+}
+
+/** GET /portfolio/history — empty until S1 captures the first daily snapshot. */
+export function getPortfolioHistory(days = 90, signal?: AbortSignal): Promise<HistoryResponse> {
+  return portfolioFetch<HistoryResponse>(`/portfolio/history?days=${days}`, signal);
 }
 
 /** POST /approve — approve or reject the staged batch for a run. */
