@@ -1,0 +1,451 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ADMIN_SECRET,
+  PortfolioError,
+  getPortfolioAllocation,
+  getPortfolioHistory,
+  getPortfolioHoldings,
+  getPortfolioSummary,
+  startAuthLogin,
+  type AllocationSlice,
+  type PortfolioHolding,
+  type PortfolioSummary,
+} from "@/lib/api";
+import { AllocationBars } from "@/components/portfolio/AllocationBars";
+import { CapStrip } from "@/components/portfolio/CapStrip";
+import { HoldingsTable } from "@/components/portfolio/HoldingsTable";
+import { NetWorthTrend, toTrendPoints, type TrendPoint } from "@/components/portfolio/NetWorthTrend";
+import { PortfolioTopBar } from "@/components/portfolio/PortfolioTopBar";
+import { StatCards } from "@/components/portfolio/StatCards";
+import { inr, num, typeLabel } from "@/components/portfolio/format";
+import {
+  Badge,
+  Button,
+  Card,
+  CardHead,
+  PortfolioFooter,
+} from "@/components/portfolio/ui";
+import {
+  ConnectGate,
+  LockedState,
+  RateLimitedNotice,
+  SourceEmptyNotice,
+  SourceErrorState,
+  UnauthorizedState,
+  UnverifiedShapeNotice,
+} from "@/components/portfolio/states";
+
+/**
+ * `/portfolio` — the D1 dashboard.
+ *
+ * Implements `docs/design/a-shadcn.html` (with the top-bar actions from
+ * `a2-overview.html` and the gate from `a4-shell.html`). Three properties are
+ * deliberate and worth stating up front:
+ *
+ * 1. **Holdings are fetched per asset type, only for the buckets the snapshot
+ *    actually reported, one at a time.** The source rate-limits 15 calls/min per
+ *    tool; walking the 16-member enum would trip that on an ordinary portfolio,
+ *    and the answer for most of it would be `[]` anyway.
+ * 2. **Every failure has a shape.** Unlinked is a Connect gate, throttled is a
+ *    quiet inline wait, an unverified row shape is a labeled boundary — none of
+ *    them is an empty table, because an empty table is a claim about what you
+ *    own.
+ * 3. **Nothing is synthesized.** History is empty until S1 captures it and the
+ *    chart says so.
+ */
+
+/** Pacing between per-asset-type calls. Polite, not a rate-limit workaround. */
+const CALL_SPACING_MS = 180;
+/** Longest we will sit on a throttle before giving the bucket up for this load. */
+const MAX_RETRY_WAIT_S = 20;
+
+type Phase = "loading" | "ready" | "locked" | "unauthorized" | "connect" | "error";
+
+type BucketStatus = "ok" | "unsupported" | "unverified" | "rate_limited" | "error";
+
+interface Bucket {
+  assetType: string;
+  label: string;
+  status: BucketStatus;
+  rows: PortfolioHolding[];
+  /** The snapshot's value for this bucket, so an empty table can name the gap. */
+  reportedValue: number | null;
+  retryAfter: number | null;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export default function PortfolioPage() {
+  const [phase, setPhase] = useState<Phase>("loading");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [summary, setSummary] = useState<PortfolioSummary | null>(null);
+  const [history, setHistory] = useState<TrendPoint[]>([]);
+  const [lastCapturedAt, setLastCapturedAt] = useState<string | null>(null);
+  const [buckets, setBuckets] = useState<Bucket[]>([]);
+  const [loadingHoldings, setLoadingHoldings] = useState(false);
+  const [throttle, setThrottle] = useState<number | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Sector drill-down: portfolio-wide by default (it rides the snapshot call),
+  // one lazy request per asset type the reader actually asks for.
+  const [sectorType, setSectorType] = useState<string | null>(null);
+  const [sectorSlices, setSectorSlices] = useState<AllocationSlice[] | null>(null);
+  const [sectorError, setSectorError] = useState<string | null>(null);
+
+  const [connectBusy, setConnectBusy] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
+
+  const aborter = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (!ADMIN_SECRET) {
+      setPhase("locked");
+      return;
+    }
+
+    const controller = new AbortController();
+    aborter.current?.abort();
+    aborter.current = controller;
+    const { signal } = controller;
+
+    const run = async () => {
+      setPhase("loading");
+      setThrottle(null);
+      setBuckets([]);
+      setSectorType(null);
+      setSectorSlices(null);
+
+      let snapshot: PortfolioSummary;
+      try {
+        snapshot = await getPortfolioSummary(signal);
+      } catch (err) {
+        if (signal.aborted) return;
+        const failure = err as PortfolioError;
+        if (failure.code === "locked") setPhase("locked");
+        else if (failure.code === "unauthorized") setPhase("unauthorized");
+        else if (failure.code === "not_linked") setPhase("connect");
+        else {
+          setErrorMessage(failure.message || "The portfolio source could not be read.");
+          setPhase("error");
+        }
+        return;
+      }
+      if (signal.aborted) return;
+      setSummary(snapshot);
+      setPhase("ready");
+
+      try {
+        const captured = await getPortfolioHistory(90, signal);
+        if (signal.aborted) return;
+        setHistory(toTrendPoints(captured.points));
+        setLastCapturedAt(captured.last_captured_at);
+      } catch {
+        // History is additive; its absence must never take the page down.
+        if (!signal.aborted) setHistory([]);
+      }
+
+      await loadHoldings(snapshot, signal, setBuckets, setLoadingHoldings, setThrottle);
+    };
+
+    void run();
+    return () => controller.abort();
+  }, [refreshKey]);
+
+  const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
+
+  const connect = useCallback(async () => {
+    setConnectBusy(true);
+    setConnectError(null);
+    try {
+      const url = await startAuthLogin();
+      window.location.href = url;
+    } catch (err) {
+      setConnectError(
+        `${(err as Error).message} Connecting is an operator-only action on this deployment.`,
+      );
+      setConnectBusy(false);
+    }
+  }, []);
+
+  const chooseSector = useCallback(async (assetType: string | null) => {
+    setSectorType(assetType);
+    setSectorError(null);
+    if (assetType === null) {
+      setSectorSlices(null);
+      return;
+    }
+    try {
+      const result = await getPortfolioAllocation(assetType, "sector");
+      setSectorSlices(result.slices);
+    } catch (err) {
+      setSectorSlices([]);
+      setSectorError((err as PortfolioError).message);
+    }
+  }, []);
+
+  const holdings = useMemo(() => buckets.flatMap((bucket) => bucket.rows), [buckets]);
+  const drillTypes = useMemo(
+    () =>
+      (summary?.by_asset_type ?? [])
+        .filter((slice) => slice.asset_type && slice.asset_type !== "UNKNOWN")
+        .map((slice) => slice.asset_type as string),
+    [summary],
+  );
+
+  if (phase === "locked") return <LockedState />;
+  if (phase === "unauthorized") return <UnauthorizedState />;
+  if (phase === "connect") {
+    return <ConnectGate onConnect={connect} busy={connectBusy} error={connectError} />;
+  }
+  if (phase === "error") return <SourceErrorState message={errorMessage} onRetry={refresh} />;
+  if (phase === "loading" || !summary) {
+    return (
+      <div className="pt-24 text-center text-[13px] text-muted-foreground">
+        Reading your portfolio…
+      </div>
+    );
+  }
+
+  const demo = summary.source === "stub";
+  const sectorSource = sectorSlices ?? summary.by_sector;
+
+  return (
+    <>
+      <PortfolioTopBar
+        linkHealth={summary.link_health}
+        demo={demo}
+        onRefresh={refresh}
+        refreshing={loadingHoldings}
+      />
+
+      <h1 className="text-xl font-semibold tracking-[-0.02em]">Portfolio</h1>
+      <div className="mb-5 text-[13px] text-muted-foreground">
+        {demo ? "Invented demo portfolio" : "Linked account snapshot"} · read{" "}
+        {new Date(summary.as_of).toLocaleString("en-IN")}
+      </div>
+
+      {throttle !== null ? (
+        <div className="mb-4">
+          <RateLimitedNotice retryAfter={throttle} />
+        </div>
+      ) : null}
+
+      <StatCards
+        summary={summary}
+        holdingsCount={holdings.length}
+        countIsPartial={loadingHoldings}
+      />
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-[2fr_1fr]">
+        <NetWorthTrend points={history} lastCapturedAt={lastCapturedAt} />
+        <Card>
+          <CardHead title="Market cap mix" desc="Equity holdings by cap band" />
+          <CapStrip slices={summary.by_market_cap} />
+        </Card>
+      </div>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHead title="Allocation by asset type" desc="Share of current value" />
+          <AllocationBars slices={summary.by_asset_type} labelMode="type" />
+        </Card>
+        <Card>
+          <CardHead
+            title="Allocation by sector"
+            desc={
+              sectorType
+                ? `Within ${typeLabel(sectorType)} · fetched on demand`
+                : "Whole portfolio, as the snapshot reports it"
+            }
+          />
+          <div className="mb-3 flex flex-wrap gap-1.5">
+            <Button
+              variant={sectorType === null ? "primary" : "outline"}
+              size="sm"
+              onClick={() => void chooseSector(null)}
+            >
+              Whole portfolio
+            </Button>
+            {drillTypes.map((type) => (
+              <Button
+                key={type}
+                variant={sectorType === type ? "primary" : "outline"}
+                size="sm"
+                onClick={() => void chooseSector(type)}
+              >
+                {typeLabel(type)}
+              </Button>
+            ))}
+          </div>
+          {sectorError ? (
+            <div className="mb-2 text-xs text-muted-foreground">{sectorError}</div>
+          ) : null}
+          <AllocationBars slices={sectorSource} />
+        </Card>
+      </div>
+
+      <Card className="mt-4">
+        <CardHead
+          title="Holdings"
+          desc={
+            <>
+              Click a column to sort · &ldquo;—&rdquo; means the source did not report a cost
+              basis
+              {loadingHoldings ? " · still loading buckets" : ""}
+            </>
+          }
+        />
+        <HoldingsTable rows={holdings} />
+        {buckets.map((bucket) => {
+          if (bucket.status === "unverified") {
+            return <UnverifiedShapeNotice key={bucket.assetType} label={bucket.label} />;
+          }
+          if (bucket.status === "rate_limited") {
+            return (
+              <div key={bucket.assetType} className="mt-3.5">
+                <RateLimitedNotice retryAfter={bucket.retryAfter} />
+              </div>
+            );
+          }
+          if (bucket.status === "unsupported") {
+            return (
+              <SourceEmptyNotice
+                key={bucket.assetType}
+                label={bucket.label}
+                value={inr(bucket.reportedValue)}
+              />
+            );
+          }
+          if (bucket.status === "error") {
+            return (
+              <div key={bucket.assetType} className="mt-3.5 text-xs text-muted-foreground">
+                {bucket.label} rows could not be read from the source.
+              </div>
+            );
+          }
+          if (!bucket.rows.length && (bucket.reportedValue ?? 0) > 0) {
+            return (
+              <SourceEmptyNotice
+                key={bucket.assetType}
+                label={bucket.label}
+                value={inr(bucket.reportedValue)}
+              />
+            );
+          }
+          return null;
+        })}
+        {!holdings.length && !loadingHoldings ? (
+          <div className="mt-3.5 text-[13px] text-muted-foreground">
+            No holding-level rows were returned for any bucket in this snapshot.
+          </div>
+        ) : null}
+      </Card>
+
+      {demo ? (
+        <div className="mt-4">
+          <Badge variant="warn">
+            Synthetic data — every name, value and identifier below is invented.
+          </Badge>
+        </div>
+      ) : null}
+
+      <PortfolioFooter demo={demo} />
+    </>
+  );
+}
+
+/**
+ * Fetch holdings for the buckets the snapshot reported, one call at a time.
+ *
+ * Ordered by value so the biggest positions appear first, deduplicated (several
+ * out-of-enum buckets share the single `UNKNOWN` query), and paced. A throttled
+ * bucket waits out the source's own suggested delay once, then gives up for this
+ * load rather than hammering a server that just said no.
+ */
+async function loadHoldings(
+  snapshot: PortfolioSummary,
+  signal: AbortSignal,
+  setBuckets: (update: (current: Bucket[]) => Bucket[]) => void,
+  setLoadingHoldings: (value: boolean) => void,
+  setThrottle: (value: number | null) => void,
+): Promise<void> {
+  const wanted = new Map<string, { label: string; value: number | null }>();
+  for (const slice of snapshot.by_asset_type) {
+    const key = slice.asset_type;
+    if (!key) continue;
+    const label =
+      key === "UNKNOWN"
+        ? typeLabel(null, slice.asset_type_raw)
+        : typeLabel(key, slice.asset_type_raw);
+    const existing = wanted.get(key);
+    const value = num(slice.current_value);
+    if (existing) {
+      existing.value = (existing.value ?? 0) + (value ?? 0);
+    } else {
+      wanted.set(key, { label, value });
+    }
+  }
+
+  const ordered = [...wanted.entries()].sort(
+    (a, b) => (b[1].value ?? 0) - (a[1].value ?? 0),
+  );
+
+  setLoadingHoldings(true);
+  for (const [assetType, meta] of ordered) {
+    if (signal.aborted) break;
+
+    let bucket: Bucket = {
+      assetType,
+      label: meta.label,
+      status: "ok",
+      rows: [],
+      reportedValue: meta.value,
+      retryAfter: null,
+    };
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await getPortfolioHoldings(assetType, signal);
+        bucket = { ...bucket, status: "ok", rows: response.holdings };
+        break;
+      } catch (err) {
+        if (signal.aborted) return;
+        const failure = err as PortfolioError;
+        if (
+          failure.code === "rate_limited" &&
+          attempt === 0 &&
+          (failure.retryAfter ?? 0) <= MAX_RETRY_WAIT_S
+        ) {
+          bucket = { ...bucket, status: "rate_limited", retryAfter: failure.retryAfter };
+          setThrottle(failure.retryAfter);
+          await sleep((failure.retryAfter ?? 5) * 1000);
+          continue;
+        }
+        if (failure.code === "rate_limited") {
+          bucket = { ...bucket, status: "rate_limited", retryAfter: failure.retryAfter };
+        } else if (failure.code === "unverified_shape") {
+          bucket = { ...bucket, status: "unverified" };
+        } else if (
+          failure.code === "unsupported_asset_type" ||
+          failure.code === "unknown_asset_type"
+        ) {
+          // The source cannot enumerate this bucket at all (its own snapshot
+          // reports it, its holdings endpoint refuses it). That is the EPF-style
+          // gap, not an error.
+          bucket = { ...bucket, status: "unsupported" };
+        } else {
+          bucket = { ...bucket, status: "error" };
+        }
+        break;
+      }
+    }
+
+    if (signal.aborted) return;
+    setThrottle(null);
+    setBuckets((current) => [...current, bucket]);
+    await sleep(CALL_SPACING_MS);
+  }
+  if (!signal.aborted) setLoadingHoldings(false);
+}
