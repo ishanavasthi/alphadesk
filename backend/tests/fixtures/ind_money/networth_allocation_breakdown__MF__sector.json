@@ -1,0 +1,30 @@
+{
+  "asset_type": "MF",
+  "breakdown_by": "sector",
+  "data": [
+    {
+      "sector": "Fixture Sector Alpha",
+      "invested_value": 180000.0,
+      "current_value": 205000.0,
+      "return": 25000.0,
+      "return_percentage": 13.89,
+      "progress_value_percentage": 45.4
+    },
+    {
+      "sector": "Fixture Sector Beta",
+      "invested_value": 130000.0,
+      "current_value": 142000.0,
+      "return": 12000.0,
+      "return_percentage": 9.23,
+      "progress_value_percentage": 31.4
+    },
+    {
+      "sector": "Fixture Sector Gamma",
+      "invested_value": 90000.0,
+      "current_value": 105000.0,
+      "return": 15000.0,
+      "return_percentage": 16.67,
+      "progress_value_percentage": 23.2
+    }
+  ]
+}

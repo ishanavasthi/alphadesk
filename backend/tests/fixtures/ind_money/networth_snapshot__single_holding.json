@@ -1,0 +1,52 @@
+{
+  "total_networth": 232000.0,
+  "total_current_value": 232000.0,
+  "total_invested": 200000.0,
+  "liabilities": {
+    "total": 0.0,
+    "total_loan_balance": 0.0,
+    "total_credit_card_due": 0.0,
+    "loans": [],
+    "credit_cards": []
+  },
+  "investments": [
+    {
+      "asset_type": "MF",
+      "invested_value": 200000.0,
+      "current_value": 232000.0,
+      "return": 32000.0,
+      "return_percentage": 16.0,
+      "progress_value_percentage": 100.0
+    }
+  ],
+  "assets": [
+    {
+      "assetclass_l2": "Fixture Growth Assets",
+      "invested_value": 200000.0,
+      "current_value": 232000.0,
+      "return": 32000.0,
+      "return_percentage": 16.0,
+      "progress_value_percentage": 100.0
+    }
+  ],
+  "sector": [
+    {
+      "sector": "Fixture Sector Alpha",
+      "invested_value": 200000.0,
+      "current_value": 232000.0,
+      "return": 32000.0,
+      "return_percentage": 16.0,
+      "progress_value_percentage": 100.0
+    }
+  ],
+  "market_cap": [
+    {
+      "market_cap": "Fixture Cap Band A",
+      "invested_value": 200000.0,
+      "current_value": 232000.0,
+      "return": 32000.0,
+      "return_percentage": 16.0,
+      "progress_value_percentage": 100.0
+    }
+  ]
+}
