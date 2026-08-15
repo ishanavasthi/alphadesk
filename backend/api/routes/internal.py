@@ -24,6 +24,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.routes.portfolio import get_connector
 from db.session import async_session
 from portfolio.connectors import PortfolioConnector
 from services.snapshots import (
@@ -75,22 +76,16 @@ router = APIRouter(
 )
 
 
-def _connector() -> PortfolioConnector:
-    """The same process-wide connector the dashboard reads through.
-
-    Deliberately shared: `IndMoneyConnector` remembers a definitive revocation,
-    and a capture job that built its own instance would re-learn that fact by
-    making a doomed call every night.
-    """
-    from api.routes.portfolio import get_connector
-
-    return get_connector()
-
-
 @router.post("/snapshot")
 async def snapshot(
     session: AsyncSession = Depends(async_session),
-    connector: PortfolioConnector = Depends(_connector),
+    # The same process-wide connector the dashboard reads through, injected the
+    # same way. Deliberately shared: `IndMoneyConnector` remembers a definitive
+    # revocation, and a capture job that built its own instance would re-learn
+    # that fact by making a doomed call every night. Declared as a dependency
+    # rather than called inline so a test can substitute it the same way it does
+    # for `/portfolio/*`.
+    connector: PortfolioConnector = Depends(get_connector),
 ) -> dict[str, Any]:
     """Capture today's attributed day for every user that needs it.
 

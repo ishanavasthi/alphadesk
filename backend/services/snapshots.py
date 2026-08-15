@@ -322,9 +322,13 @@ async def capture_user(
     *,
     connector: PortfolioConnector,
     now: Optional[datetime] = None,
-    fx: FxFetcher = fetch_usd_inr,
+    # `fx` and `call_spacing` resolve to the module globals at *call* time, not
+    # at import time: bound as defaults they would be frozen into the function
+    # object, and a caller (or a test) could never redirect the FX fetch or drop
+    # the pacing without rewriting every call site.
+    fx: Optional[FxFetcher] = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-    call_spacing: float = CALL_SPACING_SECONDS,
+    call_spacing: Optional[float] = None,
 ) -> UserOutcome:
     """Capture one user's portfolio for the attributed day, or report why not.
 
@@ -340,6 +344,8 @@ async def capture_user(
     second (correct, and it is what survives two runs racing).
     """
     now = now or _now_utc()
+    fx = fx or fetch_usd_inr
+    call_spacing = CALL_SPACING_SECONDS if call_spacing is None else call_spacing
     day = attributed_day(now)
 
     if await _day_exists(session, user_id, day):
@@ -503,9 +509,9 @@ async def capture_all(
     connector: PortfolioConnector,
     user_ids: Optional[Sequence[str]] = None,
     now: Optional[datetime] = None,
-    fx: FxFetcher = fetch_usd_inr,
+    fx: Optional[FxFetcher] = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-    call_spacing: float = CALL_SPACING_SECONDS,
+    call_spacing: Optional[float] = None,
 ) -> CaptureReport:
     """Capture every user, one at a time.
 
