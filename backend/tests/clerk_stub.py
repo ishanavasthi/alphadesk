@@ -25,7 +25,11 @@ from jwt.algorithms import RSAAlgorithm
 
 from api import deps
 
-ISSUER = "https://leading-sheepdog-6215.clerk.accounts.dev"
+#: A host that does not exist. Deliberate: `fetch_data` is patched, so nothing
+#: here should ever leave the machine — and if a future change accidentally
+#: unpatched it, pointing at a *real* instance would turn a broken test into a
+#: silent live call.
+ISSUER = "https://f3-suite-does-not-exist.clerk.accounts.dev"
 JWKS_URL = f"{ISSUER}/.well-known/jwks.json"
 KID = "ins_f3TeStKeYiD"
 ORIGIN = "http://localhost:3000"
