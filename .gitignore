@@ -32,4 +32,9 @@ data/chroma_db/
 
 # IND Money OAuth token cache
 backend/.ind_money_token.json
+
+# Written by the snapshot workflow's curl (and by anyone following
+# docs/TESTING/S1.md §5, which runs those steps verbatim from the repo root).
+response.json
+
 .DS_Store

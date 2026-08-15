@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ADMIN_SECRET,
   PortfolioError,
+  capturePortfolioSnapshot,
   getPortfolioAllocation,
   getPortfolioHistory,
   getPortfolioHoldings,
@@ -17,7 +18,11 @@ import { AllocationBars, AllocationBarsSkeleton } from "@/components/portfolio/A
 import { CapStrip } from "@/components/portfolio/CapStrip";
 import { HoldingsTable } from "@/components/portfolio/HoldingsTable";
 import { NetWorthTrend, toTrendPoints, type TrendPoint } from "@/components/portfolio/NetWorthTrend";
-import { PortfolioTopBar } from "@/components/portfolio/PortfolioTopBar";
+import {
+  PortfolioTopBar,
+  type CaptureState,
+} from "@/components/portfolio/PortfolioTopBar";
+import { StalenessBanner } from "@/components/portfolio/StalenessBanner";
 import { StatCards } from "@/components/portfolio/StatCards";
 import { inr, num, typeLabel } from "@/components/portfolio/format";
 import {
@@ -52,8 +57,11 @@ import {
  *    quiet inline wait, an unverified row shape is a labeled boundary — none of
  *    them is an empty table, because an empty table is a claim about what you
  *    own.
- * 3. **Nothing is synthesized.** History is empty until S1 captures it and the
- *    chart says so.
+ * 3. **Nothing is synthesized.** The trend draws only the days that were
+ *    actually captured — no interpolation, no forward-fill — and when captures
+ *    stop, the amber banner says so instead of the line quietly flattening.
+ *    A missed day cannot be backfilled from a point-in-time source, so the gap
+ *    is the truth and hiding it would be the lie.
  */
 
 /** Pacing between per-asset-type calls. Polite, not a rate-limit workaround. */
@@ -108,6 +116,8 @@ export default function PortfolioPage() {
 
   const [connectBusy, setConnectBusy] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+
+  const [captureState, setCaptureState] = useState<CaptureState>("idle");
 
   const aborter = useRef<AbortController | null>(null);
   const sectorAborter = useRef<AbortController | null>(null);
@@ -194,6 +204,57 @@ export default function PortfolioPage() {
   }, [cooldown]);
 
   const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
+
+  /**
+   * Take today's snapshot now, and reload the history line when one lands.
+   *
+   * The button is awaited rather than fire-and-forget: someone who pressed it is
+   * owed an answer. It walks every bucket the snapshot reports, paced, so this
+   * takes seconds — which is why the label says "Capturing…" instead of a bare
+   * spinner. A day that already has a row comes back `already_captured`, and the
+   * label says exactly that rather than pretending to have done work.
+   */
+  const capture = useCallback(async () => {
+    setCaptureState("busy");
+    try {
+      const result = await capturePortfolioSnapshot();
+      if (result.status === "captured") {
+        setCaptureState("done");
+        const captured = await getPortfolioHistory(90);
+        setHistory(toTrendPoints(captured.points));
+        setLastCapturedAt(captured.last_captured_at);
+      } else if (result.status === "already_captured") {
+        setCaptureState("existing");
+      } else if (result.status === "in_flight") {
+        // Opening this page starts a capture when today's row is missing, so
+        // pressing the button a second later legitimately finds one running.
+        // Nothing failed, and saying "failed" would send the reader looking for
+        // a problem that does not exist.
+        setCaptureState("in_flight");
+      } else {
+        // `skipped` (no usable link) and `failed` (the source could not be
+        // read) are both "no snapshot exists for today", and the button should
+        // not claim otherwise.
+        setCaptureState("failed");
+      }
+    } catch {
+      setCaptureState("failed");
+    }
+  }, []);
+
+  /**
+   * Return the button to "Capture snapshot" a few seconds after it settles.
+   *
+   * Every terminal state is a *result*, not a mode: "Captured" is worth reading
+   * once and then in the way. Without this the only route back to a usable
+   * button is a page reload — which is a silly thing to ask of someone whose
+   * capture just failed and who wants to try again.
+   */
+  useEffect(() => {
+    if (captureState === "idle" || captureState === "busy") return;
+    const timer = setTimeout(() => setCaptureState("idle"), 5000);
+    return () => clearTimeout(timer);
+  }, [captureState]);
 
   const connect = useCallback(async () => {
     setConnectBusy(true);
@@ -285,6 +346,8 @@ export default function PortfolioPage() {
         onRefresh={refresh}
         refreshing={loadingHoldings}
         cooldown={cooldown}
+        onCapture={() => void capture()}
+        captureState={captureState}
       />
 
       <h1 className="text-xl font-semibold tracking-[-0.02em]">Portfolio</h1>
@@ -292,6 +355,10 @@ export default function PortfolioPage() {
         {demo ? "Invented demo portfolio" : "Linked account snapshot"} · read{" "}
         {new Date(summary.as_of).toLocaleString("en-IN")}
       </div>
+
+      {/* Above the numbers on purpose: if the history has stopped accruing, the
+          reader needs to know that before they read a trend line drawn from it. */}
+      <StalenessBanner lastCapturedAt={lastCapturedAt} />
 
       {throttle !== null ? (
         <div className="mb-4">

@@ -1,8 +1,8 @@
-"""Read-only portfolio endpoints for the D1 dashboard.
+"""Portfolio endpoints for the dashboard (cards D1 + S1).
 
-Four routes, all of them thin: they call the M1 connector
-(`portfolio.connectors`), serialize the **model's** vocabulary, and translate
-its typed failures into HTTP. Three rules shape the whole file:
+Thin by design: they call the M1 connector (`portfolio.connectors`), serialize
+the **model's** vocabulary, and translate its typed failures into HTTP. Three
+rules shape the whole file:
 
 1. **The connector is the only source.** Nothing here imports
    `tools/ind_money.py`, and no vendor field name appears in this file — the
@@ -25,15 +25,25 @@ calls/min per tool and 30/min globally, and a breakdown costs 2 — so
 was asked for, and the whole-portfolio breakdowns the dashboard shows by default
 come off the single ``/portfolio/summary`` snapshot call. Nothing here sweeps a
 grid.
+
+S1 added the two writes on this router — ``POST /portfolio/capture`` and the
+fire-and-forget capture ``/summary`` starts when today's attributed day has no
+row yet — plus a real ``/history``. Both stay behind the same admin gate as the
+reads: they act on the operator's own account. The **cron-triggered** capture
+lives on a separate router with a separate secret (`api/routes/internal.py`),
+because a scheduled runner is not an operator.
 """
 
 from __future__ import annotations
 
+import logging
 import os
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, NoReturn, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from portfolio.connectors import (
     LOCAL_USER_ID,
@@ -64,12 +74,53 @@ from portfolio.models import (
     derive_pnl,
     is_us_exposure,
 )
+from services.snapshots import (
+    attributed_day,
+    capture_if_missing,
+    history_points,
+    last_captured_at,
+    optional_session,
+    schedule_capture_if_missing,
+)
 
 #: Which connector serves these routes. ``stub`` selects the invented demo
 #: portfolio (`backend/tests/fixtures/demo/`) and is the only safe way to take a
 #: screenshot of this dashboard — the default talks to the operator's real
 #: linked account.
 SOURCE_ENV = "ALPHADESK_PORTFOLIO_SOURCE"
+
+_log = logging.getLogger(__name__)
+
+
+async def _last_captured_at(
+    session: Optional[AsyncSession], user_id: str
+) -> Optional[datetime]:
+    """`max(snapshot_days.captured_at)`, or None when there is no history yet.
+
+    A database that is missing or unreachable answers None, not an error. This
+    field decorates a page whose real content came from the source a moment ago;
+    losing the decoration must not lose the page.
+    """
+    if session is None:
+        return None
+    try:
+        return await last_captured_at(session, user_id)
+    except Exception:  # noqa: BLE001 - see above
+        _log.warning("last_captured_at unavailable", exc_info=True)
+        return None
+
+
+def _needs_capture(captured_at: Optional[datetime]) -> bool:
+    """Whether the current attributed day is still missing a snapshot.
+
+    Answered from ``max(captured_at)`` through the same IST helper the capture
+    path files rows with, so the two can never disagree about which day a
+    timestamp belongs to. Cheap enough to run on every page load, which is the
+    point: the check has to be free or the third net stops being worth having.
+    """
+    if captured_at is None:
+        return True
+    return attributed_day(captured_at) < attributed_day(datetime.now(timezone.utc))
 
 
 def _admin_gate(
@@ -174,7 +225,11 @@ def _holding_json(item: Holding) -> dict[str, Any]:
     }
 
 
-def _snapshot_json(snapshot: PortfolioSnapshot, link_health: str) -> dict[str, Any]:
+def _snapshot_json(
+    snapshot: PortfolioSnapshot,
+    link_health: str,
+    captured_at: Optional[datetime] = None,
+) -> dict[str, Any]:
     pnl, pnl_pct = derive_pnl(snapshot.gross_value, snapshot.invested_total)
     return {
         "user_id": LOCAL_USER_ID,
@@ -198,9 +253,10 @@ def _snapshot_json(snapshot: PortfolioSnapshot, link_health: str) -> dict[str, A
         "by_sector": [_slice_json(s) for s in snapshot.by_sector],
         "by_market_cap": [_slice_json(s) for s in snapshot.by_market_cap],
         "link_health": link_health,
-        # Snapshots land in S1. Until then this is honestly null rather than
-        # "now", which would claim a history that does not exist.
-        "last_captured_at": None,
+        # `max(snapshot_days.captured_at)` for this user, or null when nothing
+        # has ever been captured. The dashboard derives its staleness banner
+        # from this — null is "no history yet", not "history is broken".
+        "last_captured_at": captured_at.isoformat() if captured_at else None,
     }
 
 
@@ -341,18 +397,73 @@ def _breakdown_by(value: str) -> BreakdownBy:
 # Routes
 # --------------------------------------------------------------------------- #
 @router.get("/summary")
-async def summary(connector: PortfolioConnector = Depends(get_connector)) -> dict[str, Any]:
+async def summary(
+    connector: PortfolioConnector = Depends(get_connector),
+    session: Optional[AsyncSession] = Depends(optional_session),
+) -> dict[str, Any]:
     """Headline totals, the snapshot's four breakdowns, and link health.
 
-    One source call. ``last_captured_at`` is null until S1 captures the first
-    daily snapshot.
+    One source call, plus one cheap DB read for ``last_captured_at``.
+
+    **Also the third net.** If today's attributed day has no snapshot row, this
+    fires a capture in the background — after the response is composed, never
+    blocking it, and never twice at once (`single_flight`). The two scheduled
+    runs are the plan; this is what covers the week GitHub silently disables the
+    workflow, because the moment somebody opens the dashboard is the moment the
+    source can still be asked about today.
     """
     try:
         health = await connector.link_health(LOCAL_USER_ID)
         snapshot = await connector.fetch_snapshot(LOCAL_USER_ID)
     except PortfolioSourceError as exc:
         _fail(exc)
-    return _snapshot_json(snapshot, health.value)
+
+    captured_at = await _last_captured_at(session, LOCAL_USER_ID)
+    if session is not None and _needs_capture(captured_at):
+        schedule_capture_if_missing(LOCAL_USER_ID, connector)
+    return _snapshot_json(snapshot, health.value, captured_at)
+
+
+@router.post("/capture")
+async def capture(
+    connector: PortfolioConnector = Depends(get_connector),
+    session: Optional[AsyncSession] = Depends(optional_session),
+) -> dict[str, Any]:
+    """Capture today's attributed day now — the top bar's "Capture snapshot".
+
+    The same opportunistic path `/summary` fires in the background, but awaited,
+    because a reader who pressed a button is owed an answer rather than a
+    hopeful spinner. It shares the single-flight guard with that background
+    task, so pressing the button while one is already running reports
+    ``in_flight`` instead of making a second burst of source calls.
+
+    Idempotent by construction: the day already having a row answers
+    ``already_captured``, not a duplicate.
+    """
+    if session is None:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "no_database",
+                "message": "This deployment has no database configured, so nothing can be captured.",
+            },
+        )
+    # The request's own session, not one this call opens: an awaited capture is
+    # inside the request's scope, so it should use the request's transaction.
+    # (The fire-and-forget net in `/summary` is the opposite case and opens its
+    # own, because a request-scoped session is closed by the time it runs.)
+    outcome = await capture_if_missing(
+        LOCAL_USER_ID, connector=connector, session=session
+    )
+    if outcome is None:
+        return {"status": "in_flight", "captured_on": None}
+    return {
+        "status": outcome.status,
+        "captured_on": outcome.captured_on.isoformat(),
+        "holdings": outcome.holdings,
+        "reason": outcome.reason,
+        "buckets_failed": [f.as_dict() for f in outcome.buckets_failed],
+    }
 
 
 @router.get("/holdings")
@@ -402,20 +513,53 @@ async def allocation(
 @router.get("/history")
 async def history(
     days: int = Query(90, ge=1, le=1825, description="Window length in days."),
+    session: Optional[AsyncSession] = Depends(optional_session),
 ) -> dict[str, Any]:
-    """Net-worth history — honestly empty until S1 captures daily snapshots.
+    """Net-worth history from the captured daily snapshots.
 
-    The shape is final: S1 fills ``points`` with ``{date, net_worth}`` objects
-    and sets ``last_captured_at``. Nothing else about this response, or about
-    the chart that reads it, has to change. Returning a synthesized line here
-    would be inventing a past this deployment does not have.
+    One point per attributed IST calendar day that was actually captured. There
+    is **no interpolation and no forward-fill**: a gap in the line is a day the
+    job did not run, and smoothing it over would erase the one signal that says
+    so. The source is point-in-time, so a missing day cannot be recovered — it
+    can only be drawn honestly or hidden.
+
+    Degrades to an empty series (never a 500) when no database is configured or
+    the query fails: the live figures on this dashboard do not depend on
+    Postgres and must not start doing so here.
     """
+    if session is None:
+        return {
+            "points": [],
+            "last_captured_at": None,
+            "days": days,
+            "currency": CURRENCY,
+            "note": "No database is configured, so no history is being captured.",
+        }
+    try:
+        points = await history_points(session, LOCAL_USER_ID, days=days)
+        captured_at = await last_captured_at(session, LOCAL_USER_ID)
+    except Exception:  # noqa: BLE001 - history is additive; it never fails the page
+        _log.warning("portfolio history unavailable", exc_info=True)
+        return {
+            "points": [],
+            "last_captured_at": None,
+            "days": days,
+            "currency": CURRENCY,
+            "note": "History could not be read from the database.",
+        }
     return {
-        "points": [],
-        "last_captured_at": None,
+        "points": [
+            {"date": p.captured_on.isoformat(), "net_worth": _num(p.total_value)}
+            for p in points
+        ],
+        "last_captured_at": captured_at.isoformat() if captured_at else None,
         "days": days,
         "currency": CURRENCY,
-        "note": "Daily snapshots start with card S1; no history has been captured yet.",
+        "note": (
+            None
+            if points
+            else "No daily snapshots have been captured yet; the first one starts the line."
+        ),
     }
 
 

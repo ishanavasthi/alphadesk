@@ -1,0 +1,257 @@
+# Nightly portfolio snapshot.
+#
+# **A missed run is not a delayed snapshot — it is a destroyed one.** The IND
+# Money MCP is point-in-time: it answers "what is your net worth now" and there
+# is no way to ask it about last Tuesday. So this workflow is built to be noisy
+# rather than tidy: it retries, and when it has run out of retries it goes red.
+#
+# ---------------------------------------------------------------------------
+# Wiring (all of it — see docs/TESTING/S1.md for the 10-minute runbook)
+#   Variable  BACKEND_URL   Settings -> Secrets and variables -> Actions ->
+#                           Variables. The Space root, e.g.
+#                           https://<user>-alphadesk.hf.space
+#                           (already used by keepalive.yml)
+#   Secret    CRON_SECRET   same page, Secrets tab. Must equal the CRON_SECRET
+#                           set as a Space secret on the backend.
+#
+# Unlike keepalive.yml, missing configuration **fails** here instead of warning.
+# A keepalive that does not run costs a cold start; a snapshot that does not run
+# costs a day of history that cannot be recovered, and a green tick on a job
+# that silently did nothing is the exact failure this card exists to prevent.
+# If you merge this before wiring the secrets, disable the workflow from the
+# Actions tab until you have.
+#
+# ---------------------------------------------------------------------------
+# Timing. Cron on GitHub is UTC and **best-effort — runs can start late**, which
+# is precisely why the backend attributes a capture to an IST calendar day with
+# a 06:00 IST cutoff rather than trusting the clock it happens to run on:
+#
+#   18:15 UTC = 23:45 IST  primary. After mutual-fund NAVs publish (~23:00 IST);
+#                          an earlier capture would pair today's equity prices
+#                          with yesterday's NAVs and record a portfolio that
+#                          never existed at any instant.
+#   19:30 UTC = 01:00 IST  retry. Past midnight IST, so it is a *different*
+#                          calendar day — and still attributed to the same one,
+#                          because 01:00 is before the 06:00 cutoff. The backend
+#                          is idempotent per (user, attributed day), so if the
+#                          primary succeeded this run is a free no-op.
+#   19:45 UTC Sun          prune: drop snapshot_raw payloads older than 90 days.
+#                          Normalized rows and daily totals are kept forever.
+#
+# ---------------------------------------------------------------------------
+# **The 60-day landmine.** GitHub disables scheduled workflows in a repository
+# with no activity for 60 days — silently, and for keepalive.yml at the same
+# time. That is not hypothetical for a project that goes quiet after launch, and
+# it is why the dashboard shows a staleness banner derived from
+# max(snapshot_days.captured_at) instead of trusting this file to keep running.
+# If history stops: check the Actions tab first, re-enable, and expect the days
+# in between to be permanently missing.
+name: snapshot
+
+on:
+  schedule:
+    - cron: "15 18 * * *"    # 23:45 IST — primary
+    - cron: "30 19 * * *"    # 01:00 IST — retry (same attributed day)
+    - cron: "45 19 * * 0"    # Sunday — prune old raw payloads
+  workflow_dispatch:
+    inputs:
+      prune:
+        description: "Run the raw-payload prune instead of a capture"
+        type: boolean
+        default: false
+
+env:
+  PRUNE_CRON: "45 19 * * 0"
+
+jobs:
+  capture:
+    # The Sunday prune schedule must not also fire a capture: the 01:00 IST
+    # retry already covered that day 15 minutes earlier.
+    if: >-
+      github.event_name == 'schedule' && github.event.schedule != '45 19 * * 0'
+      || github.event_name == 'workflow_dispatch' && inputs.prune != true
+    runs-on: ubuntu-latest
+    # Worst case, computed rather than guessed — the final retry must never be
+    # killed by the job clock, because a killed retry is a permanently lost day:
+    #   wake     deadline 7 min + at most one 20 s curl overshoot  ~=  7.5 min
+    #   trigger  4 x 300 s curl  +  15+30+60 s backoff             ~= 21.8 min
+    #                                                        total ~= 29.3 min
+    # 40 leaves headroom for runner setup and a slow checkout-free start.
+    timeout-minutes: 40
+    steps:
+      - name: Check configuration
+        env:
+          BACKEND_URL: ${{ vars.BACKEND_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          missing=""
+          if [ -z "$BACKEND_URL" ]; then missing="$missing BACKEND_URL(variable)"; fi
+          if [ -z "$CRON_SECRET" ]; then missing="$missing CRON_SECRET(secret)"; fi
+          if [ -n "$missing" ]; then
+            echo "::error::Not configured:$missing. Nothing was captured, and"\
+                 "tonight's snapshot cannot be recovered. See docs/TESTING/S1.md."
+            exit 1
+          fi
+
+      - name: Wake the Space
+        env:
+          BACKEND_URL: ${{ vars.BACKEND_URL }}
+        run: |
+          url="${BACKEND_URL%/}/"
+          # A free Space sleeps after ~48h idle and answers non-200 while the
+          # container boots, so the first response is not the final answer.
+          #
+          # **Deadline-based, not attempt-based.** An attempt loop's real budget
+          # is attempts x (curl timeout + sleep), which is not the number anyone
+          # reads off it — the previous 24-attempt loop claimed "~6 minutes" in
+          # its own error message and could actually run for 18. A wall clock
+          # makes the budget exact, keeps the error text true, and leaves the
+          # trigger step the time it needs inside the job timeout.
+          budget=420   # 7 minutes; a Space still silent by then is not waking
+          deadline=$(( $(date +%s) + budget ))
+          attempt=0
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            attempt=$(( attempt + 1 ))
+            # curl prints "000" itself on a connection failure, so a `|| echo
+            # 000` fallback would concatenate into "000000". Swallow the exit
+            # code and default only a genuinely empty capture.
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -m 20 "$url" || true)
+            code=${code:-000}
+            echo "wake attempt $attempt: HTTP $code"
+            if [ "$code" = "200" ]; then echo "Backend awake."; exit 0; fi
+            sleep 10
+          done
+          echo "::error::Backend never answered 200 within ${budget}s ($url)."\
+               "Nothing was captured; tonight's data depends on the retry run."
+          exit 1
+
+      - name: Trigger capture
+        env:
+          BACKEND_URL: ${{ vars.BACKEND_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          url="${BACKEND_URL%/}/internal/snapshot"
+          # Retry only what a retry can fix. A dead connection or a 5xx from the
+          # platform means the Space is still coming up or fell over; a wrong
+          # secret, a wrong URL or a rejected request will be just as wrong in
+          # 30 seconds, so those fail at once and give an honest error instead
+          # of six identical ones.
+          #
+          # `detail.code` off the body is what separates *our* 503s (the
+          # deployment is misconfigured — stop) from a Hugging Face edge 503
+          # during a cold start (keep trying). Status alone cannot tell them
+          # apart, and short-circuiting every 503 would let one slow wake cost
+          # the night.
+          backoff=15
+          for attempt in 1 2 3 4; do
+            : > response.json
+            code=$(curl -sS -X POST -m 300 \
+              -H "x-cron-secret: $CRON_SECRET" \
+              -o response.json -w '%{http_code}' "$url" || true)
+            code=${code:-000}
+            echo "trigger attempt $attempt: HTTP $code"
+            case "$code" in
+              200)
+                # The body reports per-user outcomes; the request succeeding is
+                # not the same as every user being captured.
+                cat response.json
+                errors=$(python3 -c "import json;print(json.load(open('response.json')).get('errors',0))")
+                captured=$(python3 -c "import json;print(json.load(open('response.json')).get('users_captured',0))")
+                day=$(python3 -c "import json;print(json.load(open('response.json')).get('captured_on',''))")
+                echo "captured=$captured errors=$errors day=$day"
+                if [ "$errors" != "0" ]; then
+                  echo "::error::$errors user(s) failed to capture for $day."\
+                       "Those days cannot be backfilled - check the Space logs."
+                  exit 1
+                fi
+                echo "::notice::Snapshot for $day: $captured captured."
+                exit 0
+                ;;
+              401|403)
+                echo "::error::Rejected ($code). CRON_SECRET here does not match"\
+                     "the Space's. Retrying would not help."
+                exit 1
+                ;;
+              404|422)
+                echo "::error::The backend rejected the request ($code)."\
+                     "Check BACKEND_URL points at the Space root - the route is"\
+                     "POST <root>/internal/snapshot. Retrying would not help."
+                exit 1
+                ;;
+              503)
+                # Ours, or the platform's? Only the body knows. (One-liner, not
+                # a heredoc: an unindented heredoc body would terminate this
+                # YAML block scalar.)
+                reason=$(python3 -c "import json;d=json.load(open('response.json')).get('detail');print(d.get('code','') if isinstance(d,dict) else '')" 2>/dev/null || true)
+                case "$reason" in
+                  cron_not_configured)
+                    echo "::error::The Space has no CRON_SECRET configured, so"\
+                         "capture is disabled there. See docs/TESTING/S1.md."
+                    exit 1
+                    ;;
+                  no_database)
+                    echo "::error::The Space has no DATABASE_URL configured, so"\
+                         "there is nowhere to write a snapshot. Run step 3 of the"\
+                         "runbook in docs/TESTING/S1.md, then re-run this job."
+                    exit 1
+                    ;;
+                  *)
+                    # An unlabelled 503 is the platform's, not the app's - a
+                    # Space that went back to sleep or an edge hiccup. Retry.
+                    echo "503 with no app-level code; treating as transient."
+                    ;;
+                esac
+                ;;
+            esac
+            if [ "$attempt" -lt 4 ]; then
+              echo "retrying in ${backoff}s"
+              sleep "$backoff"
+              backoff=$((backoff * 2))
+            fi
+          done
+          # Loudly, on purpose. A silent failure here is a permanently missing
+          # day, and the only thing worse than a red run is a green one that
+          # captured nothing.
+          echo "::error::Snapshot trigger failed after 4 attempts ($url)."\
+               "Tonight's data is lost unless the retry run succeeds."
+          exit 1
+
+  prune:
+    if: >-
+      github.event_name == 'schedule' && github.event.schedule == '45 19 * * 0'
+      || github.event_name == 'workflow_dispatch' && inputs.prune == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Prune raw payloads older than 90 days
+        env:
+          BACKEND_URL: ${{ vars.BACKEND_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$BACKEND_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::BACKEND_URL variable and CRON_SECRET secret are required."
+            exit 1
+          fi
+          root="${BACKEND_URL%/}/"
+          deadline=$(( $(date +%s) + 420 ))
+          attempt=0
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            attempt=$(( attempt + 1 ))
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -m 20 "$root" || true)
+            code=${code:-000}
+            echo "wake attempt $attempt: HTTP $code"
+            if [ "$code" = "200" ]; then break; fi
+            sleep 10
+          done
+          # Retention is a housekeeping job, not a data-acquisition one: a
+          # missed prune costs disk, and next Sunday fixes it. It still fails
+          # loudly rather than passing quietly, because a prune that has been
+          # broken for months is worth knowing about.
+          code=$(curl -sS -X POST -m 120 \
+            -H "x-cron-secret: $CRON_SECRET" \
+            -o response.json -w '%{http_code}' \
+            "${BACKEND_URL%/}/internal/prune?days=90" || true)
+          code=${code:-000}
+          echo "prune: HTTP $code"
+          cat response.json 2>/dev/null || true
+          if [ "$code" != "200" ]; then echo "::error::Prune failed ($code)."; exit 1; fi
