@@ -3,7 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { ArrowLeft, AlertTriangle, CheckCircle2, KeyRound, Loader2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useAuth } from "@/components/AuthProvider";
+import { useIndMoney } from "@/components/AuthProvider";
 import { AgentStepCard, type StageStatus } from "@/components/AgentStepCard";
 import { RecommendationCard } from "@/components/RecommendationCard";
 import { ApprovalModal } from "@/components/ApprovalModal";
@@ -39,7 +39,7 @@ export function ResultsDashboard({ query, onReset }: { query: string; onReset: (
   const [error, setError] = useState<string | null>(null);
   // 409 from /analyze means the backend lost its IND Money session mid-session.
   const [needsAuth, setNeedsAuth] = useState(false);
-  const { busy: authBusy, connect } = useAuth();
+  const { busy: authBusy, connect } = useIndMoney();
   const [rejectionReason, setRejectionReason] = useState<string | null>(null);
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
