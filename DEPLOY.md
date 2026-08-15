@@ -65,27 +65,35 @@ Mark anything sensitive as a **Secret**.
 | `LANGSMITH_ENDPOINT` | region endpoint | e.g. `https://eu.api.smith.langchain.com` |
 | `LANGCHAIN_ENDPOINT` | same as above | both vars needed |
 | `BROKER` | leave blank | paper trading only |
+| `ALPHADESK_ADMIN_SECRET` | `openssl rand -base64 32` output | **secret, required** — guards `/auth/login` + `/auth/logout` (header `x-alphadesk-admin-secret`); with it unset those endpoints lock (fail-closed) |
+| `ALPHADESK_SINGLE_TENANT` | **never set on the Space** | local-dev-only flag; setting it here reopens the C0 hole |
 
 Localhost origins stay allowed automatically, so local dev keeps working.
 
-### 1d. (Recommended) Durable IND Money auth across restarts
+### 1d. Reconnecting IND Money after a restart
 
 HF free Spaces have an **ephemeral filesystem and sleep when idle**. The token
 cache (`backend/.ind_money_token.json`) and the in-memory run registry are lost
-on every restart. Two options:
+on every restart.
 
-- **Quick:** after each restart, click Connect IND Money again.
-- **Durable:** do one local OAuth login, copy the refresh token from
-  `backend/.ind_money_token.json`, and set these Space secrets so the backend
-  re-mints access tokens on boot with no manual reconnect:
+Since C0, the `IND_MONEY_OAUTH_*` env fallback **no longer authenticates in
+production** — ambient credentials only load under `ALPHADESK_SINGLE_TENANT`,
+which must stay unset on the Space (any visitor's queries would run on the
+operator's token; per-user links land in F3). Remove those five secrets from
+the Space if they are still set; they are dead weight.
 
-  | Var | From the cache file |
-  | --- | --- |
-  | `IND_MONEY_OAUTH_REFRESH_TOKEN` | `refresh_token` |
-  | `IND_MONEY_OAUTH_CLIENT_ID` | `client_id` |
-  | `IND_MONEY_OAUTH_CLIENT_SECRET` | `client_secret` |
-  | `IND_MONEY_OAUTH_TOKEN_URL` | `token_url` |
-  | `IND_MONEY_OAUTH_SCOPE` | `portfolio:read` |
+After a restart, the operator re-connects via the gated login:
+
+```bash
+curl -s -X POST https://<user>-alphadesk.hf.space/auth/login \
+  -H "x-alphadesk-admin-secret: $ALPHADESK_ADMIN_SECRET"
+# -> {"authorization_url": "..."}  — open it in a browser and log in,
+# or click Connect in the frontend (it will 401 without the header; use curl).
+```
+
+Restarts are rare — `.github/workflows/keepalive.yml` pings the Space every 6h
+against a 48h sleep threshold. Durable per-user tokens (Postgres, encrypted)
+arrive with F3.
 
 Note: stored analyses and the paper watchlist are in-memory regardless - they
 survive a browser refresh but not a backend restart. Known limitation; a DB is
@@ -151,7 +159,9 @@ allow-list to pre-register on IND Money's side. Just set that env correctly.
 **Backend (HF Space):** `GROQ_API_KEY`, `IND_MONEY_MCP_URL`,
 `IND_MONEY_AUTH_REDIRECT`, `CORS_ALLOW_ORIGINS`, `CORS_ALLOW_ORIGIN_REGEX`
 (optional), `LANGCHAIN_API_KEY`, `LANGCHAIN_TRACING_V2`, `LANGCHAIN_PROJECT`,
-`LANGSMITH_ENDPOINT`, `LANGCHAIN_ENDPOINT`, `BROKER` (blank), and optionally the
-`IND_MONEY_OAUTH_*` set for durable auth.
+`LANGSMITH_ENDPOINT`, `LANGCHAIN_ENDPOINT`, `BROKER` (blank),
+`ALPHADESK_ADMIN_SECRET` (secret). Do **not** set `ALPHADESK_SINGLE_TENANT` or
+the `IND_MONEY_OAUTH_*` credentials on the Space — since C0 the latter only
+work locally under single-tenant mode.
 
 **Frontend (Vercel):** `NEXT_PUBLIC_API_URL`.
