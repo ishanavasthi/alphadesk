@@ -227,11 +227,50 @@ def scan(paths, secret_strings, secret_numbers, repo_root):
     return hits
 
 
+def self_test(capture_dir, secret_strings, secret_numbers, repo_root) -> int:
+    """Prove the scanner can fail.
+
+    Plants one real capture string and one real capture number into a temp file
+    OUTSIDE the repo, scans it, and requires both to be caught. Nothing is
+    printed but pass/fail — the canary file is deleted either way.
+    """
+    import tempfile
+
+    if not secret_strings or not secret_numbers:
+        print("SELF-TEST: INCONCLUSIVE — capture corpus yielded no secrets to plant.")
+        return 1
+
+    canary_string = max(secret_strings, key=len)
+    canary_number = max(secret_numbers, key=abs)
+
+    fd, canary = tempfile.mkstemp(suffix=".md", prefix="leakcheck_canary_")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(f"planted string: {canary_string}\nplanted number: {canary_number}\n")
+        hits = scan([canary], secret_strings, secret_numbers, repo_root)
+        kinds = {h[2] for h in hits}
+        ok_string = "string" in kinds
+        ok_number = bool({"number-token", "number-exact"} & kinds)
+        print(f"SELF-TEST planted string caught: {ok_string}")
+        print(f"SELF-TEST planted number caught: {ok_number}")
+        if ok_string and ok_number:
+            print("SELF-TEST: PASS — the scanner detects planted capture values, "
+                  "so a PASS on the real files is meaningful.")
+            return 0
+        print("SELF-TEST: FAIL — the scanner missed a planted value. Do not trust a PASS.")
+        return 1
+    finally:
+        os.unlink(canary)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--captures", required=True,
                         help="scratch dir holding the raw capture JSON (outside the repo)")
     parser.add_argument("--repo-root", default=None)
+    parser.add_argument("--self-test", action="store_true",
+                        help="plant a real capture value in a temp file and prove the "
+                             "check flags it, so a PASS cannot be vacuous")
     parser.add_argument("files", nargs="*",
                         help="explicit files to scan (default: docs/ + the ind_money fixtures)")
     args = parser.parse_args()
@@ -250,6 +289,10 @@ def main() -> int:
         return 2
 
     secret_strings, secret_numbers, allowlist, provenance = harvest_captures(args.captures)
+
+    if args.self_test:
+        return self_test(args.captures, secret_strings, secret_numbers, repo_root)
+
     paths = staged_files(repo_root, [os.path.abspath(p) for p in args.files])
 
     print(f"captures dir      : {args.captures}")
