@@ -1,9 +1,31 @@
 // Typed client for the AlphaDesk FastAPI backend (SSE + approval).
 
+import { withAuth } from "@/lib/auth";
+
 // Default to 127.0.0.1 (not "localhost") so the browser doesn't try IPv6 ::1,
 // where uvicorn isn't listening. Override with NEXT_PUBLIC_API_URL if needed.
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000";
+
+/**
+ * `fetch`, plus the Clerk session token when there is one.
+ *
+ * **Every** call to the backend in this file goes through here, so "which
+ * requests carry identity" has one answer rather than one per endpoint — the
+ * failure mode of the alternative is a single forgotten call site that works
+ * fine today and 401s the day F3 turns the gate on.
+ *
+ * With `NEXT_PUBLIC_AUTH_ENABLED` off (or nobody signed in) `withAuth` returns
+ * the caller's headers unchanged and this is a plain `fetch` — same method,
+ * same headers, same body as before card F2.
+ *
+ * The interim C0 admin-secret header is untouched and rides alongside: it gates
+ * `/portfolio/*` and `/auth/login` today, and **card F3 is what removes it**,
+ * once a verified `user_id` can take over the job.
+ */
+async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(url, { ...init, headers: await withAuth(init.headers) });
+}
 
 export type RiskDecision = "PASS" | "REJECT" | "FLAG";
 export type AnalystAction = "buy" | "hold" | "avoid";
@@ -86,7 +108,7 @@ export async function wakeBackend(
   for (let i = 0; i < attempts; i += 1) {
     if (signal?.aborted) return false;
     try {
-      const response = await fetch(`${API_BASE}/`, { cache: "no-store", signal });
+      const response = await apiFetch(`${API_BASE}/`, { cache: "no-store", signal });
       if (response.ok) return true;
     } catch {
       // Network error while the Space boots — fall through and retry.
@@ -106,7 +128,7 @@ export interface WakeOptions {
 
 /** GET /analysis/{id} — full stored analysis for the /a/<id> view. */
 export async function getAnalysis(runId: string): Promise<AnalysisPayload> {
-  const response = await fetch(`${API_BASE}/analysis/${encodeURIComponent(runId)}`);
+  const response = await apiFetch(`${API_BASE}/analysis/${encodeURIComponent(runId)}`);
   if (response.status === 404) throw new Error("not_found");
   if (!response.ok) throw new Error(`Analysis fetch failed (${response.status}).`);
   return response.json();
@@ -131,7 +153,7 @@ export async function streamAnalyze(
 ): Promise<void> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE}/analyze`, {
+    response = await apiFetch(`${API_BASE}/analyze`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query }),
@@ -219,7 +241,7 @@ export interface AuthStatus {
 
 /** GET /auth/status — is the backend authenticated with IND Money? */
 export async function getAuthStatus(): Promise<AuthStatus> {
-  const response = await fetch(`${API_BASE}/auth/status`);
+  const response = await apiFetch(`${API_BASE}/auth/status`);
   if (!response.ok) throw new Error(`Auth status failed (${response.status}).`);
   return response.json();
 }
@@ -234,7 +256,7 @@ export async function getAuthStatus(): Promise<AuthStatus> {
  * needs the header: it renders in the gated configuration too.
  */
 export async function startAuthLogin(): Promise<string> {
-  const response = await fetch(`${API_BASE}/auth/login`, {
+  const response = await apiFetch(`${API_BASE}/auth/login`, {
     method: "POST",
     headers: ADMIN_SECRET ? { "x-alphadesk-admin-secret": ADMIN_SECRET } : undefined,
   });
@@ -245,7 +267,7 @@ export async function startAuthLogin(): Promise<string> {
 
 /** POST /auth/logout — disconnect the backend from IND Money. */
 export async function logoutAuth(): Promise<void> {
-  const response = await fetch(`${API_BASE}/auth/logout`, { method: "POST" });
+  const response = await apiFetch(`${API_BASE}/auth/logout`, { method: "POST" });
   if (!response.ok) throw new Error(`Logout failed (${response.status}).`);
 }
 
@@ -258,7 +280,7 @@ export interface WatchlistItem {
 
 /** GET /watchlist — cumulative paper watchlist across runs. */
 export async function getWatchlist(): Promise<WatchlistItem[]> {
-  const response = await fetch(`${API_BASE}/watchlist`);
+  const response = await apiFetch(`${API_BASE}/watchlist`);
   if (!response.ok) throw new Error(`Watchlist failed (${response.status}).`);
   const data = await response.json();
   return (data.items as WatchlistItem[]) || [];
@@ -266,7 +288,7 @@ export async function getWatchlist(): Promise<WatchlistItem[]> {
 
 /** DELETE /watchlist/{symbol} — remove a stock from the paper watchlist. */
 export async function removeFromWatchlist(symbol: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/watchlist/${encodeURIComponent(symbol)}`, {
+  const response = await apiFetch(`${API_BASE}/watchlist/${encodeURIComponent(symbol)}`, {
     method: "DELETE",
   });
   if (!response.ok) throw new Error(`Remove failed (${response.status}).`);
@@ -407,7 +429,7 @@ async function portfolioFetch<T>(
 
   let response: Response;
   try {
-    response = await fetch(`${API_BASE}${path}`, {
+    response = await apiFetch(`${API_BASE}${path}`, {
       method,
       headers: { "x-alphadesk-admin-secret": ADMIN_SECRET },
       cache: "no-store",
@@ -507,7 +529,7 @@ export async function approve(
   actionId: string,
   approved: boolean,
 ): Promise<ApproveResult> {
-  const response = await fetch(`${API_BASE}/approve`, {
+  const response = await apiFetch(`${API_BASE}/approve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action_id: actionId, approved }),
