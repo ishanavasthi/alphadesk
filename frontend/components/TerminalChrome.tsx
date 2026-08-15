@@ -18,6 +18,9 @@ import { TopBar } from "@/components/TopBar";
  */
 export function TerminalChrome() {
   const pathname = usePathname();
-  if (pathname?.startsWith("/portfolio")) return null;
+  // Exact match or a true child segment — a bare `startsWith` would also strip
+  // the chrome from an unrelated future route like `/portfolios` or
+  // `/portfolio-settings`.
+  if (pathname === "/portfolio" || pathname?.startsWith("/portfolio/")) return null;
   return <TopBar />;
 }

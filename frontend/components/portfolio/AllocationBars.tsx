@@ -18,6 +18,37 @@ import { Badge } from "./ui";
  * weights are printed beside every row, so the bar's job is comparison between
  * rows rather than a second, less precise statement of the same percentage.
  */
+/** Row geometry, shared with the skeleton so nothing shifts when rows land. */
+const ROW =
+  "adp-bar-row grid grid-cols-[90px_1fr_110px] items-center gap-2.5 py-[5px] sm:grid-cols-[110px_1fr_130px]";
+
+/**
+ * Placeholder for a drill-down that is still in flight.
+ *
+ * The card stops rendering the previous asset type's bars the moment a new chip
+ * is clicked, because bars that outlive their heading are a false statement
+ * about the reader's money. Empty space would say the same thing more quietly,
+ * so this occupies the geometry and says "loading" instead.
+ */
+export function AllocationBarsSkeleton({ rows = 5 }: { rows?: number }) {
+  return (
+    <div aria-busy="true" aria-label="Loading allocation">
+      {Array.from({ length: rows }, (_, index) => (
+        <div key={index} className={ROW}>
+          <div className="h-3 animate-pulse rounded bg-secondary" />
+          <div className="adp-track">
+            <div
+              className="adp-fill animate-pulse opacity-25"
+              style={{ width: `${72 - index * 13}%` }}
+            />
+          </div>
+          <div className="h-3 animate-pulse rounded bg-secondary" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function AllocationBars({
   slices,
   labelMode = "raw",
@@ -46,7 +77,7 @@ export function AllocationBars({
         return (
           <div
             key={`${slice.label}-${slice.asset_type_raw ?? ""}`}
-            className="adp-bar-row grid grid-cols-[90px_1fr_110px] items-center gap-2.5 py-[5px] sm:grid-cols-[110px_1fr_130px]"
+            className={ROW}
             title={`${label} · ${inr(value)}${weight === null ? "" : ` · ${pct(weight)}`}`}
           >
             {/* Wraps rather than truncates: a clipped bucket label is a chart

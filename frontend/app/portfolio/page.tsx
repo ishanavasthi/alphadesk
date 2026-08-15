@@ -13,7 +13,7 @@ import {
   type PortfolioHolding,
   type PortfolioSummary,
 } from "@/lib/api";
-import { AllocationBars } from "@/components/portfolio/AllocationBars";
+import { AllocationBars, AllocationBarsSkeleton } from "@/components/portfolio/AllocationBars";
 import { CapStrip } from "@/components/portfolio/CapStrip";
 import { HoldingsTable } from "@/components/portfolio/HoldingsTable";
 import { NetWorthTrend, toTrendPoints, type TrendPoint } from "@/components/portfolio/NetWorthTrend";
@@ -60,6 +60,15 @@ import {
 const CALL_SPACING_MS = 180;
 /** Longest we will sit on a throttle before giving the bucket up for this load. */
 const MAX_RETRY_WAIT_S = 20;
+/**
+ * How long Refresh stays disabled after a load starts.
+ *
+ * One load re-walks every bucket the snapshot reported — on a diversified
+ * account that is most of the source's 15-calls-per-minute-per-tool budget, and
+ * a reader who clicks Refresh five times in ten seconds would spend the rest of
+ * it on 429s. The cooldown makes the button honest about the cost behind it.
+ */
+const REFRESH_COOLDOWN_S = 30;
 
 type Phase = "loading" | "ready" | "locked" | "unauthorized" | "connect" | "error";
 
@@ -88,16 +97,30 @@ export default function PortfolioPage() {
   const [throttle, setThrottle] = useState<number | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
+  const [cooldown, setCooldown] = useState(0);
+
   // Sector drill-down: portfolio-wide by default (it rides the snapshot call),
   // one lazy request per asset type the reader actually asks for.
   const [sectorType, setSectorType] = useState<string | null>(null);
   const [sectorSlices, setSectorSlices] = useState<AllocationSlice[] | null>(null);
   const [sectorError, setSectorError] = useState<string | null>(null);
+  const [sectorLoading, setSectorLoading] = useState(false);
 
   const [connectBusy, setConnectBusy] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
 
   const aborter = useRef<AbortController | null>(null);
+  const sectorAborter = useRef<AbortController | null>(null);
+  /**
+   * Monotonic id of the newest drill-down request.
+   *
+   * Aborting the previous fetch is not enough on its own: a response already in
+   * flight can resolve after the abort, and the two requests are indistinguishable
+   * once the promises are pending. Only the request whose token still matches is
+   * allowed to write state, so a stale bucket can never land under a newer chip's
+   * label.
+   */
+  const sectorToken = useRef(0);
 
   useEffect(() => {
     if (!ADMIN_SECRET) {
@@ -105,6 +128,7 @@ export default function PortfolioPage() {
       return;
     }
 
+    setCooldown(REFRESH_COOLDOWN_S);
     const controller = new AbortController();
     aborter.current?.abort();
     aborter.current = controller;
@@ -114,8 +138,14 @@ export default function PortfolioPage() {
       setPhase("loading");
       setThrottle(null);
       setBuckets([]);
+      // A reload invalidates any drill-down in flight along with everything else.
+      sectorToken.current += 1;
+      sectorAborter.current?.abort();
+      sectorAborter.current = null;
       setSectorType(null);
       setSectorSlices(null);
+      setSectorError(null);
+      setSectorLoading(false);
 
       let snapshot: PortfolioSummary;
       try {
@@ -150,8 +180,18 @@ export default function PortfolioPage() {
     };
 
     void run();
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      sectorAborter.current?.abort();
+    };
   }, [refreshKey]);
+
+  // Counts the Refresh cooldown down one second at a time, purely for the label.
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setTimeout(() => setCooldown((seconds) => seconds - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
 
   const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
 
@@ -169,19 +209,43 @@ export default function PortfolioPage() {
     }
   }, []);
 
+  /**
+   * Switch the sector card to one asset type (or back to the whole portfolio).
+   *
+   * Three clicks in a second used to be three unguarded fetches racing to write
+   * the same state, and the slowest one won — the card could end up showing
+   * mutual-fund sectors under an "Within US stocks" heading, which is worse than
+   * showing nothing. Now the previous request is aborted, only the newest token
+   * may write, and the card renders a skeleton rather than the outgoing data
+   * while a fetch is open. The label and the bars can never disagree.
+   */
   const chooseSector = useCallback(async (assetType: string | null) => {
+    const token = (sectorToken.current += 1);
+    sectorAborter.current?.abort();
+    sectorAborter.current = null;
+
     setSectorType(assetType);
     setSectorError(null);
     if (assetType === null) {
       setSectorSlices(null);
+      setSectorLoading(false);
       return;
     }
+
+    const controller = new AbortController();
+    sectorAborter.current = controller;
+    setSectorSlices(null);
+    setSectorLoading(true);
     try {
-      const result = await getPortfolioAllocation(assetType, "sector");
+      const result = await getPortfolioAllocation(assetType, "sector", controller.signal);
+      if (token !== sectorToken.current) return;
       setSectorSlices(result.slices);
     } catch (err) {
+      if (token !== sectorToken.current || controller.signal.aborted) return;
       setSectorSlices([]);
       setSectorError((err as PortfolioError).message);
+    } finally {
+      if (token === sectorToken.current) setSectorLoading(false);
     }
   }, []);
 
@@ -209,7 +273,9 @@ export default function PortfolioPage() {
   }
 
   const demo = summary.source === "stub";
-  const sectorSource = sectorSlices ?? summary.by_sector;
+  // Never the whole-portfolio fallback while a drill-down is selected: that
+  // would print portfolio-wide sectors under a "Within <asset type>" heading.
+  const sectorSource = sectorType === null ? summary.by_sector : sectorSlices ?? [];
 
   return (
     <>
@@ -218,6 +284,7 @@ export default function PortfolioPage() {
         demo={demo}
         onRefresh={refresh}
         refreshing={loadingHoldings}
+        cooldown={cooldown}
       />
 
       <h1 className="text-xl font-semibold tracking-[-0.02em]">Portfolio</h1>
@@ -282,7 +349,11 @@ export default function PortfolioPage() {
           {sectorError ? (
             <div className="mb-2 text-xs text-muted-foreground">{sectorError}</div>
           ) : null}
-          <AllocationBars slices={sectorSource} />
+          {sectorLoading ? (
+            <AllocationBarsSkeleton />
+          ) : (
+            <AllocationBars slices={sectorSource} />
+          )}
         </Card>
       </div>
 

@@ -42,6 +42,12 @@ function Gate({
  * redirected to authorize, so it states exactly what will be read and — just as
  * explicitly — what cannot happen. "Never order placement" is true at the code
  * level; the broker layer is a stub.
+ *
+ * Every claim here has to be true *today*, not once some later card lands. The
+ * token line therefore says "stored server-side" and stops: the OAuth token
+ * currently sits in plaintext in `backend/.ind_money_token.json`, and card F3 is
+ * what moves it into the Fernet-encrypted `broker_links` column. Promising
+ * encryption a card early would be the one lie on the consent screen.
  */
 export function ConnectGate({
   onConnect,
@@ -63,7 +69,7 @@ export function ConnectGate({
           ["yes", "Portfolio holdings, values and SIPs"],
           ["yes", "Net-worth totals for daily snapshots"],
           ["no", "Never order placement — the broker layer cannot trade"],
-          ["no", "Never your credentials — OAuth only, tokens encrypted"],
+          ["no", "Never your credentials — OAuth only, tokens stored server-side"],
         ].map(([kind, text]) => (
           <li key={text} className="flex gap-2 py-1">
             <span

@@ -17,17 +17,24 @@ const LINK_LABEL: Record<PortfolioSummary["link_health"], { text: string; ok: bo
  * **disabled with a `soon` badge** because the feature does not exist until card
  * S1 writes the first daily capture. A button that looked live and did nothing
  * would be a worse answer than one that says what it is waiting for.
+ *
+ * "Refresh" carries a visible cooldown for the same reason: one press re-walks
+ * every holdings bucket, so the countdown shows the reader why the button is
+ * asleep rather than letting them spend the source's rate limit discovering it.
  */
 export function PortfolioTopBar({
   linkHealth,
   demo,
   onRefresh,
   refreshing,
+  cooldown,
 }: {
   linkHealth: PortfolioSummary["link_health"] | null;
   demo: boolean;
   onRefresh: () => void;
   refreshing: boolean;
+  /** Seconds left before another refresh is allowed; 0 means ready. */
+  cooldown: number;
 }) {
   const link = linkHealth ? LINK_LABEL[linkHealth] : null;
   // min-height, not height: the actions wrap to a second row at 375px, and a
@@ -39,8 +46,19 @@ export function PortfolioTopBar({
       </span>
       <span className="text-[13px] text-muted-foreground">/ Portfolio</span>
       <span className="flex-1" />
-      <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing}>
-        ↺ {refreshing ? "Refreshing…" : "Refresh"}
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onRefresh}
+        disabled={refreshing || cooldown > 0}
+        title={
+          cooldown > 0 && !refreshing
+            ? "A refresh re-reads every bucket from the source, which rate-limits per minute. Ready again shortly."
+            : undefined
+        }
+      >
+        ↺{" "}
+        {refreshing ? "Refreshing…" : cooldown > 0 ? `Refresh · ${cooldown}s` : "Refresh"}
       </Button>
       <Button
         variant="outline"

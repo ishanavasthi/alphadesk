@@ -224,9 +224,20 @@ export async function getAuthStatus(): Promise<AuthStatus> {
   return response.json();
 }
 
-/** POST /auth/login — begin OAuth; returns the URL to open in a browser. */
+/**
+ * POST /auth/login — begin OAuth; returns the URL to open in a browser.
+ *
+ * The backend guards this with the same `_require_admin` dependency as
+ * `/portfolio/*` (linking an account links the whole server), so the operator
+ * secret rides along when this build has one. Without it the call only succeeds
+ * in single-tenant dev mode — which is exactly why the `/portfolio` Connect gate
+ * needs the header: it renders in the gated configuration too.
+ */
 export async function startAuthLogin(): Promise<string> {
-  const response = await fetch(`${API_BASE}/auth/login`, { method: "POST" });
+  const response = await fetch(`${API_BASE}/auth/login`, {
+    method: "POST",
+    headers: ADMIN_SECRET ? { "x-alphadesk-admin-secret": ADMIN_SECRET } : undefined,
+  });
   if (!response.ok) throw new Error(`Login start failed (${response.status}).`);
   const data = await response.json();
   return data.authorization_url as string;

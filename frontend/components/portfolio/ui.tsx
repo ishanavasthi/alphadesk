@@ -166,13 +166,28 @@ export function WarnBanner({ children }: { children: ReactNode }) {
   );
 }
 
-/** The footer every page in the locked design carries. */
+/**
+ * The footer every page in the locked design carries.
+ *
+ * The Privacy and Terms links are part of that design and part of what a page
+ * asking for account access owes the reader, so they ship now even though the
+ * pages themselves are a later card's work — a missing link is easier to notice
+ * (and to route) than a promise nobody made.
+ */
 export function PortfolioFooter({ demo }: { demo: boolean }) {
   return (
     <footer className="mt-7 flex flex-wrap items-center gap-3.5 text-xs text-[var(--adp-faint)]">
       <span className="h-2.5 w-2.5 rounded-[3px] bg-[var(--adp-accent)]" aria-hidden />
       <span>
         {demo ? "Synthetic demo data · " : ""}descriptive analytics only · not investment advice
+      </span>
+      <span className="flex items-center gap-3.5">
+        <a className="hover:text-foreground hover:underline" href="/privacy">
+          Privacy
+        </a>
+        <a className="hover:text-foreground hover:underline" href="/terms">
+          Terms
+        </a>
       </span>
     </footer>
   );

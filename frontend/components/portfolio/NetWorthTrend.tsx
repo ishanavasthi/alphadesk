@@ -42,6 +42,31 @@ function TrendTooltip({
 }
 
 /**
+ * The emphasized endpoint the chart rules call for.
+ *
+ * Recharts renders `dot` for every point or none, so "last point only" has to be
+ * a render function that draws a circle at the final index and an empty `<g/>`
+ * everywhere else. The white ring is what lifts it off the 7% area fill.
+ */
+function endpointDot(props: { cx?: number; cy?: number; index?: number; key?: string }, last: number) {
+  const { cx, cy, index, key } = props;
+  if (index !== last || cx === undefined || cy === undefined) {
+    return <g key={key ?? `dot-${index}`} />;
+  }
+  return (
+    <circle
+      key={key ?? `dot-${index}`}
+      cx={cx}
+      cy={cy}
+      r={3.5}
+      fill="var(--adp-accent)"
+      stroke="#fff"
+      strokeWidth={1.5}
+    />
+  );
+}
+
+/**
  * Net-worth trend.
  *
  * **Renders whatever `points` it is given and invents nothing.** Until card S1
@@ -88,7 +113,11 @@ export function NetWorthTrend({
                 tickLine={false}
                 axisLine={false}
                 tick={{ fontSize: 11 }}
-                domain={["dataMin * 0.985", "dataMax * 1.01"]}
+                // Function form, not the string form: Recharts only parses
+                // "dataMin - N" / "dataMax + N" strings, so a multiplicative
+                // string silently falls back to [0, dataMax] and flattens the
+                // line against the top of the card.
+                domain={[(min: number) => min * 0.985, (max: number) => max * 1.01]}
                 tickFormatter={lakh}
               />
               <Tooltip
@@ -110,7 +139,7 @@ export function NetWorthTrend({
                 strokeWidth={2}
                 strokeLinejoin="round"
                 isAnimationActive={false}
-                dot={false}
+                dot={(dotProps) => endpointDot(dotProps, points.length - 1)}
                 activeDot={{ r: 3.5, fill: "var(--adp-accent)", stroke: "#fff", strokeWidth: 1.5 }}
               />
             </ComposedChart>
