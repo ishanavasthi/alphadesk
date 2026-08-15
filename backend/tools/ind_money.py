@@ -68,8 +68,17 @@ def _unwrap(data: Any) -> Any:
     return data
 
 
-async def _call_mcp_tool(tool_name: str, arguments: Optional[dict] = None) -> Any:
+async def _call_mcp_tool(
+    tool_name: str, arguments: Optional[dict] = None, *, token: Optional[str] = None
+) -> Any:
     """Call ``tool_name`` on the IND Money MCP and return the unwrapped JSON.
+
+    Pass ``token`` to call as a **specific user** — that is what the per-user
+    portfolio connector does (card F3), minting from that user's `AuthStore`.
+    Omitting it falls back to the ambient identity, which is the legacy v1
+    research pipeline's path: it asks for *market* data with no user in scope.
+    `ind_money_auth.ambient_user_id()` resolves that to the operator, never to
+    "whoever linked first".
 
     Raises ``MCPClientError`` on missing URL/auth, transport, or tool-level errors.
     """
@@ -80,10 +89,11 @@ async def _call_mcp_tool(tool_name: str, arguments: Optional[dict] = None) -> An
     # None values are dropped; required args must be supplied by the wrapper.
     args = {k: v for k, v in (arguments or {}).items() if v is not None}
 
-    try:
-        token = await get_access_token()
-    except MCPAuthError as exc:
-        raise MCPClientError(str(exc))
+    if token is None:
+        try:
+            token = await get_access_token()
+        except MCPAuthError as exc:
+            raise MCPClientError(str(exc))
 
     headers = {"Authorization": f"Bearer {token}"} if token else {}
 

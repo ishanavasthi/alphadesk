@@ -18,6 +18,7 @@ on via env (LANGCHAIN_TRACING_V2); it is never disabled here.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import secrets
@@ -39,8 +40,18 @@ from api.routes.internal import router as internal_router  # noqa: E402
 from api.routes.portfolio import router as portfolio_router  # noqa: E402
 from graph.graph import alphaDesk_graph, resume_after_approval  # noqa: E402
 from graph.state import PortfolioState  # noqa: E402
+from api.deps import (  # noqa: E402
+    _maybe_adopt,
+    bearer_token,
+    claim_email,
+    ensure_user,
+    verify_token,
+)
+from services.snapshots import optional_session  # noqa: E402
 from tools.ind_money_auth import (  # noqa: E402
+    LOCAL_USER_ID,
     MCPAuthError,
+    OAuthStateError,
     auth_status,
     begin_login,
     complete_login,
@@ -254,26 +265,100 @@ def _require_admin(
         )
 
 
+async def _link_identity(
+    authorization: Optional[str] = Header(default=None),
+    session: Optional[Any] = Depends(optional_session),
+) -> str:
+    """Whose broker link is being created or destroyed. **JWT only.**
+
+    `/auth/login` and `/auth/logout` are the two endpoints the interim C0 admin
+    header is deliberately *not* accepted on. Linking is identity-bound as of
+    F3: a link written under a shared operator secret would have no owner, which
+    is the precise shape of the process-wide credential this card deleted. A
+    caller with no verified identity has no link to make.
+
+    The one exception is single-tenant dev (`ALPHADESK_SINGLE_TENANT=1`, the
+    operator's own machine), which has no Clerk instance to mint a token from
+    and links as ``"local"`` exactly as it did before this card.
+    """
+    if not authorization and single_tenant_mode():
+        return LOCAL_USER_ID
+    claims = await asyncio.to_thread(verify_token, bearer_token(authorization))
+    user_id: str = claims["sub"]
+    if session is not None:
+        email = claim_email(claims)
+        await ensure_user(session, user_id, email)
+        await _maybe_adopt(session, user_id, email)
+    return user_id
+
+
+async def _status_identity(
+    authorization: Optional[str] = Header(default=None),
+    x_alphadesk_admin_secret: Optional[str] = Header(default=None),
+) -> Optional[str]:
+    """Whose link status to report, or None for "nobody in particular".
+
+    Reading is softer than writing, so this one does fall back to the interim
+    admin identity — the v1 research page polls it with no session while
+    `NEXT_PUBLIC_AUTH_ENABLED` is off. What it will not do is answer for a user
+    it cannot name: an anonymous caller now gets a flat "not connected" instead
+    of a truthful readout of *someone else's* link, which is what this endpoint
+    used to hand to the whole internet.
+    """
+    if authorization:
+        claims = await asyncio.to_thread(verify_token, bearer_token(authorization))
+        return str(claims["sub"])
+    if single_tenant_mode():
+        return LOCAL_USER_ID
+    expected = os.environ.get("ALPHADESK_ADMIN_SECRET") or ""
+    supplied = x_alphadesk_admin_secret or ""
+    if expected and supplied and secrets.compare_digest(supplied, expected):
+        from services.adoption import admin_identity
+
+        return await admin_identity()
+    return None
+
+
 @app.get("/auth/status")
-async def auth_status_endpoint() -> Dict[str, object]:
-    """Whether the backend is authenticated with the IND Money MCP."""
-    return await auth_status()
+async def auth_status_endpoint(
+    user_id: Optional[str] = Depends(_status_identity),
+) -> Dict[str, object]:
+    """Whether **this caller** is linked to the IND Money MCP."""
+    if user_id is None:
+        return {
+            "authenticated": False,
+            "source": None,
+            "expires_at": None,
+            "expires_in_sec": None,
+            "revoked": False,
+            "user_id": None,
+        }
+    return await auth_status(user_id)
 
 
-@app.post("/auth/login", dependencies=[Depends(_require_admin)])
-async def auth_login_endpoint() -> Dict[str, str]:
-    """Begin an OAuth login; returns the authorization URL to open in a browser."""
+@app.post("/auth/login")
+async def auth_login_endpoint(
+    user_id: str = Depends(_link_identity),
+) -> Dict[str, str]:
+    """Begin an OAuth login for the signed-in user; returns the URL to open.
+
+    The `state` this mints is written to `oauth_pending` bound to ``user_id``
+    before the URL is handed out, so the callback can establish the owner
+    without trusting anything the returning browser carries.
+    """
     try:
-        url = await begin_login(AUTH_REDIRECT_URI)
+        url = await begin_login(user_id, AUTH_REDIRECT_URI)
     except MCPAuthError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     return {"authorization_url": url}
 
 
-@app.post("/auth/logout", dependencies=[Depends(_require_admin)])
-async def auth_logout_endpoint() -> Dict[str, object]:
-    """Disconnect from IND Money — forget the stored tokens for this backend."""
-    return await logout()
+@app.post("/auth/logout")
+async def auth_logout_endpoint(
+    user_id: str = Depends(_link_identity),
+) -> Dict[str, object]:
+    """Unlink IND Money for the signed-in user: revoke upstream, then delete."""
+    return await logout(user_id)
 
 
 @app.get("/auth/callback", response_class=HTMLResponse)
@@ -282,15 +367,24 @@ async def auth_callback_endpoint(
     state: Optional[str] = None,
     error: Optional[str] = None,
 ) -> HTMLResponse:
-    """OAuth redirect target — exchanges the code for tokens."""
+    """OAuth redirect target — exchanges the code for tokens.
+
+    **No identity is read off this request.** Not a cookie, not a header, not a
+    query parameter beyond the OAuth ones: the owner comes from the
+    `oauth_pending` row `state` names, which was written before the user ever
+    left for the broker. A state that is unknown, already used, or older than
+    ten minutes links nothing and says so.
+    """
     if error:
         return _auth_html(f"Authorization failed: {error}")
     if not code or not state:
         return _auth_html("Missing authorization code or state.")
     try:
         await complete_login(code, state)
-    except Exception as exc:  # noqa: BLE001
-        return _auth_html(f"Login failed: {exc}")
+    except OAuthStateError as exc:
+        return _auth_html(f"{exc} Nothing was connected.")
+    except Exception:  # noqa: BLE001 - the message can carry broker payload text
+        return _auth_html("Login failed. Please start the connection again.")
     return _auth_html("IND Money connected.", ok=True)
 
 
