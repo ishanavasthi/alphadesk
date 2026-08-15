@@ -10,6 +10,15 @@ mean the same thing:
     postgres://user:pw@host/db          (the form Neon/Heroku hand out)
     postgresql+asyncpg://user:pw@host/db
 
+**Including the query string a managed provider actually hands you.** A real
+Neon URL ends in `?sslmode=require&channel_binding=require`; SQLAlchemy's
+asyncpg dialect forwards every query parameter straight into
+`asyncpg.connect()`, which knows neither keyword and raises `TypeError` on the
+first connection. `normalize_url()` therefore translates `sslmode` → asyncpg's
+`ssl` and drops `channel_binding` (asyncpg negotiates channel binding itself)
+when the target driver is asyncpg. `sync_url()` leaves the query alone, because
+libpq-based drivers do understand `sslmode`.
+
 Alembic normalises the same way (`alembic/env.py`), so one env var drives both
 the app and migrations. Nothing here assumes a specific Postgres host — local
 Docker, Neon, or anything else with a Postgres URL works.
@@ -19,7 +28,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncGenerator
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -47,10 +56,46 @@ def _split_scheme(url: str) -> tuple[str, str]:
     return dialect, driver
 
 
+#: libpq query parameters asyncpg does not accept as `connect()` keywords.
+#: SQLAlchemy's asyncpg dialect splats `url.query` into `asyncpg.connect()`, so
+#: anything left here becomes a `TypeError` on the first connection.
+#: `sslmode` has a direct equivalent (`ssl`); `channel_binding` has none —
+#: asyncpg negotiates SCRAM channel binding itself, so dropping it is safe.
+_LIBPQ_ONLY_PARAMS = ("channel_binding",)
+
+
+def _asyncpg_query(query: str) -> str:
+    """Rewrite a libpq query string into one `asyncpg.connect()` accepts."""
+    params = parse_qsl(query, keep_blank_values=True)
+    if not params:
+        return query
+
+    has_ssl = any(key == "ssl" for key, _ in params)
+    out: list[tuple[str, str]] = []
+    for key, value in params:
+        if key in _LIBPQ_ONLY_PARAMS:
+            continue
+        if key == "sslmode":
+            # asyncpg's `ssl` takes the same vocabulary (disable/allow/prefer/
+            # require/verify-ca/verify-full). An explicit `ssl` already in the
+            # URL wins.
+            if has_ssl:
+                continue
+            key = "ssl"
+        out.append((key, value))
+    return urlencode(out)
+
+
 def normalize_url(url: str, *, driver: str = ASYNC_DRIVER) -> str:
-    """Rewrite a Postgres URL's scheme to `driver`, leaving everything else alone.
+    """Rewrite a Postgres URL's scheme to `driver`, fixing driver-specific args.
 
     `postgres://` (the alias Neon/Heroku emit) is accepted as `postgresql`.
+    When `driver` is asyncpg the query string is translated as well, so a
+    provider URL can be pasted verbatim:
+
+        postgresql://u:p@ep.neon.tech/db?sslmode=require&channel_binding=require
+        -> postgresql+asyncpg://u:p@ep.neon.tech/db?ssl=require
+
     A non-Postgres URL — e.g. `sqlite+aiosqlite://` — is returned untouched so
     the helper stays usable in throwaway contexts.
     """
@@ -58,6 +103,8 @@ def normalize_url(url: str, *, driver: str = ASYNC_DRIVER) -> str:
     if dialect not in ("postgres", "postgresql"):
         return url
     parts = urlsplit(url)
+    if driver == ASYNC_DRIVER:
+        parts = parts._replace(query=_asyncpg_query(parts.query))
     return urlunsplit(parts._replace(scheme=driver))
 
 

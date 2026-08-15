@@ -1,9 +1,15 @@
 """Symmetric encryption for broker credentials at rest.
 
 Every `*_enc` column in `db.models` holds the output of `encrypt()`: an opaque
-Fernet token (URL-safe base64, versioned, HMAC-authenticated). The plaintext
-access/refresh token, client secret or PKCE verifier never touches a column,
-a log line or an exception message.
+Fernet token (URL-safe base64, versioned, HMAC-authenticated). Plaintext access
+tokens, refresh tokens and client secrets never touch a column, a log line or
+an exception message.
+
+The one credential-ish value stored **in the clear** is
+`oauth_pending.verifier` — the PKCE `code_verifier`, per the F1 schema. It is
+useless without the matching authorization code and its row is valid for ten
+minutes; if that trade stops looking right, `verifier` → `verifier_enc` is a
+one-column migration.
 
 Key: env `TOKEN_ENCRYPTION_KEY`, a 32-byte urlsafe-base64 Fernet key. Generate
 one with:
