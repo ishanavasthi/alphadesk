@@ -67,6 +67,15 @@ VENDOR_FIELD_NAMES = [
 #: Vendor names that are also ordinary English. Only the code-token grep can
 #: police these — the whole-file grep would trip on any docstring that discusses
 #: the source honestly, which is exactly what the docs above the boundary do.
+#:
+#: ⚠️ `broker` has a known future false positive, and it is not a reason to
+#: delete the ban. AlphaDesk's own `backend/broker/` package exposes a
+#: `BrokerAdapter`, so the day portfolio code above this boundary references it
+#: by name, `ast.Name` will match and this test will fail on a legitimate use.
+#: The narrow fix at that point is to keep banning `broker` in **string
+#: literals and subscripts** (`row["broker"]`, `"broker"`) — which is where a
+#: vendor field name actually leaks — and stop matching bare identifiers.
+#: Deleting the entry instead would give up the check that matters.
 VENDOR_WORDS_ALSO_ENGLISH = [
     "investment",
     "broker",

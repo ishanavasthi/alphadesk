@@ -92,9 +92,6 @@ _ROW_KEYS = frozenset(
     }
 )
 
-#: What the mapping cannot do without, on any row.
-_ROW_REQUIRED_KEYS = frozenset({"market_value"})
-
 #: What a row must carry to count as "matches the documented shape", used only
 #: behind the UNVERIFIED IND_STOCK boundary. `invested_amount` is deliberately
 #: excluded: it is legitimately missing on real rows.

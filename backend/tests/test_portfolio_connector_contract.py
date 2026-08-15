@@ -29,7 +29,6 @@ from portfolio.models import (
     LinkHealth,
     PortfolioSnapshot,
     Sip,
-    sum_holdings_value,
 )
 from tests.ind_money_transport import FixtureTransport
 
