@@ -59,16 +59,22 @@ class SourceReportedError(PortfolioSourceError):
 class RateLimited(SourceReportedError):
     """The source throttled the call.
 
-    Arrives as an ordinary, successful-looking response (MCP ``isError: false``)
-    whose body *replaces* the payload. Two tiers exist (per-tool, then global)
-    and calls are not equally priced, so every number below is read off the body
-    rather than assumed — a client that hard-codes one tier's limit misreads the
-    other as an outage.
+    A **plain typed carrier**: it holds numbers a connector already read off a
+    source's throttle body, and knows nothing about how any source encodes one.
+    Parsing that body is the connector's job — an earlier version of this class
+    did it here, which quietly put vendor key names above the connector
+    boundary.
+
+    Callers get the throttle facts in normalized form: which tier tripped, its
+    limit, what this call cost, and how long the source asked us to wait. All of
+    it is source-reported, never assumed — hard-coding one tier's limit means
+    misreading the other tier as an outage.
     """
 
     def __init__(
         self,
         tool: str,
+        code: str,
         *,
         message: str = "",
         scope: Optional[str] = None,
@@ -76,7 +82,7 @@ class RateLimited(SourceReportedError):
         limit: Optional[float] = None,
         current: Optional[float] = None,
         cost: Optional[float] = None,
-        retry_after_seconds: Optional[float] = None,
+        retry_after: Optional[float] = None,
         body: Optional[dict] = None,
     ) -> None:
         self.scope = scope
@@ -84,28 +90,21 @@ class RateLimited(SourceReportedError):
         self.limit = limit
         self.current = current
         self.cost = cost
-        self.retry_after_seconds = retry_after_seconds
+        #: Seconds the source asked us to wait. Named for what it means, not
+        #: for what any one vendor calls it.
+        self.retry_after = retry_after
         self.body = body or {}
-        super().__init__(tool, "rate_limit_exceeded", message)
+        super().__init__(tool, code, message)
 
-    @classmethod
-    def from_body(cls, tool: str, body: dict) -> "RateLimited":
-        def num(key: str) -> Optional[float]:
-            value: Any = body.get(key)
-            return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
-        return cls(
-            # The body names the tool that tripped; fall back to the caller's.
-            body.get("tool") if isinstance(body.get("tool"), str) else tool,
-            message=body.get("message") if isinstance(body.get("message"), str) else "",
-            scope=body.get("scope") if isinstance(body.get("scope"), str) else None,
-            window=body.get("window") if isinstance(body.get("window"), str) else None,
-            limit=num("limit"),
-            current=num("current"),
-            cost=num("cost"),
-            retry_after_seconds=num("retry_after_seconds"),
-            body=body,
-        )
+class SourceUnavailable(PortfolioSourceError):
+    """The call could not be completed — transport, network or server failure.
+
+    Exists so that **everything** a connector can raise is catchable as
+    :class:`PortfolioSourceError`. Without it a client-library exception escapes
+    the abstraction raw, and a caller writing
+    ``except PortfolioSourceError`` silently misses it.
+    """
 
 
 class NonInrValue(PortfolioSourceError):
@@ -139,6 +138,7 @@ __all__ = [
     "PortfolioSourceError",
     "RateLimited",
     "SourceReportedError",
+    "SourceUnavailable",
     "UnsupportedAssetType",
     "UnverifiedShapeError",
     "UserScopeError",

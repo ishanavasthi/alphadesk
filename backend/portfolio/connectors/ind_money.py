@@ -32,9 +32,12 @@ from typing import Any, Awaitable, Callable, ClassVar, Optional
 
 from portfolio.errors import (
     NonInrValue,
+    NotLinked,
     PayloadShapeError,
+    PortfolioSourceError,
     RateLimited,
     SourceReportedError,
+    SourceUnavailable,
     UnsupportedAssetType,
     UnverifiedShapeError,
     UserScopeError,
@@ -89,9 +92,28 @@ _ROW_KEYS = frozenset(
     }
 )
 
-#: What the mapping cannot do without. `invested_amount` is deliberately absent:
-#: it is legitimately missing on real rows.
+#: What the mapping cannot do without, on any row.
 _ROW_REQUIRED_KEYS = frozenset({"market_value"})
+
+#: What a row must carry to count as "matches the documented shape", used only
+#: behind the UNVERIFIED IND_STOCK boundary. `invested_amount` is deliberately
+#: excluded: it is legitimately missing on real rows.
+_ROW_STRICT_KEYS = _ROW_KEYS - {"invested_amount"}
+
+#: Envelope-level flags meaning the broker-side fetch failed. An empty
+#: `holdings` array alongside one of these is a FAILURE, not an empty portfolio.
+_FETCH_ERROR_FLAGS = ("holding_error", "position_error")
+
+#: The body of a throttled response, which arrives in place of the payload.
+_RATE_LIMIT_CODE = "rate_limit_exceeded"
+_RL_MESSAGE = "message"
+_RL_SCOPE = "scope"
+_RL_WINDOW = "window"
+_RL_TOOL = "tool"
+_RL_LIMIT = "limit"
+_RL_CURRENT = "current"
+_RL_COST = "cost"
+_RL_RETRY_AFTER = "retry_after_seconds"
 
 #: Discriminator key per breakdown slice.
 _BREAKDOWN_LABEL_KEY = {
@@ -119,13 +141,22 @@ _SIP_STATUS_KEYS = ("status", "sip_status")
 _SIP_NEXT_KEYS = ("next_execution_date", "next_installment_date", "next_date")
 _SIP_ID_KEYS = ("sip_id", "id", "fund_id", "investment_code", "ind_key")
 
-_RATE_LIMIT_CODE = "rate_limit_exceeded"
+#: Floor for a retry the source did not quantify. The global-tier envelope is
+#: UNVERIFIED, so `retry_after_seconds` being absent is plausible — and retrying
+#: instantly against a server that just throttled us only deepens the breach.
+_DEFAULT_RETRY_AFTER_SECONDS = 5.0
 
 
 def _default_transport() -> Transport:
     from tools.ind_money import _call_mcp_tool  # imported lazily: needs env/auth
+    from tools.ind_money_auth import get_access_token
 
     async def call(tool_name: str, arguments: Optional[dict]) -> Any:
+        # Mint the token here rather than letting `_call_mcp_tool` do it: it
+        # flattens MCPAuthError into an untyped MCPClientError string, which
+        # destroys the only signal that separates "never linked" from "the
+        # server is down". `_call` classifies what this lets through.
+        await get_access_token()
         return await _call_mcp_tool(tool_name, arguments)
 
     return call
@@ -201,11 +232,13 @@ class IndMoneyConnector(PortfolioConnector):
         """
         attempt = 0
         while True:
-            payload = await self._transport(tool, arguments)
-            payload = _require_mapping(tool, payload)
+            payload = _require_mapping(tool, await self._invoke(tool, arguments))
 
             code = payload.get("error")
-            if code is None:
+            # `error: false` and `error: ""` are not failures. Only a truthy
+            # value is a source-reported error; treating any *present* key as
+            # one would turn an ordinary payload into an exception.
+            if not code:
                 _assert_inr(tool, payload)
                 return payload
 
@@ -213,15 +246,43 @@ class IndMoneyConnector(PortfolioConnector):
                 raise SourceReportedError(
                     tool,
                     str(code),
-                    str(payload.get("message") or ""),
+                    str(payload.get(_RL_MESSAGE) or ""),
                 )
 
-            limited = RateLimited.from_body(tool, payload)
+            limited = _rate_limited(tool, payload)
             if attempt >= self._max_retries:
                 raise limited
             attempt += 1
-            wait = limited.retry_after_seconds or 0.0
-            await self._sleep(min(max(wait, 0.0), self._max_retry_wait))
+            await self._sleep(self._backoff(limited.retry_after))
+
+    async def _invoke(self, tool: str, arguments: Optional[dict]) -> Any:
+        """Call the transport, translating every failure into a typed one.
+
+        Without this, the MCP client's own exception escapes the abstraction and
+        a caller writing ``except PortfolioSourceError`` silently misses it.
+        """
+        from tools.ind_money_auth import MCPAuthError, MCPAuthInvalid
+
+        try:
+            return await self._transport(tool, arguments)
+        except PortfolioSourceError:
+            raise
+        except MCPAuthInvalid as exc:
+            # Definitive: the stored credential is dead, not merely unlucky.
+            self._revoked = True
+            raise NotLinked(f"{tool}: not linked to IND Money ({exc})") from exc
+        except MCPAuthError as exc:
+            # Transient auth failure (network, 5xx): the credential may be fine.
+            raise SourceUnavailable(f"{tool}: IND Money auth unavailable ({exc})") from exc
+        except Exception as exc:  # noqa: BLE001 - transport failures are opaque
+            raise SourceUnavailable(f"{tool}: IND Money call failed ({exc})") from exc
+
+    def _backoff(self, retry_after: Optional[float]) -> float:
+        """How long to wait: the source's own number, floored and capped."""
+        wait = retry_after or 0.0
+        if wait <= 0:
+            wait = _DEFAULT_RETRY_AFTER_SECONDS
+        return min(wait, self._max_retry_wait)
 
     # -------------------------------------------------------------- interface
     async def fetch_snapshot(self, user_id: str) -> PortfolioSnapshot:
@@ -229,7 +290,7 @@ class IndMoneyConnector(PortfolioConnector):
         payload = await self._call(_TOOL_SNAPSHOT)
         as_of = self._clock()
 
-        net_worth = to_decimal(payload.get("total_networth"))
+        net_worth = _decimal_at(_TOOL_SNAPSHOT, "total_networth", payload.get("total_networth"))
         if net_worth is None:
             raise PayloadShapeError(
                 f"{_TOOL_SNAPSHOT}: no total_networth in the payload — the "
@@ -239,14 +300,18 @@ class IndMoneyConnector(PortfolioConnector):
 
         liabilities = payload.get("liabilities")
         liabilities_total = (
-            to_decimal(liabilities.get("total")) if isinstance(liabilities, dict) else None
+            _decimal_at(_TOOL_SNAPSHOT, "liabilities.total", liabilities.get("total"))
+            if isinstance(liabilities, dict)
+            else None
         )
 
         sections: dict[str, list[AllocationSlice]] = {}
         for field, source_key, label_key in _SNAPSHOT_SECTIONS:
             sections[field] = [
-                _slice(row, label_key)
-                for row in _require_list(_TOOL_SNAPSHOT, payload, source_key)
+                _slice(_TOOL_SNAPSHOT, f"{source_key}[{index}]", row, label_key)
+                for index, row in enumerate(
+                    _require_list(_TOOL_SNAPSHOT, payload, source_key)
+                )
             ]
 
         return PortfolioSnapshot(
@@ -255,8 +320,12 @@ class IndMoneyConnector(PortfolioConnector):
             # Totals are the vendor's own numbers, passed straight through. They
             # do not reconcile with a holdings sum and must not be recomputed.
             net_worth=net_worth,
-            gross_value=to_decimal(payload.get("total_current_value")),
-            invested_total=to_decimal(payload.get("total_invested")),
+            gross_value=_decimal_at(
+                _TOOL_SNAPSHOT, "total_current_value", payload.get("total_current_value")
+            ),
+            invested_total=_decimal_at(
+                _TOOL_SNAPSHOT, "total_invested", payload.get("total_invested")
+            ),
             liabilities_total=liabilities_total,
             raw=payload,
             **sections,
@@ -274,12 +343,30 @@ class IndMoneyConnector(PortfolioConnector):
 
         payload = await self._call(_TOOL_HOLDINGS, {"asset_type": asset_type.value})
         as_of = self._clock()
+
+        # The live-trading envelope reports a broker-side fetch failure in a
+        # flag while still returning `holdings: []`. Mapping that to an empty
+        # list would render a FAILURE as an empty portfolio — the single most
+        # dishonest thing this connector could do.
+        failed = [flag for flag in _FETCH_ERROR_FLAGS if payload.get(flag)]
+        if failed:
+            raise SourceReportedError(
+                _TOOL_HOLDINGS,
+                failed[0],
+                f"IND Money reported a broker-side fetch failure for "
+                f"{asset_type.value} ({', '.join(failed)}); the holdings list is "
+                "unreliable and must not be shown as an empty portfolio",
+            )
+
         rows = _require_list(_TOOL_HOLDINGS, payload, "holdings")
 
         # IND_STOCK comes back inside a different, 19-key live-trading envelope
         # and its row shape has never been observed populated. Map it strictly.
         strict = asset_type is AssetType.IND_STOCK
-        return [self._holding(row, asset_type, as_of, strict=strict) for row in rows]
+        return [
+            self._holding(row, asset_type, index, as_of, strict=strict)
+            for index, row in enumerate(rows)
+        ]
 
     async def fetch_allocation(
         self, user_id: str, asset_type: AssetType, by: BreakdownBy
@@ -311,8 +398,10 @@ class IndMoneyConnector(PortfolioConnector):
             by=by,
             as_of=as_of,
             slices=[
-                _slice(row, label_key)
-                for row in _require_list(_TOOL_BREAKDOWN, payload, "data")
+                _slice(_TOOL_BREAKDOWN, f"data[{index}]", row, label_key)
+                for index, row in enumerate(
+                    _require_list(_TOOL_BREAKDOWN, payload, "data")
+                )
             ],
             raw=payload,
         )
@@ -367,21 +456,25 @@ class IndMoneyConnector(PortfolioConnector):
         self,
         row: Any,
         requested: AssetType,
+        index: int,
         as_of: datetime,
         *,
         strict: bool,
     ) -> Holding:
+        at = f"holdings[{index}]"
         if not isinstance(row, dict):
             raise PayloadShapeError(
-                f"{_TOOL_HOLDINGS}: expected an object per holding, got "
+                f"{_TOOL_HOLDINGS}: expected an object at {at}, got "
                 f"{type(row).__name__}"
             )
 
         if strict:
             # The IND_STOCK boundary: a shape we have documented but never seen
-            # populated. Anything unexpected is reported, not guessed at.
+            # populated. "Matches the documented shape" means the WHOLE 14-key
+            # set (bar the legitimately-absent cost basis) — a row missing five
+            # of them is not a row we have any business guessing at.
             unexpected = set(row) - _ROW_KEYS
-            missing = _ROW_REQUIRED_KEYS - set(row)
+            missing = _ROW_STRICT_KEYS - set(row)
             if unexpected or missing:
                 raise UnverifiedShapeError(
                     "IND_STOCK holdings row does not match the documented "
@@ -394,20 +487,24 @@ class IndMoneyConnector(PortfolioConnector):
         raw_type = raw_type if isinstance(raw_type, str) and raw_type.strip() else requested.value
         asset_type = AssetType.coerce(raw_type)
 
-        current_value = to_decimal(row.get("market_value"))
+        current_value = _decimal_at(
+            _TOOL_HOLDINGS, f"{at}.market_value", row.get("market_value")
+        )
         if current_value is None:
             raise PayloadShapeError(
-                f"{_TOOL_HOLDINGS}: holding row has no value; current_value is "
+                f"{_TOOL_HOLDINGS}: {at} has no value; current_value is "
                 "the one number every row is required to carry"
             )
 
         # 0 is the vendor's documented stand-in for "cost basis unknown".
-        invested = to_decimal(row.get("invested_amount"))
+        invested = _decimal_at(
+            _TOOL_HOLDINGS, f"{at}.invested_amount", row.get("invested_amount")
+        )
         if invested == 0:
             invested = None
 
-        units = to_decimal(row.get("total_units"))
-        price = to_decimal(row.get("unit_price"))
+        units = _decimal_at(_TOOL_HOLDINGS, f"{at}.total_units", row.get("total_units"))
+        price = _decimal_at(_TOOL_HOLDINGS, f"{at}.unit_price", row.get("unit_price"))
         if current_value != 0 and units == 0 and price == 0:
             # Cash-like rows (savings, deposits) carry no unit/price
             # decomposition at all — reporting 0 would read as a real price.
@@ -419,8 +516,8 @@ class IndMoneyConnector(PortfolioConnector):
         if invested is not None:
             # Prefer the source's own figures; they are legitimately 0 on
             # cash-like rows, which is a real answer, not a missing one.
-            pnl = to_decimal(row.get("total_pnl"))
-            pnl_pct = to_decimal(row.get("pnl_per"))
+            pnl = _decimal_at(_TOOL_HOLDINGS, f"{at}.total_pnl", row.get("total_pnl"))
+            pnl_pct = _decimal_at(_TOOL_HOLDINGS, f"{at}.pnl_per", row.get("pnl_per"))
             if pnl is None or pnl_pct is None:
                 pnl, pnl_pct = derive_pnl(current_value, invested)
 
@@ -433,8 +530,15 @@ class IndMoneyConnector(PortfolioConnector):
         if code:
             external_id = f"{raw_type}:{code}"
         else:
-            # No instrument id: fall back to a hash of what does identify the
-            # row. Stable only while those fields are — documented in SPECS/M1.
+            # No instrument id. The descriptive fields alone are NOT enough:
+            # two rows can carry an empty name, an empty broker and the same
+            # classification labels, and hashing only those merges two real
+            # positions into one — the exact failure the primary id avoids.
+            # The row's position in the response is therefore folded in, which
+            # guarantees uniqueness *within* a response at the cost of
+            # stability *across* them. That trade is deliberate and documented
+            # in SPECS/M1 §2: churning one id is recoverable, silently merging
+            # two holdings is not.
             external_id = "{}:h:{}".format(
                 raw_type,
                 stable_external_id(
@@ -442,6 +546,7 @@ class IndMoneyConnector(PortfolioConnector):
                     row.get("broker"),
                     row.get("assetclass_l2"),
                     row.get("market_cap"),
+                    index,
                 ),
             )
 
@@ -481,7 +586,10 @@ class IndMoneyConnector(PortfolioConnector):
             external_id=f"{kind.value}:{identifier}",
             kind=kind,
             name=_first_str(row, _SIP_NAME_KEYS),
-            amount=to_decimal(_first(row, _SIP_AMOUNT_KEYS)),
+            amount=_decimal_at(
+                _SIP_TOOL[kind], f"{_SIP_ROWS_KEY[kind]}[{index}].amount",
+                _first(row, _SIP_AMOUNT_KEYS),
+            ),
             frequency=_first_str(row, _SIP_FREQUENCY_KEYS),
             next_execution_at=_parse_datetime(_first_str(row, _SIP_NEXT_KEYS)),
             status=_first_str(row, _SIP_STATUS_KEYS),
@@ -493,6 +601,55 @@ class IndMoneyConnector(PortfolioConnector):
 # --------------------------------------------------------------------------- #
 # Payload helpers
 # --------------------------------------------------------------------------- #
+def _rate_limited(tool: str, body: dict) -> RateLimited:
+    """Read IND Money's throttle body into the source-neutral carrier.
+
+    This lives here, not on the exception, because every key name below is IND
+    Money's. `RateLimited` itself knows only the normalized facts.
+    """
+
+    def number(key: str) -> Optional[float]:
+        value: Any = body.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value)
+
+    def text(key: str) -> Optional[str]:
+        value = body.get(key)
+        return value if isinstance(value, str) else None
+
+    return RateLimited(
+        # The body names the tool that tripped; fall back to the caller's.
+        text(_RL_TOOL) or tool,
+        _RATE_LIMIT_CODE,
+        message=text(_RL_MESSAGE) or "",
+        scope=text(_RL_SCOPE),
+        window=text(_RL_WINDOW),
+        limit=number(_RL_LIMIT),
+        current=number(_RL_CURRENT),
+        cost=number(_RL_COST),
+        retry_after=number(_RL_RETRY_AFTER),
+        body=body,
+    )
+
+
+def _decimal_at(tool: str, path: str, value: Any) -> Optional[Decimal]:
+    """`to_decimal`, with a typed failure and no value in the message.
+
+    A thousands separator, an empty object, a NaN — every one of these is a
+    payload the documented shape does not cover, and every one of them would
+    otherwise escape mapping as a bare `ValueError` (or, for NaN, as a pydantic
+    `ValidationError` several frames later) that no caller is catching.
+    """
+    try:
+        parsed = to_decimal(value)
+    except (ValueError, TypeError, ArithmeticError) as exc:
+        raise PayloadShapeError(
+            f"{tool}: {path} is not a usable number (value withheld)"
+        ) from exc
+    return parsed
+
+
 def _require_mapping(tool: str, payload: Any) -> dict:
     if not isinstance(payload, dict):
         raise PayloadShapeError(
@@ -538,21 +695,31 @@ def _assert_inr(tool: str, node: Any, path: str = "") -> None:
             _assert_inr(tool, value, f"{path}[{index}]")
 
 
-def _slice(row: Any, label_key: str) -> AllocationSlice:
+def _slice(tool: str, at: str, row: Any, label_key: str) -> AllocationSlice:
     if not isinstance(row, dict):
         raise PayloadShapeError(
-            f"expected an object per allocation row, got {type(row).__name__}"
+            f"{tool}: expected an object at {at}, got {type(row).__name__}"
         )
-    current_value = to_decimal(row.get("current_value"))
+    current_value = _decimal_at(tool, f"{at}.current_value", row.get("current_value"))
     if current_value is None:
-        raise PayloadShapeError("allocation row has no current value")
+        raise PayloadShapeError(f"{tool}: {at} has no current value")
 
-    invested = to_decimal(row.get("invested_value"))
+    # Same rule as a holding row: 0 is the source's stand-in for "unknown", so
+    # the bucket's own return becomes unknowable with it.
+    invested = _decimal_at(tool, f"{at}.invested_value", row.get("invested_value"))
     if invested == 0:
         invested = None
 
-    pnl = to_decimal(row.get("return")) if invested is not None else None
-    pnl_pct = to_decimal(row.get("return_percentage")) if invested is not None else None
+    pnl = (
+        _decimal_at(tool, f"{at}.return", row.get("return"))
+        if invested is not None
+        else None
+    )
+    pnl_pct = (
+        _decimal_at(tool, f"{at}.return_percentage", row.get("return_percentage"))
+        if invested is not None
+        else None
+    )
 
     label = row.get(label_key)
     label = label.strip() if isinstance(label, str) else ""
@@ -566,7 +733,9 @@ def _slice(row: Any, label_key: str) -> AllocationSlice:
         current_value=current_value,
         pnl=pnl,
         pnl_pct=pnl_pct,
-        weight_pct=to_decimal(row.get("progress_value_percentage")),
+        weight_pct=_decimal_at(
+            tool, f"{at}.progress_value_percentage", row.get("progress_value_percentage")
+        ),
         raw=row,
     )
 
