@@ -48,22 +48,70 @@ the cascade fix (§6), and the kill criterion (§10).
 
 ### Execution model
 
+- **Orchestrator/executor split.** Execution runs in a **dedicated session with
+  Fable 5 orchestrating**: it dispatches cards, arbitrates the human gates,
+  verifies acceptance, and keeps docs + memory current. It does not write card
+  code — with one deliberate exception, the D0 design demos (§5, D0). Cards are
+  executed by **Opus 5 subagents**.
+- **Kickoff for the execution session:** read `CLAUDE.md`, this plan, and
+  `docs/STATUS.md` (the live card ledger), then take the next unfinished card.
+  No other context is required by design — if a card cannot be picked up from
+  those three files plus `docs/SPECS`/`docs/TESTING`, the docs discipline below
+  was violated and fixing that comes first.
 - **Serial, one agent per card.** After the resequencing in §4 there is almost no
   real parallelism left, and the two cards that could overlap (D1, S1) both
   consume the module M1 just created. Wall-clock saving is one card; merge risk
   is not worth it.
-- Cards are dispatched to **Opus 5 subagents**; use **ultracode** for the cards
-  where a wrong assumption is expensive rather than merely annoying — **C2**
-  (findings propagate into three cards), **M1** (the model everything downstream
-  consumes), **F3** (the security fix), and **L1** (deletion correctness).
-- Use a **git worktree** when a card must run while another branch is still open,
-  or when it needs a clean tree to verify acceptance criteria. Otherwise a plain
-  branch is enough.
-- **Review between cards, not after all of them.** C2 has an explicit human gate
-  (§5, C2); every other card ends with its acceptance criteria run and read.
+- **Dispatch vehicle, chosen per card by the orchestrator:** an **ultracode
+  workflow** for the cards where a wrong assumption is expensive rather than
+  merely annoying — **C2** (findings propagate into three cards), **M1** (the
+  model everything downstream consumes), **F3** (the security fix), **L1**
+  (deletion correctness) — and a **single Opus agent in a fresh git worktree**
+  (Orca-managed where the orca-cli skill is available, plain `git worktree`
+  otherwise) for the rest. Either vehicle executes the same card text; the
+  choice is about verification depth, not scope.
+- **Worktree discipline:** the agent works in its own worktree checked out on
+  the card's branch (based off the base the card names, never another feature
+  branch), commits from inside that worktree, and the worktree is **removed
+  once its branch merges**. No card commits from the orchestrator's main
+  checkout. Deploys to the HF Space go via the binary-free `space-deploy`
+  snapshot branch (see `docs/STATUS.md`, deploy notes).
+- **The orchestrator verifies; the agent's word is not acceptance.** After an
+  agent reports done, the orchestrator re-runs the card's acceptance criteria
+  itself — commands actually run, outputs actually read — before the branch
+  merges. Frontend-visible criteria are verified visually (see "Visual
+  verification" below), not inferred from a green build.
+- **Review between cards, not after all of them.** C2 and D0 have explicit human
+  gates; every other card ends with its acceptance criteria run and read.
 - The `owns` lists still matter under serial execution — their job is now telling
   each agent where the boundary is so it doesn't wander into files a later card
   will rewrite.
+
+### Documentation discipline — every card, no exceptions
+
+- Every card updates `docs/` **in the same branch as its code**:
+  `docs/SPECS/<card>.md` (what was built, the contract it exposes, decisions
+  made along the way) and `docs/TESTING/<card>.md` (how to run its tests, what
+  they cover, and how to verify by hand). `docs/README.md` describes the
+  layout; the orchestrator updates `docs/STATUS.md` at every card completion
+  and gate.
+- The bar: an agent in a **fresh session with zero conversation history** can
+  pick up, debug, extend, and test the card's work from `docs/` + this plan
+  alone. If understanding the work requires the chat transcript, the docs are
+  incomplete and the card is not done.
+- **Testing is per feature.** Each card ships tests alongside its code (pytest
+  from F1 onward; frontend checks per card) and documents how to run them. A
+  card with passing but undocumented tests is not done.
+
+### Visual verification
+
+Frontend acceptance criteria phrased as "renders", "shows", "banner appears",
+or "no horizontal scroll at 375px" are verified **by looking at pixels**, not
+by `npm run build` exiting 0. Drive the running app and screenshot the actual
+states using the **computer-use** skill or **Stagehand** (Playwright
+alternative — https://docs.stagehand.dev/v4/first-steps/introduction),
+whichever fits the check. Applies to D0's demos, D1's dashboard states, S1's
+staleness banner, U1's routes and demo banner, and L1's consent screen.
 
 ## 1. Scope
 
@@ -106,7 +154,8 @@ extensible so they slot in without a refactor.
 | Tracing | LangSmith **on for the research graph, off for the portfolio graph**, set at graph config level — not by env var. |
 | Observability | **Structured logging only.** No third-party error tracking in v2 — with fewer than ten invited users you can ask them directly, and Sentry would become a third subprocessor handling financial request context. |
 | RAG | **Unplugged, not deleted.** `data/nse_docs` is empty, so it has been inert in production regardless. See C1. |
-| Charts | Recharts (not currently a dependency — added in D1). |
+| Charts | Recharts (not currently a dependency — added in D1). D0's design choice may refine the treatment; shadcn/ui charts are Recharts-based, so the library survives either way. |
+| Dashboard design | **Chosen at the D0 gate** from 4–5 complete Fable-built demos (shadcn/ui, Bloomberg-terminal, plus 2–3 distinct others). Until a demo is chosen and recorded (DECISION.md + §2 + memory), **no real dashboard frontend is written.** |
 
 ## 3. Architecture spine
 
@@ -152,6 +201,9 @@ C0 mitigate ─→ C1 unplug RAG ─→ F1 db+migrations ─→ C2 data spike
                                                       ‖  ← HUMAN GATE (§5, C2)
                                                       ↓
                                                     M1 model + connectors
+                                                      ↓
+                                                    D0 design bake-off
+                                                      ‖  ← HUMAN GATE (design)
                                                       ↓
                                                     D1 dashboard ─→ S1 snapshots
                                                                       ↓
@@ -294,15 +346,56 @@ ordering is the refactor trap it looks like.
   non-INR value raises rather than being summed; no vendor field name appears
   outside `connectors/`.
 
+### D0 — Dashboard design bake-off  ← *human gate; blocks D1*
+- **Branch:** none — demos are throwaway artifacts, not product code.
+- **Owns:** `docs/design/` (new)
+- **Trigger:** runs as soon as there is real portfolio data to render — a
+  captured real snapshot (the operator's live IND Money link, re-established
+  2026-08-15 via the admin-secret login) or the M1 stub fixtures — and **before
+  any real dashboard frontend is written**. Moving to frontend work without
+  passing this gate is a protocol violation, not a shortcut.
+- **Build:** **4–5 complete, distinct design demos** of the portfolio
+  dashboard, each a full static page over the *same* fixture data, covering the
+  whole D1 surface: net-worth header, allocation charts, sortable holdings
+  table, trend line, and the empty/null states ("—", not "-100%"). Required
+  directions: at least one **shadcn/ui** treatment and one **Bloomberg-terminal**
+  treatment (the current `pill-*`/`eyebrow` aesthetic, evolved); the remaining
+  2–3 must be genuinely different directions, not recolors of each other.
+  Self-contained HTML files in `docs/design/` — no build step, open in a
+  browser — each screenshotted for the record.
+- **Who builds them:** the **Fable orchestrator itself, at high/xhigh effort as
+  the page demands** — not delegated to Opus. Load the design skills first:
+  `frontend-design` if present, `artifact-design`, `dataviz` before any chart,
+  `shadcn` for the shadcn variant. This is the one place the orchestrator
+  writes code: design judgment is the point of the card, and fanning out would
+  produce five mediocre pages instead of five deliberate ones.
+- **The human picks one.** Hard gate, same force as C2's.
+- **On choice, before D1 starts:**
+  1. Record the locked design in `docs/design/DECISION.md` — component library,
+     layout grid, chart treatment, spacing/type/color tokens, and per-component
+     notes complete enough that an Opus subagent implements D1 and U1 **end to
+     end with zero visual decisions left to make**.
+  2. Add the choice to §2 of this plan (the "Dashboard design" row).
+  3. Write it to the orchestrator's **persistent memory**, so any future
+     session inherits the decision without re-reading the bake-off.
+  4. Move the losing demos to `docs/design/rejected/` — they stay in the repo;
+     the record of what was considered is cheap and useful.
+- **Acceptance:** 4–5 demos exist and render from fixture data (verified
+  visually — computer-use or Stagehand screenshots); a choice is recorded in
+  all three places (DECISION.md, §2, memory); the D1 card can be executed by an
+  agent that has seen only the docs.
+
 ### D1 — Portfolio dashboard
-- **Branch:** `feat/portfolio-dashboard` (base `main`, after M1)
+- **Branch:** `feat/portfolio-dashboard` (base `main`, after the D0 gate)
 - **Owns:** `frontend/app/portfolio/`, `frontend/components/portfolio/`, `backend/api/routes/portfolio.py` (new)
 - **Build:** `GET /portfolio/summary|holdings|allocation|history` (§7), then the
   page: net-worth header (invested vs current, absolute + %), allocation charts
   (Recharts — asset type, sector, market cap), sortable holdings table with
   per-row P&L% (and XIRR **only if C2 confirmed it exists**), net-worth trend
-  line from snapshots. Terminal aesthetic — match existing `pill-*` / `eyebrow`
-  classes and the density of `ResultsDashboard.tsx`.
+  line from snapshots. **Visual language: the design locked at D0**
+  (`docs/design/DECISION.md`) — implement it faithfully, no per-component
+  improvisation; anything DECISION.md leaves ambiguous goes back to the
+  orchestrator, not into the code.
 - Build every component so it renders from a `Holding[]` — it will be fed by both
   the real connector and the stub in U1's `/demo`.
 - **Interim exposure gate:** until F3 lands, every `/portfolio/*` route requires
