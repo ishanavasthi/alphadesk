@@ -40,6 +40,12 @@ import { Badge, Button, Card } from "@/components/portfolio/ui";
  * route layout holds the last completed overview and hands it back here, so
  * walking to Holdings and returning re-reads what is already written instead of
  * paying five agents to say it again. `onComplete` is how the run gets there.
+ *
+ * That cache only survives the session. The backend keeps the other half: the
+ * narrative is written at most once per IST day, so a reload or a re-login gets
+ * today's saved copy back over the same stream. **Regenerate is the only thing
+ * that spends** — it sends `force`, which re-runs the agents and overwrites the
+ * day's saved narrative.
  */
 
 const AGENTS = [
@@ -150,6 +156,10 @@ export function AiOverview({
         },
       },
       controller.signal,
+      // Mount is `runKey === 0` and asks for whatever the backend already wrote
+      // today; every later run is a Regenerate press, the one thing allowed to
+      // re-run the agents and overwrite the day's saved narrative.
+      { force: runKey > 0 },
     );
 
     return () => controller.abort();
