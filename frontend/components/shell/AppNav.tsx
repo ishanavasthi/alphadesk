@@ -19,7 +19,9 @@ export function AppNav({
   links,
   className = "",
 }: {
-  links: { href: string; label: string }[];
+  // `exact` opts a link out of prefix-matching: a tab set where "/portfolio" is
+  // Overview must not read active under "/portfolio/holdings".
+  links: { href: string; label: string; exact?: boolean }[];
   className?: string;
 }) {
   // `usePathname()` has no value outside the app router (tests render these bars
@@ -27,8 +29,9 @@ export function AppNav({
   const pathname = usePathname();
   return (
     <nav className={`flex items-center gap-4 ${className}`.trim()}>
-      {links.map(({ href, label }) => {
-        const active = pathname === href || pathname?.startsWith(`${href}/`);
+      {links.map(({ href, label, exact }) => {
+        const active =
+          pathname === href || (!exact && pathname?.startsWith(`${href}/`));
         return (
           <Link
             key={href}

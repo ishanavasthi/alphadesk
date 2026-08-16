@@ -8,7 +8,7 @@ import { usePortfolio } from "@/components/portfolio/PortfolioProvider";
 
 /** The dashboard's own pages, in the order they are offered. */
 const PAGE_LINKS = [
-  { href: "/portfolio", label: "Overview" },
+  { href: "/portfolio", label: "Overview", exact: true },
   { href: "/portfolio/holdings", label: "Holdings" },
   { href: "/portfolio/performance", label: "Performance" },
 ];
