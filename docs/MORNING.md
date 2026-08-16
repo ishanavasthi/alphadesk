@@ -104,3 +104,21 @@ See `docs/STATUS.md` (always current) and the per-card `docs/SPECS/` +
   login email) on the Space + locally — this is what lets your first sign-in
   adopt the pre-F3 `local` snapshot history. Confirm it's the address you'll
   sign in with; if not, tell me and I'll change it before you sign in.
+
+## F4 morning items (per-user Lab state is merged)
+
+- **One real IND-backed `/analyze` run is the only F4 check a mock couldn't
+  do.** F4's gating and per-user isolation are proven against a mocked MCP
+  (401/409/runs, cross-user 404, watchlist persistence + cascade — 12 tests);
+  what stays unverified is that a *real* linked run mints from your own
+  `AuthStore` end-to-end and produces recommendations. Run it in
+  **single-tenant dev** (`ALPHADESK_SINGLE_TENANT=1`, links as `local`) after a
+  real IND login, or signed in on a flag-on build. If the operator's IND link
+  is down when you read this, it's a morning item, not a blocker — the mocked
+  path is green.
+- **The Lab moved to `/lab`** (`/` now redirects there); `/lab/a/[id]` is the
+  per-run view. U1 wires real nav later. Nothing at the root yet by design.
+- **The paper watchlist now persists** to the `watchlist` table — it needs
+  `DATABASE_URL` (Neon on the Space, local Postgres in dev) and
+  `alembic upgrade head` for migration **0005**. With no DB it degrades to
+  in-memory per-user, same as before, so local dev without Postgres still runs.
