@@ -135,9 +135,34 @@ def _database_name(url: str) -> str:
     return urlsplit(url).path.lstrip("/") or "postgres"
 
 
+#: Process-level guard so the destructive DROP+CREATE+migrate below runs EXACTLY
+#: ONCE, even if the session-scoped fixture is re-instantiated mid-run. It should
+#: not be — but pytest-asyncio can tear down and re-setup a session-scoped async
+#: fixture when the session event loop it is bound to is finalized, which
+#: pytest-randomly's reordering makes happen. A second `DROP DATABASE ... WITH
+#: (FORCE)` mid-suite force-closes live pooled connections and drops the database
+#: out from under whatever test is tearing down at that instant — the
+#: `ConnectionDoesNotExist` / "database ... does not exist" / "relation ... does
+#: not exist" cascade that made the suite order-fragile. Once the throwaway DB
+#: exists and is migrated it stays good (every test truncates between runs), so a
+#: re-setup must be a harmless no-op that returns the same URL, never a second
+#: teardown-of-everything.
+_TEST_DB_URL: str | None = None
+
+
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def test_database_url() -> str:
-    """URL of a freshly-migrated `<db>_test` database, or skip if no Postgres."""
+    """URL of a `<db>_test` database, migrated **once per process**, or skip.
+
+    The drop/create/migrate is guarded by :data:`_TEST_DB_URL` so it happens a
+    single time regardless of how many times this session fixture is set up (see
+    that note): re-running the `WITH (FORCE)` drop mid-suite is what made the
+    suite flaky under `pytest-randomly`.
+    """
+    global _TEST_DB_URL
+    if _TEST_DB_URL is not None:
+        return _TEST_DB_URL
+
     base = _base_url()
     admin_url = _with_database(base, "postgres")
     test_db = f"{_database_name(base)}_test"
@@ -162,6 +187,7 @@ async def test_database_url() -> str:
     # In a worker thread: alembic/env.py drives its own asyncio.run(), which
     # cannot be nested inside this fixture's running event loop.
     await asyncio.to_thread(_alembic_upgrade, test_url)
+    _TEST_DB_URL = test_url
     return test_url
 
 

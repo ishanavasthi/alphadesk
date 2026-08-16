@@ -150,6 +150,14 @@ class RateLimitMiddleware:
         if scope["type"] != "http" or not _enabled():
             await self.app(scope, receive, send)
             return
+        # A CORS preflight is not a real call to the guarded surface and must not
+        # burn a slot — otherwise a browser making N real requests would count 2N
+        # against the cap. It should be handled by CORS (added after this, so
+        # outermost) before it ever reaches here, but exempting it directly keeps
+        # that correctness a property of this middleware rather than of ordering.
+        if scope.get("method") == "OPTIONS":
+            await self.app(scope, receive, send)
+            return
         path = scope.get("path", "")
         if not any(path.startswith(p) for p in GUARDED_PATHS):
             await self.app(scope, receive, send)

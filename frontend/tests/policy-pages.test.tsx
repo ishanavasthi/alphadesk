@@ -14,11 +14,27 @@ import TermsPage from "@/app/(marketing)/terms/page";
 import { PortfolioFooter } from "@/components/portfolio/ui";
 
 describe("privacy policy", () => {
-  it("names every subprocessor, both LLM providers included", () => {
+  it("names every subprocessor the code actually calls", () => {
     render(<PrivacyPage />);
-    for (const name of ["Groq", "OpenAI", "Clerk", "Neon", "Hugging Face", "Vercel"]) {
+    // The full roster: both LLM providers (Groq + OpenAI), the LangSmith tracer
+    // the Lab graph traces to, and the infra vendors. A vendor the code reaches
+    // but this list omits is an undisclosed subprocessor.
+    for (const name of [
+      "Groq",
+      "OpenAI",
+      "LangSmith",
+      "Clerk",
+      "Neon",
+      "Hugging Face",
+      "Vercel",
+    ]) {
       expect(screen.getAllByText(new RegExp(name)).length).toBeGreaterThan(0);
     }
+  });
+
+  it("discloses that LangSmith tracing is conditional on an API key", () => {
+    render(<PrivacyPage />);
+    expect(screen.getByText(/only when a LangSmith API key is configured/i)).toBeTruthy();
   });
 
   it("states retention: snapshots kept, raw payloads pruned at 90 days", () => {

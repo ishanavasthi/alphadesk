@@ -84,6 +84,13 @@ export default function PrivacyPage() {
             id.
           </li>
           <li>
+            <b className="font-semibold text-foreground">LangSmith</b> — traces the Lab&rsquo;s
+            research runs (the prompts and responses of the market-data agents) for debugging,
+            and <b className="font-semibold text-foreground">only when a LangSmith API key is
+            configured</b>. It never receives your portfolio: your holdings, net worth and
+            overview are explicitly kept out of tracing.
+          </li>
+          <li>
             <b className="font-semibold text-foreground">Clerk</b> — identity and sign-in.
           </li>
           <li>

@@ -19,12 +19,10 @@ export const API_BASE =
  * the caller's headers unchanged and this is a plain `fetch` — same method,
  * same headers, same body as before card F2.
  *
- * Card F3 made the backend per-user, so the Clerk token is now the credential
- * that matters. The interim C0 admin-secret header still rides alongside on
- * `/portfolio/*` — with `NEXT_PUBLIC_AUTH_ENABLED` off there is no sign-in UI
- * in production, so removing it before card L1 would lock the operator out of
- * their own dashboard. It is **not** sent to `/auth/login` or `/auth/logout`
- * any more: linking is identity-bound, and the backend refuses it there.
+ * Card F3 made the backend per-user, so the Clerk token is the only credential
+ * that matters. The interim C0 admin-secret header is **gone** — card L1 removed
+ * `withAuth`'s admin path and the backend no longer accepts one anywhere, so no
+ * request from this client carries it, on `/portfolio/*` or elsewhere.
  */
 async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
   return fetch(url, { ...init, headers: await withAuth(init.headers) });

@@ -25,6 +25,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 
+from agents.portfolio.spend import get_limiter
 from api import deps
 from api.main import _ACTIONS, _ANALYSES, _PAPER_WATCHLIST, _RUNS, app
 from db import crypto
@@ -63,6 +64,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     auth.reset_auth_stores()
     auth.reset_discovery()
     adoption.reset_adoption_cache()
+    get_limiter().reset()
     _RUNS.clear()
     _ANALYSES.clear()
     _ACTIONS.clear()
@@ -176,6 +178,10 @@ async def test_delete_account_removes_every_row_and_revokes_upstream(
     _ACTIONS["act-1"] = "run-abc"
     _PAPER_WATCHLIST[USER] = {"DEMOSTOCK": {"symbol": "DEMOSTOCK"}}
 
+    # And the overview spend tally — a per-user cache the DB cascade cannot reach.
+    get_limiter().reserve(USER)
+    assert USER in get_limiter()._per_user
+
     # Record that upstream revocation was called, without a real broker.
     revoked_with: list[str] = []
 
@@ -207,6 +213,62 @@ async def test_delete_account_removes_every_row_and_revokes_upstream(
     assert USER not in _PAPER_WATCHLIST
     assert not [r for r in _RUNS.values() if r.get("user_id") == USER]
     assert not [a for a in _ANALYSES.values() if a.get("user_id") == USER]
+
+    # 4. And the other per-user caches: the AuthStore/lock and the spend tally.
+    assert (USER, auth.SOURCE) not in auth._stores
+    assert (USER, auth.SOURCE) not in auth._locks
+    assert USER not in get_limiter()._per_user
+
+
+async def test_delete_is_atomic_a_failure_mid_delete_removes_nothing(
+    client: Any,
+    db_env: Any,
+    clerk: rsa.RSAPrivateKey,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Atomicity: a failure *after* revoke but *within* the delete step
+
+    leaves the account fully intact, never half-erased. Revoke runs first, as a
+    best-effort network call outside the transaction; the erase itself is a single
+    `DELETE FROM users` in one transaction, so a fault anywhere in it removes
+    nothing — the reverse of the centerpiece, and the property the split
+    `logout`-then-delete of two commits did not have.
+
+    The fault is injected by making the delete statement itself blow up, which
+    fails the request *before* the transaction writes anything — a clean rollback
+    with no half-applied cascade and no lock left held for the next test.
+    """
+    await _seed_every_table(db_env)
+
+    revoked_with: list[str] = []
+
+    async def _fake_revoke(token: str, client_id: Any, client_secret: Any) -> bool:
+        revoked_with.append(token)
+        return True
+
+    monkeypatch.setattr(auth, "revoke_token", _fake_revoke)
+
+    # Simulate a crash in the delete step: building the DELETE raises, so the
+    # request aborts after revoke but before any row is touched.
+    from api.routes import account as account_route
+
+    def _boom(*_a: Any, **_k: Any) -> Any:
+        raise RuntimeError("simulated crash mid-delete")
+
+    monkeypatch.setattr(account_route, "sa_delete", _boom)
+
+    before = await _row_counts(db_env)
+    assert all(n >= 1 for n in before.values()), before
+
+    with pytest.raises(RuntimeError, match="simulated crash mid-delete"):
+        await client.request("DELETE", "/account", headers=bearer(clerk, USER))
+
+    # 1. Revocation was still attempted (it runs before the transaction).
+    assert revoked_with == ["refresh-token"]
+
+    # 2. Nothing was removed — every table is exactly as it started, never half.
+    after = await _row_counts(db_env)
+    assert after == before, after
 
 
 async def test_a_re_used_id_gets_a_fresh_row_after_deletion(

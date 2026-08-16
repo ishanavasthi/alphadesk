@@ -90,6 +90,23 @@ _LOCAL_REGEX = r"https?://(localhost|127\.0\.0\.1)(:\d+)?"
 _EXTRA_REGEX = os.environ.get("CORS_ALLOW_ORIGIN_REGEX", "").strip()
 _ORIGIN_REGEX = f"{_LOCAL_REGEX}|{_EXTRA_REGEX}" if _EXTRA_REGEX else _LOCAL_REGEX
 
+# Middleware order is load-bearing. Starlette wraps the app so the **last**
+# `add_middleware` call is the **outermost** layer — the first to see a request
+# and the last to touch a response. CORS must be outermost, so it is added last:
+# a rate-limited request short-circuits to a 429 *inside* the rate limiter, and
+# if that limiter sat outside CORS the 429 would go back with no
+# `Access-Control-Allow-Origin`, which a browser reads as a network error rather
+# than the 429 + `Retry-After` we meant to send. Adding the rate limiter first
+# (innermost) also lets CORS answer `OPTIONS` preflights before they ever reach —
+# and count against — the limiter.
+from api.ratelimit import RateLimitMiddleware  # noqa: E402
+
+# Per-user / per-IP request rate limits on the expensive surfaces (card L1):
+# /analyze, /portfolio/overview and /auth/login. 429 past the ceiling — a global
+# and a per-caller cap, both configurable. Innermost; OPTIONS is exempt. See
+# `api/ratelimit.py`.
+app.add_middleware(RateLimitMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", *_PROD_ORIGINS],
@@ -120,13 +137,6 @@ app.include_router(internal_router)
 # broker token upstream first, then cascade-delete the user and every row they
 # own. JWT-only. See `api/routes/account.py`.
 app.include_router(account_router)
-
-# Per-user / per-IP request rate limits on the expensive surfaces (card L1):
-# /analyze, /portfolio/overview and /auth/login. 429 past the ceiling — a global
-# and a per-caller cap, both configurable. See `api/ratelimit.py`.
-from api.ratelimit import RateLimitMiddleware  # noqa: E402
-
-app.add_middleware(RateLimitMiddleware)
 
 
 # --------------------------------------------------------------------------- #

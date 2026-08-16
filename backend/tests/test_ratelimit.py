@@ -104,5 +104,47 @@ def test_the_limiter_can_be_disabled(
         assert _post(client, "/auth/login").status_code != 429
 
 
+def test_429_carries_cors_headers(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cross-origin 429 must still carry `Access-Control-Allow-Origin`.
+
+    CORS is the **outermost** middleware (added last), so it wraps the limiter's
+    429 on the way out. If it did not — if the limiter sat outside CORS — a
+    browser would receive the 429 with no CORS header and surface it as an opaque
+    network error instead of the 429 + `Retry-After` we sent.
+    """
+    monkeypatch.setenv("RATE_LIMIT_PER_CALLER_MAX", "1")
+    monkeypatch.setenv("RATE_LIMIT_GLOBAL_MAX", "1000")
+    origin = "http://localhost:3000"
+
+    seen = None
+    for _ in range(5):
+        resp = _post(client, "/auth/login", headers={"Origin": origin})
+        if resp.status_code == 429:
+            seen = resp
+            break
+    assert seen is not None, "the per-caller cap never tripped"
+    assert seen.headers.get("access-control-allow-origin") == origin
+
+
+def test_options_is_exempt_from_the_count(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A preflight must not burn a slot — otherwise N real calls cost 2N.
+
+    A plain `OPTIONS` (no CORS-preflight headers) passes through CORS to the
+    limiter, which exempts it: any number of them never 429s, and the one real
+    slot the cap allows is still there afterward.
+    """
+    monkeypatch.setenv("RATE_LIMIT_PER_CALLER_MAX", "1")
+    monkeypatch.setenv("RATE_LIMIT_GLOBAL_MAX", "1")
+
+    for _ in range(10):
+        assert client.options("/auth/login").status_code != 429
+    # The single allowed request still gets through — the OPTIONS did not count.
+    assert _post(client, "/auth/login").status_code != 429
+
+
 def test_all_three_expensive_surfaces_are_guarded() -> None:
     assert set(GUARDED_PATHS) == {"/analyze", "/portfolio/overview", "/auth/login"}
