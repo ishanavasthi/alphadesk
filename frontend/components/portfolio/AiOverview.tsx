@@ -249,7 +249,7 @@ export function AiOverview({
 
 function Narrative({ paragraphs }: { paragraphs: OverviewParagraph[] }) {
   return (
-    <div className="space-y-2.5 text-[13.5px] leading-[1.75] text-[#27272a]">
+    <div className="space-y-2.5 text-[13.5px] leading-[1.75] text-[var(--adp-prose)]">
       {paragraphs.map((para, i) => (
         <p key={i}>
           {para.segments.map((seg, j) => (
@@ -266,7 +266,7 @@ function Segment({ seg }: { seg: OverviewSegment }) {
   // A metric chip: the figure is the Python-computed display, never model text.
   return (
     <span
-      className="mx-px inline-block rounded-full border border-[var(--adp-accent-ring)] bg-[var(--adp-accent-soft)] px-1.5 py-px text-[12px] font-semibold text-[#1d4ed8] tabular-nums"
+      className="mx-px inline-block rounded-full border border-[var(--adp-accent-ring)] bg-[var(--adp-accent-soft)] px-1.5 py-px text-[12px] font-semibold text-[var(--adp-chip-ink)] tabular-nums"
       title={seg.label}
     >
       {seg.display}

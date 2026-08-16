@@ -120,32 +120,39 @@ export function orderCapBands<T extends { label: string }>(bands: T[]): T[] {
     .map((entry) => entry.band);
 }
 
-/** The locked cap-band ramp (DECISION.md), ordered darkest → lightest. */
-const CAP_STOPS: Array<[number, number, number]> = [
-  [0x1d, 0x4e, 0xd8],
-  [0x60, 0xa5, 0xfa],
-  [0xbf, 0xdb, 0xfe],
-];
+/**
+ * The locked cap-band ramp (DECISION.md), ordered L → S.
+ *
+ * Tokens rather than literals: the ramp has a dark counterpart (`portfolio.css`)
+ * and a chart that hard-coded the light hexes would keep drawing them on the
+ * dark surface. Nothing here reads the theme — the browser resolves the
+ * variables at paint time, which is also what makes the toggle instant.
+ */
+const CAP_STOPS = ["var(--adp-cap-1)", "var(--adp-cap-2)", "var(--adp-cap-3)"];
 
 /**
  * `count` colours sampled from that ramp.
  *
  * The design drew three bands; the live source reports four. Cycling the three
- * stops would give the fourth band the *darkest* colour and destroy the one
- * thing a sequential ramp asserts — that darker means further along the order.
- * Sampling the piecewise-linear gradient instead keeps lightness monotonic for
- * any number of bands, and reproduces the locked three exactly when there are
- * three.
+ * stops would give the fourth band the *first* colour again and destroy the one
+ * thing a sequential ramp asserts — that the step means further along the
+ * order. Sampling the piecewise-linear gradient instead keeps lightness
+ * monotonic for any number of bands, and reproduces the locked three exactly
+ * when there are three.
+ *
+ * `color-mix(in srgb, …)` is the interpolation, not a rounder one: it is
+ * per-channel linear over the same sRGB values the arithmetic used before, so
+ * the four-band colours are byte-identical to the ones this shipped with.
  */
 export function capRamp(count: number): string[] {
-  if (count <= 1) return [`rgb(${CAP_STOPS[0].join(",")})`];
+  if (count <= 1) return [CAP_STOPS[0]];
   const at = (t: number): string => {
     const span = t * (CAP_STOPS.length - 1);
     const index = Math.min(Math.floor(span), CAP_STOPS.length - 2);
     const frac = span - index;
-    const channel = (i: number) =>
-      Math.round(CAP_STOPS[index][i] + (CAP_STOPS[index + 1][i] - CAP_STOPS[index][i]) * frac);
-    return `rgb(${channel(0)},${channel(1)},${channel(2)})`;
+    if (frac === 0) return CAP_STOPS[index];
+    const weight = Math.round((1 - frac) * 10000) / 100;
+    return `color-mix(in srgb, ${CAP_STOPS[index]} ${weight}%, ${CAP_STOPS[index + 1]})`;
   };
   return Array.from({ length: count }, (_, i) => at(i / (count - 1)));
 }

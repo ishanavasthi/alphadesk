@@ -42,6 +42,10 @@
   --adp-accent: #2563eb; /* charts, links, primary emphasis */
   --adp-accent-soft: #eff6ff;
   --adp-accent-ring: #bfdbfe;
+  --adp-accent-strong: #1d4ed8; /* accent button, hovered */
+  --adp-accent-ink: #ffffff; /* text on top of --adp-accent */
+  --adp-chip-ink: #1d4ed8; /* metric chip / US badge ink */
+  --adp-prose: #27272a; /* narrative body ink, one step off the title */
   --adp-good: #059669; /* P&L only — never a chart series */
   --adp-bad: #dc2626;
   --adp-faint: #a1a1aa;
@@ -50,6 +54,16 @@
   --adp-warn-bg: #fffbeb;
   --adp-warn-bd: #fde68a;
   --adp-warn-ink: #92400e;
+  --adp-good-bg: #ecfdf5; /* `good` badge, not a P&L figure */
+  --adp-good-bd: #a7f3d0;
+  --adp-good-ink: #047857;
+  --adp-lab-bg: #faf5ff; /* `lab` badge — every Lab surface */
+  --adp-lab-bd: #e9d5ff;
+  --adp-lab-ink: #7e22ce;
+  --adp-tooltip-bg: #09090b; /* chart tooltip: ink-950 / white */
+  --adp-tooltip-ink: #ffffff;
+  --adp-dot-ring: #ffffff; /* ring that lifts the trend endpoint off the fill */
+  --adp-shadow: rgba(0, 0, 0, 0.04);
   /* Ordered cap-band ramp, L -> M -> S (OKLab-monotonic, validated at D0) */
   --adp-cap-1: #1d4ed8;
   --adp-cap-2: #60a5fa;
@@ -63,6 +77,91 @@
   font-size: 14px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+}
+
+/* --- dark variant ------------------------------------------------------- *
+ *
+ * Additive: the light block above is still the locked DECISION direction, and
+ * this block only *re-points* the same tokens at a zinc-dark palette. Nothing
+ * downstream branches on the theme — no component reads it, no class is
+ * conditional on it — so a surface that was already token-driven inverts for
+ * free and anything that was not shows up immediately as a light patch.
+ *
+ * The attribute is set by the inline bootstrap in `layout.tsx` (before first
+ * paint) and flipped by `ThemeToggle`: stored choice wins, otherwise the OS
+ * preference. It is deliberately *not* a `prefers-color-scheme` media query —
+ * a media query cannot be overridden by a toggle without duplicating the block.
+ */
+[data-adp][data-adp-theme="dark"] {
+  --background: 240 10% 4%;
+  --foreground: 0 0% 96%;
+  --card: 240 6% 8%;
+  --card-foreground: 0 0% 96%;
+  --popover: 240 6% 8%;
+  --popover-foreground: 0 0% 96%;
+  --primary: 0 0% 96%; /* inverted: light button, dark label */
+  --primary-foreground: 240 10% 8%;
+  --secondary: 240 5% 12%;
+  --secondary-foreground: 0 0% 96%;
+  --muted: 240 5% 12%;
+  --muted-foreground: 240 5% 63%;
+  --accent: 240 5% 12%;
+  --accent-foreground: 0 0% 96%;
+  --destructive: 0 72% 55%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 5% 16%;
+  --input: 240 5% 16%;
+  --ring: 217 91% 60%;
+  /* --radius is a measurement, not a colour: it does not change with theme. */
+
+  --adp-accent: #3b82f6;
+  --adp-accent-soft: #1e2a4a;
+  --adp-accent-ring: #1d4ed8;
+  --adp-accent-strong: #60a5fa;
+  --adp-accent-ink: #0b1220;
+  --adp-chip-ink: #93c5fd;
+  --adp-prose: #d4d4d8;
+  --adp-good: #34d399;
+  --adp-bad: #f87171;
+  --adp-faint: #52525b;
+  --adp-track: #1c1c1f;
+  --adp-hairline: #1c1c1f;
+  --adp-warn-bg: #2a2205;
+  --adp-warn-bd: #854d0e;
+  --adp-warn-ink: #fbbf24;
+  --adp-good-bg: #052e22;
+  --adp-good-bd: #065f46;
+  --adp-good-ink: #6ee7b7;
+  --adp-lab-bg: #2a1240;
+  --adp-lab-bd: #6b21a8;
+  --adp-lab-ink: #d8b4fe;
+  --adp-tooltip-bg: #f4f4f5; /* inverted with the ground, as on light */
+  --adp-tooltip-ink: #09090b;
+  --adp-dot-ring: #141417; /* the card, not white: same "lift", dark ground */
+  --adp-shadow: rgba(0, 0, 0, 0.5);
+  /* Same ramp, walked the other way: light -> dark still reads L -> M -> S,
+     and the steps stay monotonic in lightness (validated the same way). */
+  --adp-cap-1: #93c5fd;
+  --adp-cap-2: #3b82f6;
+  --adp-cap-3: #1e3a8a;
+
+  /* Scrollbars, form controls and the caret follow the surface. */
+  color-scheme: dark;
+}
+
+/* The toggle renders both icons and CSS hides the one for the other theme, so
+   exactly one is visible. Doing it here rather than in state keeps the button
+   correct in the server
+   HTML — a `useState` version would render the light icon first and flip on
+   hydration, which is the flash this card exists to remove. */
+[data-adp] .adp-icon-dark {
+  display: none;
+}
+[data-adp][data-adp-theme="dark"] .adp-icon-light {
+  display: none;
+}
+[data-adp][data-adp-theme="dark"] .adp-icon-dark {
+  display: block;
 }
 
 /* Every figure on this surface is read in a column. */

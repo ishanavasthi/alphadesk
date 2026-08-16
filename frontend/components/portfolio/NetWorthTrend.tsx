@@ -38,7 +38,7 @@ function TrendTooltip({
   if (!active || !payload?.length) return null;
   const point = payload[0].payload;
   return (
-    <div className="adp-num rounded-md bg-[#09090b] px-2.5 py-1.5 text-xs text-white">
+    <div className="adp-num rounded-md bg-[var(--adp-tooltip-bg)] px-2.5 py-1.5 text-xs text-[var(--adp-tooltip-ink)]">
       {point.date} · <b>{inr(point.value)}</b>
     </div>
   );
@@ -49,7 +49,8 @@ function TrendTooltip({
  *
  * Recharts renders `dot` for every point or none, so "last point only" has to be
  * a render function that draws a circle at the final index and an empty `<g/>`
- * everywhere else. The white ring is what lifts it off the 7% area fill.
+ * everywhere else. The ground-coloured ring is what lifts it off the 7% area
+ * fill — a token, so it stays the ground in either theme.
  */
 function endpointDot(props: { cx?: number; cy?: number; index?: number; key?: string }, last: number) {
   const { cx, cy, index, key } = props;
@@ -63,7 +64,7 @@ function endpointDot(props: { cx?: number; cy?: number; index?: number; key?: st
       cy={cy}
       r={3.5}
       fill="var(--adp-accent)"
-      stroke="#fff"
+      stroke="var(--adp-dot-ring)"
       strokeWidth={1.5}
     />
   );
@@ -167,7 +168,12 @@ export function NetWorthTrend({
                 strokeLinejoin="round"
                 isAnimationActive={false}
                 dot={(dotProps) => endpointDot(dotProps, points.length - 1)}
-                activeDot={{ r: 3.5, fill: "var(--adp-accent)", stroke: "#fff", strokeWidth: 1.5 }}
+                activeDot={{
+                  r: 3.5,
+                  fill: "var(--adp-accent)",
+                  stroke: "var(--adp-dot-ring)",
+                  strokeWidth: 1.5,
+                }}
               />
             </ComposedChart>
           </ResponsiveContainer>

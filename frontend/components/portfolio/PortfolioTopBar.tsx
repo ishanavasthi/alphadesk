@@ -5,6 +5,7 @@ import Link from "next/link";
 import { AppNav } from "@/components/shell/AppNav";
 import { UserMenu } from "@/components/UserMenu";
 import type { PortfolioSummary } from "@/lib/api";
+import { ThemeToggle } from "./ThemeToggle";
 import { Button, Chip } from "./ui";
 
 /** The product surfaces, in the order they are offered everywhere. */
@@ -95,6 +96,7 @@ export function PortfolioTopBar({
           but the Lab is one click away instead of a typed URL. */}
       <AppNav links={NAV_LINKS} className="text-[13px]" />
       <span className="flex-1" />
+      <ThemeToggle />
       <Button
         variant="outline"
         size="sm"
