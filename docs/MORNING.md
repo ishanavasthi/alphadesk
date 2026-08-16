@@ -41,6 +41,33 @@ anticipates ("Vercel dashboard variables override this file, so the operator can
 still gate a specific deploy"). **To go live, step 4 above reverses it.** If you'd
 rather the code default were flag-off, say so and I'll change `.env.production`.
 
+## Final integration audit — result (2026-08-16, after all cards merged)
+
+A 3-lens cross-card audit (flow / docs / security) ran over the whole build.
+**Flow coherence SOUND, security SOUND** — "no path to another user's data was
+found"; identity never crosses users, the C0 admin path is gone everywhere,
+migrations/models match, the delete cascade is total. It caught doc drift
+(DEPLOY.md was frozen at the C0 era — now rewritten for the v2 end-state) and
+one real thing I fixed:
+
+- **★ Neon was stuck at migration 0003.** I first migrated Neon during the S1
+  wiring, when only 0001–0003 existed; F3 (0004, `broker_links.redirect_uri`)
+  and F4 (0005, `watchlist`) merged later and were never applied. Left as-is,
+  your **first Connect would have 500'd** (the code queries a column the DB
+  didn't have). **Fixed: Neon is now at head (0005)**, verified. Nothing for
+  you to do — noting it because it's the kind of gap that only shows at first
+  real use.
+
+### One test-hygiene follow-up (not blocking, not a product bug)
+
+The rate-limit tests use `TestClient(app)` directly, so they inherit whatever
+`DATABASE_URL` is in your local `backend/.env` and, against a real async DB,
+hit an asyncpg event-loop-reuse error (a TestClient harness limitation — the
+production path works, proven by F3's 25/25 live `/auth/login` checks against
+real Postgres). CI is green (no `.env` there); the full suite is **674 passed**
+in the CI-equivalent environment. Follow-up: isolate those tests from the
+ambient DB. Filed for a future session.
+
 ---
 
 # Morning review — overnight build log for the operator
