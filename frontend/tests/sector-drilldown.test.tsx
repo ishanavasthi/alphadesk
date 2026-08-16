@@ -12,8 +12,9 @@ import { act, render, screen, waitFor } from "@testing-library/react";
  * DevTools throttling and quick fingers; here the responses are deferred
  * promises and the race is resolved deliberately, in the wrong order, every run.
  *
- * The page is rendered for real. Only `@/lib/api` is mocked, so the guard being
- * tested (`chooseSector`'s monotonic token + abort) is the shipped one.
+ * The page is rendered for real, inside the same provider the route layout wraps
+ * it in. Only `@/lib/api` is mocked, so the guard being tested (`chooseSector`'s
+ * monotonic token + abort) is the shipped one.
  */
 
 interface Deferred {
@@ -46,6 +47,7 @@ vi.mock("@/lib/api", async () => {
 });
 
 import PortfolioPage from "@/app/portfolio/page";
+import { PortfolioProvider } from "@/components/portfolio/PortfolioProvider";
 import {
   getPortfolioAllocation,
   getPortfolioHistory,
@@ -117,7 +119,11 @@ beforeEach(() => {
 
 /** Render and wait until the dashboard is past its loading state. */
 async function renderDashboard() {
-  const view = render(<PortfolioPage />);
+  const view = render(
+    <PortfolioProvider>
+      <PortfolioPage />
+    </PortfolioProvider>,
+  );
   await screen.findByText("Allocation by sector");
   return view;
 }
