@@ -666,6 +666,8 @@ export interface OverviewComplete {
   scripted: boolean;
   metrics: OverviewMetric[];
   agents: { node: string; status: string }[];
+  /** True when the backend replayed today's already-written narrative. */
+  saved?: boolean;
 }
 
 export interface OverviewHandlers {
@@ -684,19 +686,26 @@ export interface OverviewHandlers {
  * narrative is empty — the panel then renders "AI overview unavailable" while
  * every number still shows. A source failure (unlinked, throttled) is a normal
  * HTTP error **before** the stream opens, surfaced through `onError`.
+ *
+ * The narrative is written once per IST day: without `force` the backend replays
+ * whatever it already wrote today (same events, no `update`s, no spend). Pass
+ * `force` — the Regenerate button, and only that — to re-run the agents and
+ * overwrite the day's saved copy.
  */
 export async function streamOverview(
   handlers: OverviewHandlers,
   signal?: AbortSignal,
+  options?: { force?: boolean },
 ): Promise<void> {
   if (!AUTH_ENABLED) {
     handlers.onError?.("Sign-in is not switched on in this build.", 0);
     return;
   }
 
+  const url = `${API_BASE}/portfolio/overview${options?.force ? "?force=1" : ""}`;
   let response: Response;
   try {
-    response = await apiFetch(`${API_BASE}/portfolio/overview`, {
+    response = await apiFetch(url, {
       method: "POST",
       cache: "no-store",
       signal,
