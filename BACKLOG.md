@@ -4,6 +4,10 @@ Not scoped into the current plan. Everything here is parked deliberately, with
 the reason it's parked and what has to be true before it's picked up.
 `V2_PLAN.md` is the plan of record; this file is the queue behind it.
 
+Items carry a **`B<n>` id** (`B1`, `B2`, …) once they're concrete enough to pick
+up as a card — quote the id when scheduling one. Unnumbered sections below are
+still ideas, not queued work.
+
 Grilling session of 2026-08-14 settled the frame these are judged against:
 public but **waitlist-gated**; **one normalized portfolio model** with per-source
 connectors; **descriptive analytics only** in v2 — scenario projection is itself
@@ -94,6 +98,76 @@ machinery.
 User sets a target allocation; snapshots already run daily; alert when drift
 exceeds a band. Cheap once `portfolio_snapshots` exists, and it's the feature
 that gives daily snapshots a *user-facing* reason to exist beyond a trend line.
+
+### B1 — Flow-aware net worth (attribute day-over-day change to *why* it moved)
+
+**The gap.** S1 snapshots record **levels**, one row per user per IST day, and
+every derived number (the trend line, A1's WoW delta, anything future) is a
+difference between two levels. A level difference cannot tell market movement
+apart from money moving. If the bank bucket goes ₹1,00,000 → ₹70,000 on the same
+day a mutual-fund position gains ₹30,000, the truth is *one transfer and a flat
+net worth*, but today it reads as a bank fall and an MF rise with no relationship
+between them. The same conflation makes any "return" computed off snapshots wrong
+whenever the user deposits, withdraws, or starts a SIP — which is most months.
+
+**What's wanted.** A reconciliation layer over consecutive snapshots that splits
+each day's Δ into three kinds:
+
+1. **market movement** — same units, different price;
+2. **external flow** — money entering or leaving the visible perimeter (salary
+   into the bank, a withdrawal out of it);
+3. **internal transfer** — one bucket down, another up, net ~zero (the bank →
+   MF-order case above).
+
+Then surface it: a trend line that separates "you earned this" from "you added
+this", and a plain-language day note ("₹30k moved from bank into mutual funds").
+
+**Why it's worth doing.** It's the honest-return prerequisite. D1 deliberately
+ships **Return % only, no XIRR**, and A1 computes **no XIRR** — partly effort,
+but partly because a money-weighted return is meaningless without a flow series.
+This card is what would unblock that later, and it makes the daily snapshot
+history worth keeping for something beyond a line that drifts.
+
+**What's already in place** (don't re-derive):
+
+- `snapshot_holdings` freezes `units`, `avg_cost`, `invested_amount` and
+  `current_price` per row, so **for instrument buckets the split is computable
+  without any new data**: units up ⇒ a buy, units flat + price moved ⇒ market.
+  That is the tractable half and could ship alone.
+- `snapshot_days.buckets_failed` already marks partial days, and
+  `attributed_day` already owns the IST-day rule — attribution must ride both,
+  not invent a second notion of "day".
+
+**The hard parts — settle these before scoping:**
+
+- **Cash and bank rows have no units.** A ₹30k fall is spending, a transfer to
+  the broker, or a transfer somewhere invisible, and the snapshot cannot
+  distinguish them. Any pairing of a fall in one bucket with a rise in another
+  is an **inference**, not an observation, and must be labelled as one in the UI.
+  Never assert a cause that wasn't observed.
+- **Is there a transaction feed at all?** This wants a C2-style data spike
+  against the IND Money MCP before any modelling: is order/transaction history
+  exposed, at what granularity, for which asset types? The two SIP tools C2
+  inventoried are the closest known thing. If real transactions are available,
+  most of the inference above collapses into bookkeeping — a very different and
+  much better card. **Do the spike first.**
+- **Gaps are unattributable, and cannot be backfilled** — S1's MCP is
+  point-in-time by design. A missing day (or a bucket in `buckets_failed`) makes
+  the Δ across that window ambiguous; it must be recorded as unattributed, never
+  silently spread across the gap.
+- **Same-day netting is invisible.** Once-daily snapshots see net change only:
+  sell ₹50k and buy ₹50k on the same day and the day looks idle.
+- **`invested_amount == 0` means unknown cost basis** (M1), so it can't be used
+  as a flow proxy; and all money stays `Decimal` — a flow series that rounds is
+  a flow series that accumulates error.
+- Framing holds: this is **descriptive accounting on observed data**, not advice
+  and not a forecast.
+
+**Pick up when:** the MCP transaction-history spike has an answer. Related:
+**Tax-lot / capital-gains view** below (blocked on the same missing history —
+likely the same spike), **Allocation-drift alerts** (drift caused by a transfer
+is not the same signal as drift caused by the market), and **Portfolio
+projection** (SIP contributions belong in the same flow series).
 
 ### Tax-lot / capital-gains view
 Realised vs unrealised, STCG/LTCG split, ITR season utility. Needs transaction
