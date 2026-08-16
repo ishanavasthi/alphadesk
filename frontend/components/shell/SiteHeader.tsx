@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { Github } from "lucide-react";
 
+import { AUTH_ENABLED } from "@/lib/auth";
+
+import { AppNav } from "./AppNav";
 import { SiteAuthSlot } from "./SiteAuthSlot";
 
 /**
@@ -28,6 +31,18 @@ export function SiteHeader() {
           <Link href="/demo" className="transition-colors hover:text-foreground">
             Live demo
           </Link>
+          {/* The app surfaces only exist for someone who can sign in. Gated in
+              JSX so a flag-off build renders no link to a page its visitors
+              cannot reach. */}
+          {AUTH_ENABLED ? (
+            <AppNav
+              links={[
+                { href: "/portfolio", label: "Portfolio" },
+                { href: "/lab", label: "Lab" },
+              ]}
+              className="text-[13px]"
+            />
+          ) : null}
         </nav>
         <span className="flex-1" />
         <a
