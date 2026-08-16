@@ -18,22 +18,26 @@ import { SignInButton, UserButton, useUser } from "@clerk/nextjs";
 export function ClerkSiteAuth() {
   const { isLoaded, isSignedIn } = useUser();
 
-  if (!isLoaded) return <div className="h-7 w-16" aria-hidden />;
+  if (!isLoaded) return <div className="h-7 w-16 flex-none" aria-hidden />;
 
+  // `flex-none` + `whitespace-nowrap` throughout: this control is the last item
+  // in the header's flex row, and without them a narrow phone row shrinks it
+  // until "Sign in" wraps mid-label and "Join waitlist" is clipped off the right
+  // edge. It is the row's fixed anchor; the spacer beside it absorbs the slack.
   if (!isSignedIn) {
     return (
-      <div className="flex items-center gap-3 text-[13px]">
+      <div className="flex flex-none items-center gap-2.5 whitespace-nowrap text-[13px] sm:gap-3">
         <SignInButton mode="redirect">
           <button
             type="button"
-            className="text-muted-foreground transition-colors hover:text-foreground"
+            className="whitespace-nowrap text-muted-foreground transition-colors hover:text-foreground"
           >
             Sign in
           </button>
         </SignInButton>
         <Link
           href="/waitlist"
-          className="rounded-md bg-[var(--adp-accent)] px-3 py-1.5 text-white transition-colors hover:bg-[#1d4ed8]"
+          className="whitespace-nowrap rounded-md bg-[var(--adp-accent)] px-2.5 py-1.5 text-white transition-colors hover:bg-[#1d4ed8] sm:px-3"
         >
           Join waitlist
         </Link>
@@ -42,10 +46,10 @@ export function ClerkSiteAuth() {
   }
 
   return (
-    <div className="flex items-center gap-3 text-[13px]">
+    <div className="flex flex-none items-center gap-2.5 whitespace-nowrap text-[13px] sm:gap-3">
       <Link
         href="/portfolio"
-        className="text-muted-foreground transition-colors hover:text-foreground"
+        className="whitespace-nowrap text-muted-foreground transition-colors hover:text-foreground"
       >
         Portfolio
       </Link>

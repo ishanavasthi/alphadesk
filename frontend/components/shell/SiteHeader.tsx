@@ -30,10 +30,19 @@ export function SiteHeader() {
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-[1120px] items-center gap-3 px-4 sm:gap-5 sm:px-6">
-        <Link href="/" className="font-semibold tracking-[-0.01em]">
+        <Link href="/" className="flex-none whitespace-nowrap font-semibold tracking-[-0.01em]">
           alpha<b className="text-[var(--adp-accent)]">Desk</b>
         </Link>
-        <nav className="flex items-center gap-3 whitespace-nowrap text-[13px] text-muted-foreground sm:gap-4">
+        {/* Below `sm` the row cannot hold the link cluster *and* the identity
+            actions: at 360px the two together overflow, which is what pushed
+            "Join waitlist" off the right edge and wrapped "Sign in" onto two
+            lines. So the cluster steps aside on phones and the row keeps the
+            wordmark, the theme toggle and the identity actions — the things a
+            visitor has to be able to reach — on one line. Nothing is stranded:
+            "Live demo" is the hero's primary CTA and is repeated in the closing
+            block, and the signed-in identity control carries its own Portfolio
+            link. */}
+        <nav className="hidden items-center gap-3 whitespace-nowrap text-[13px] text-muted-foreground sm:flex sm:gap-4">
           <Link href="/demo" className="transition-colors hover:text-foreground">
             Live demo
           </Link>
@@ -50,16 +59,16 @@ export function SiteHeader() {
             />
           ) : null}
         </nav>
-        <span className="flex-1" />
-        {/* At 375px the row has no slack: the nav has to stay on one line, so
-            this icon steps aside below `sm`. Nothing is lost — the footer
-            carries the same repository link as "Open source" on every page. */}
+        <span className="min-w-0 flex-1" />
+        {/* The row has no slack on a phone, so this icon steps aside below `sm`
+            too. Nothing is lost — the footer carries the same repository link as
+            "Open source" on every page. */}
         <a
           href="https://github.com/ishanavasthi/alphadesk"
           target="_blank"
           rel="noopener noreferrer"
           aria-label="Source code on GitHub"
-          className="hidden text-muted-foreground transition-colors hover:text-foreground sm:block"
+          className="hidden flex-none text-muted-foreground transition-colors hover:text-foreground sm:block"
         >
           <Github className="h-4 w-4" />
         </a>
