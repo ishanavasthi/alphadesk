@@ -8,7 +8,7 @@ import { HoldingsTable } from "@/components/portfolio/HoldingsTable";
 import { NetWorthTrend } from "@/components/portfolio/NetWorthTrend";
 import { StatCards } from "@/components/portfolio/StatCards";
 import { StalenessBanner } from "@/components/portfolio/StalenessBanner";
-import { inr, typeLabel } from "@/components/portfolio/format";
+import { inr, num, typeLabel } from "@/components/portfolio/format";
 import { Badge, Card, CardHead, PortfolioFooter } from "@/components/portfolio/ui";
 import { SourceEmptyNotice } from "@/components/portfolio/states";
 
@@ -81,7 +81,7 @@ export function DemoDashboard() {
             <>Click a column to sort · &ldquo;—&rdquo; means the source did not report a cost basis</>
           }
         />
-        <HoldingsTable rows={holdings} />
+        <HoldingsTable rows={holdings} portfolioValue={num(summary.current_value)} />
         {buckets.map((bucket) =>
           !bucket.rows.length && (bucket.reportedValue ?? 0) > 0 ? (
             <SourceEmptyNotice

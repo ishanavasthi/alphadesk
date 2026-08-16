@@ -81,6 +81,15 @@ const MAX_RETRY_WAIT_S = 20;
  * it on 429s. The cooldown makes the button honest about the cost behind it.
  */
 const REFRESH_COOLDOWN_S = 30;
+/**
+ * How much captured history to fetch — once, for every page.
+ *
+ * Performance offers 30D / 90D / 1Y windows, and they are *slices* of this one
+ * response rather than three requests: the points are a few hundred bytes and a
+ * chip that re-fetched would spend the source's budget to redraw data already in
+ * hand. Fetching the widest window is what makes the narrow ones free.
+ */
+const HISTORY_DAYS = 365;
 
 type Phase = "loading" | "ready" | "locked" | "unauthorized" | "connect" | "error";
 
@@ -277,7 +286,7 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       setPhase("ready");
 
       try {
-        const captured = await getPortfolioHistory(90, signal);
+        const captured = await getPortfolioHistory(HISTORY_DAYS, signal);
         if (signal.aborted) return;
         setHistory(toTrendPoints(captured.points));
         setLastCapturedAt(captured.last_captured_at);
@@ -320,7 +329,7 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       const result = await capturePortfolioSnapshot();
       if (result.status === "captured") {
         setCaptureState("done");
-        const captured = await getPortfolioHistory(90);
+        const captured = await getPortfolioHistory(HISTORY_DAYS);
         setHistory(toTrendPoints(captured.points));
         setLastCapturedAt(captured.last_captured_at);
       } else if (result.status === "already_captured") {

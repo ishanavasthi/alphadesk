@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import type { ReactNode } from "react";
 import {
   Area,
   ComposedChart,
@@ -78,13 +80,22 @@ function endpointDot(props: { cx?: number; cy?: number; index?: number; key?: st
  *
  * Styling follows the locked chart rules: 2px accent line, 7% accent area,
  * emphasized endpoint, crosshair + tooltip on hover, y-axis in lakh.
+ *
+ * `headLink` is the Overview card's way out to the full history; `caption` is
+ * where Performance states the change over its selected window. Both are given
+ * by the caller because the window arithmetic belongs to whoever chose the
+ * window — this component still renders exactly the points it is handed.
  */
 export function NetWorthTrend({
   points,
   lastCapturedAt,
+  headLink,
+  caption,
 }: {
   points: TrendPoint[];
   lastCapturedAt: string | null;
+  headLink?: { href: string; label: string };
+  caption?: ReactNode;
 }) {
   const hasHistory = points.length > 1;
   // The **attributed** day, not the raw timestamp: a capture that ran at 01:00
@@ -95,14 +106,24 @@ export function NetWorthTrend({
 
   return (
     <Card className="flex flex-col">
-      <CardHead
-        title="Net-worth trend"
-        desc={
-          hasHistory
-            ? `${points.length} captured snapshots · ${lastDay ? `last ${lastDay}` : "daily"}`
-            : "Daily snapshots · nothing captured yet"
-        }
-      />
+      <div className="flex items-start justify-between gap-3">
+        <CardHead
+          title="Net-worth trend"
+          desc={
+            hasHistory
+              ? `${points.length} captured snapshots · ${lastDay ? `last ${lastDay}` : "daily"}`
+              : "Daily snapshots · nothing captured yet"
+          }
+        />
+        {headLink ? (
+          <Link
+            href={headLink.href}
+            className="shrink-0 text-xs text-muted-foreground hover:text-foreground hover:underline"
+          >
+            {headLink.label}
+          </Link>
+        ) : null}
+      </div>
       {hasHistory ? (
         <div className="h-[220px] w-full">
           <ResponsiveContainer width="100%" height="100%">
@@ -163,6 +184,11 @@ export function NetWorthTrend({
           nightly capture.
         </EmptyCallout>
       )}
+      {caption ? (
+        <div className="mt-3 border-t border-[var(--adp-hairline)] pt-3 text-[13px] text-muted-foreground">
+          {caption}
+        </div>
+      ) : null}
     </Card>
   );
 }

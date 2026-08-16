@@ -61,6 +61,7 @@ export default function PortfolioOverviewPage() {
         summary={summary}
         holdingsCount={holdings.length}
         countIsPartial={loadingHoldings}
+        holdingsHref="/portfolio/holdings"
       />
 
       {/* AI overview (card A1). Streams its own metrics + narrative and degrades
@@ -72,7 +73,11 @@ export default function PortfolioOverviewPage() {
       <AiOverview cached={overview} onComplete={setOverview} />
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[2fr_1fr]">
-        <NetWorthTrend points={history} lastCapturedAt={lastCapturedAt} />
+        <NetWorthTrend
+          points={history}
+          lastCapturedAt={lastCapturedAt}
+          headLink={{ href: "/portfolio/performance", label: "Full history →" }}
+        />
         <Card>
           <CardHead title="Market cap mix" desc="Equity holdings by cap band" />
           <CapStrip slices={summary.by_market_cap} />

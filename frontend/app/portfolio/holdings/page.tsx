@@ -2,7 +2,7 @@
 
 import { HoldingsTable } from "@/components/portfolio/HoldingsTable";
 import { usePortfolio } from "@/components/portfolio/PortfolioProvider";
-import { inr } from "@/components/portfolio/format";
+import { inr, num } from "@/components/portfolio/format";
 import { Badge, Card, CardHead, PortfolioFooter } from "@/components/portfolio/ui";
 import {
   RateLimitedNotice,
@@ -25,7 +25,7 @@ import {
  * budget.
  */
 export default function PortfolioHoldingsPage() {
-  const { buckets, holdings, loadingHoldings, demo } = usePortfolio();
+  const { buckets, holdings, loadingHoldings, demo, summary } = usePortfolio();
 
   return (
     <>
@@ -44,13 +44,15 @@ export default function PortfolioHoldingsPage() {
           title="Holdings"
           desc={
             <>
-              Click a column to sort · &ldquo;—&rdquo; means the source did not report a cost
-              basis
+              Click a column to sort, a row for detail · &ldquo;—&rdquo; means the source did
+              not report a cost basis
               {loadingHoldings ? " · still loading buckets" : ""}
             </>
           }
         />
-        <HoldingsTable rows={holdings} />
+        {/* The snapshot's own current value, so the dialog can state a share of
+            the portfolio without summing the table (C2: the two disagree). */}
+        <HoldingsTable rows={holdings} portfolioValue={num(summary.current_value)} />
         {buckets.map((bucket) => {
           if (bucket.status === "unverified") {
             return <UnverifiedShapeNotice key={bucket.assetType} label={bucket.label} />;
