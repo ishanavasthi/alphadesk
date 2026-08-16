@@ -5,6 +5,7 @@ import { ArrowRight, KeyRound, Loader2, Plug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useIndMoney } from "@/components/AuthProvider";
 import { ResultsDashboard } from "@/components/ResultsDashboard";
+import { ResumeRunCard } from "@/components/ResumeRunCard";
 
 const SAMPLES = [
   "find me momentum stocks in IT sector",
@@ -86,6 +87,9 @@ export default function Home() {
             </Button>
           </div>
         </form>
+
+        {/* Re-attach: a run started in this session survives a trip to /portfolio */}
+        <ResumeRunCard />
 
         {/* Connection gate — the desk has no market data until IND Money is linked */}
         {!connected && (

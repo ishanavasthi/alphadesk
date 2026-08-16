@@ -135,6 +135,33 @@ export async function getAnalysis(runId: string): Promise<AnalysisPayload> {
   return response.json();
 }
 
+export interface RunStatusPayload {
+  run_id: string;
+  status: string;
+  query?: string | null;
+  action_id: string | null;
+  awaiting_approval: boolean;
+  next: string[];
+  state: Record<string, unknown>;
+}
+
+/**
+ * GET /status/{id} — the live status of a run, including one still in flight.
+ *
+ * `/analysis/{id}` only exists once the run has finished (the backend writes the
+ * record on the `complete` event), so a run being re-attached mid-flight is a
+ * 404 there and a `"running"` here. Same ownership rule as everything else in
+ * the Lab: someone else's run is a 404, never a 403.
+ */
+export async function getRunStatus(runId: string): Promise<RunStatusPayload> {
+  const response = await apiFetch(`${API_BASE}/status/${encodeURIComponent(runId)}`, {
+    cache: "no-store",
+  });
+  if (response.status === 404) throw new Error("not_found");
+  if (!response.ok) throw new Error(`Status fetch failed (${response.status}).`);
+  return response.json();
+}
+
 interface StreamHandlers {
   onStart?: (e: { run_id: string; status: string }) => void;
   onUpdate?: (e: AgentUpdate) => void;
