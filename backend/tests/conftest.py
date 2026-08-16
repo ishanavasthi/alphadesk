@@ -189,6 +189,7 @@ _ALL_TABLES = (
     "snapshot_days",
     "snapshot_holdings",
     "snapshot_raw",
+    "watchlist",
 )
 
 

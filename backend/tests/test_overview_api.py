@@ -24,16 +24,23 @@ from api.routes.portfolio import connector_for_request
 from portfolio.connectors.stub import DEMO_FIXTURES, StubConnector
 from portfolio.models import AssetType
 
-SECRET = "test-admin-secret"
-AUTH = {"x-alphadesk-admin-secret": SECRET}
-
-
 @pytest.fixture(autouse=True)
 def _env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ALPHADESK_ADMIN_SECRET", SECRET)
+    # Single-tenant off by default so `test_overview_requires_identity` sees the
+    # 401. The authenticated tests opt in with `local_dev`.
     monkeypatch.delenv("ALPHADESK_SINGLE_TENANT", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
     get_limiter().reset()
+
+
+@pytest.fixture
+def local_dev(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Single-tenant dev, so a headerless overview request is served as local.
+
+    The interim admin path these tests used to authenticate through was removed
+    at card L1 (F3 §5); single-tenant dev is the headerless replacement.
+    """
+    monkeypatch.setenv("ALPHADESK_SINGLE_TENANT", "1")
 
 
 @pytest.fixture
@@ -87,12 +94,12 @@ def test_overview_requires_identity(client: TestClient) -> None:
 
 
 def test_overview_degrades_when_llm_key_is_removed(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, local_dev: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """THE hard requirement: no key ⇒ every computed number still renders."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-    resp = client.post("/portfolio/overview", headers=AUTH)
+    resp = client.post("/portfolio/overview")
     assert resp.status_code == 200
     complete = _complete(resp.text)
 
@@ -111,12 +118,12 @@ def test_overview_degrades_when_llm_key_is_removed(
 
 
 def test_overview_happy_path_with_mocked_llm(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, local_dev: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
     monkeypatch.setattr(pg, "default_llm_factory", lambda: _FakeLLM())
 
-    resp = client.post("/portfolio/overview", headers=AUTH)
+    resp = client.post("/portfolio/overview")
     assert resp.status_code == 200
     events = _events(resp.text)
     kinds = [e for e, _ in events]
@@ -143,12 +150,12 @@ def test_overview_happy_path_with_mocked_llm(
 
 
 def test_overview_over_spend_cap_degrades(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, local_dev: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
     monkeypatch.setenv("OVERVIEW_DAILY_USER_MAX", "0")
     monkeypatch.setattr(pg, "default_llm_factory", lambda: _FakeLLM())
-    complete = _complete(client.post("/portfolio/overview", headers=AUTH).text)
+    complete = _complete(client.post("/portfolio/overview").text)
     assert complete["degraded"] is True
     assert complete["reason"] == "spend_cap"
 

@@ -22,7 +22,6 @@ import asyncio
 import html
 import json
 import os
-import secrets
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -42,6 +41,7 @@ from sqlalchemy import select  # noqa: E402
 from sqlalchemy.dialects.postgresql import insert as pg_insert  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
+from api.routes.account import router as account_router  # noqa: E402
 from api.routes.internal import router as internal_router  # noqa: E402
 from api.routes.overview import router as overview_router  # noqa: E402
 from api.routes.portfolio import router as portfolio_router  # noqa: E402
@@ -99,9 +99,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Read-only portfolio routes for the D1 dashboard (card D1). Every route on this
-# router is gated by the same admin secret as /auth/login — see
-# `api/routes/portfolio.py`, which reuses `_require_admin` below.
+# Read-only portfolio routes for the D1 dashboard (card D1). Every route is
+# per-user and JWT-gated (`portfolio_identity`); the interim C0 admin path was
+# removed at card L1. See `api/routes/portfolio.py`.
 app.include_router(portfolio_router)
 
 # The AI overview panel (card A1): POST /portfolio/overview streams the narrative
@@ -111,10 +111,22 @@ app.include_router(portfolio_router)
 app.include_router(overview_router)
 
 # Machine-to-machine routes for the nightly snapshot job (card S1). Guarded by
-# CRON_SECRET, **not** by the admin gate above — a scheduled runner is not an
+# CRON_SECRET, **not** by any operator secret — a scheduled runner is not an
 # operator and must not hold a secret that can read holdings or unlink the
 # account. See `api/routes/internal.py`.
 app.include_router(internal_router)
+
+# DELETE /account — the DPDP "delete my data" surface (card L1): revoke the
+# broker token upstream first, then cascade-delete the user and every row they
+# own. JWT-only. See `api/routes/account.py`.
+app.include_router(account_router)
+
+# Per-user / per-IP request rate limits on the expensive surfaces (card L1):
+# /analyze, /portfolio/overview and /auth/login. 429 past the ceiling — a global
+# and a per-caller cap, both configurable. See `api/ratelimit.py`.
+from api.ratelimit import RateLimitMiddleware  # noqa: E402
+
+app.add_middleware(RateLimitMiddleware)
 
 
 # --------------------------------------------------------------------------- #
@@ -277,6 +289,24 @@ async def _remove_watchlist(
     await session.commit()
     return bool(result.rowcount or 0)
 
+def purge_user_lab_state(user_id: str) -> None:
+    """Drop every in-memory Lab record a user owns (card L1, delete-my-data).
+
+    The `watchlist` table cascades with `users` inside Postgres, but the Lab's
+    runs, analyses and the no-database watchlist fallback live in these process
+    dicts — they are keyed by `user_id`, so a full deletion has to reach them
+    too. Called by `DELETE /account` after the row cascade, so nothing the user
+    generated survives in memory either.
+    """
+    for run_id in [rid for rid, r in _RUNS.items() if r.get("user_id") == user_id]:
+        _RUNS.pop(run_id, None)
+    for rid in [rid for rid, a in _ANALYSES.items() if a.get("user_id") == user_id]:
+        _ANALYSES.pop(rid, None)
+    for action_id in [aid for aid, rid in _ACTIONS.items() if rid not in _RUNS]:
+        _ACTIONS.pop(action_id, None)
+    _PAPER_WATCHLIST.pop(user_id, None)
+
+
 _SSE_HEADERS = {
     "Cache-Control": "no-cache",
     "Connection": "keep-alive",
@@ -392,49 +422,6 @@ display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
     )
 
 
-def admin_secret_accepted(x_alphadesk_admin_secret: Optional[str]) -> bool:
-    """**INTERIM (C0). The single place an admin header is ever accepted.**
-
-    Every other site that honours `x-alphadesk-admin-secret` calls this. That is
-    the point: this card's review found the acceptance logic had quietly grown a
-    *third* copy — an inline `compare_digest` in `_status_identity` that no
-    removal note mentioned — and a removal note that misses a site is how an
-    interim gate outlives the release that was supposed to delete it.
-
-    Fail-closed: an unset `ALPHADESK_ADMIN_SECRET` accepts nothing, so unsetting
-    it on the Space is by itself enough to close every one of those sites.
-
-    **The full removal checklist lives in `docs/SPECS/F3.md` §5 and must list
-    every caller of this function.** At card L1: delete this, its three callers,
-    and `frontend/lib/api.ts`'s `ADMIN_SECRET`.
-    """
-    if single_tenant_mode():
-        return True
-    expected = os.environ.get("ALPHADESK_ADMIN_SECRET") or ""
-    supplied = x_alphadesk_admin_secret or ""
-    if not expected or not supplied:
-        return False
-    return secrets.compare_digest(
-        supplied.encode("latin-1", "replace"), expected.encode("utf-8")
-    )
-
-
-def _require_admin(
-    x_alphadesk_admin_secret: Optional[str] = Header(default=None),
-) -> None:
-    """INTERIM (C0) — raise 401 unless the admin header is accepted.
-
-    Kept as the raising wrapper because FastAPI dependencies want one. Single-
-    tenant dev mode (``ALPHADESK_SINGLE_TENANT=1``, local only) passes, so the
-    in-app Connect button keeps working on the operator's machine.
-    """
-    if not admin_secret_accepted(x_alphadesk_admin_secret):
-        raise HTTPException(
-            status_code=401,
-            detail="This is an operator-only action on this deployment.",
-        )
-
-
 async def _link_identity(
     authorization: Optional[str] = Header(default=None),
     session: Optional[Any] = Depends(optional_session),
@@ -489,41 +476,35 @@ async def _lab_identity(
 
 async def _status_identity(
     authorization: Optional[str] = Header(default=None),
-    x_alphadesk_admin_secret: Optional[str] = Header(default=None),
     session: Optional[Any] = Depends(optional_session),
 ) -> Optional[str]:
     """Whose link status to report, or None for "nobody in particular".
 
-    **This is the third interim admin-header site, and it is deliberate.** The
-    brief made `/auth/login` and `/auth/logout` JWT-only because those *write* a
-    link, and a link made under a shared secret has no owner. `/auth/status` is
-    a read, and the v1 research page polls it with no session while
-    `NEXT_PUBLIC_AUTH_ENABLED` is off — so it accepts the admin header, reports
-    the operator's own link, and is listed in the L1 removal checklist
-    (`docs/SPECS/F3.md` §5) alongside the other two. Acceptance goes through
-    :func:`admin_secret_accepted` like everything else; there is no second copy
-    of the comparison here any more.
+    JWT → the caller. Single-tenant dev (`ALPHADESK_SINGLE_TENANT=1`, the
+    operator's own machine, which has no Clerk instance to mint a token from) →
+    ``"local"``. Anyone else is nobody: an anonymous caller gets a flat "not
+    connected" instead of a truthful readout of *someone else's* link, which is
+    what this endpoint used to hand to the whole internet.
 
-    What it will not do is answer for a user it cannot name: an anonymous caller
-    gets a flat "not connected" instead of a truthful readout of *someone
-    else's* link, which is what this endpoint used to hand to the whole
-    internet.
+    **The interim C0 admin-header path was removed at card L1** (the F3 §5
+    checklist). Until L1 this endpoint accepted the admin secret so the flag-off
+    v1 page could poll it with no session; per-user Clerk auth now replaces that,
+    `NEXT_PUBLIC_AUTH_ENABLED` is on, and no admin header authenticates anything
+    here any more.
 
     It registers the identity like every other authenticated entry point.
     That matters more here than it looks: a browser that has just signed in
     calls `/auth/status` **first**, so if this were the one path that skipped
     registration, operator adoption would never fire for the person it exists
-    for — which is exactly what the first live run of this card found.
+    for — which is exactly what the first live run of F3 found.
     """
     if authorization:
         claims = await asyncio.to_thread(verify_token, bearer_token(authorization))
         if session is None:
             return str(claims["sub"])
         return await register_identity(session, claims)
-    if admin_secret_accepted(x_alphadesk_admin_secret):
-        from services.adoption import admin_identity
-
-        return await admin_identity()
+    if single_tenant_mode():
+        return LOCAL_USER_ID
     return None
 
 
