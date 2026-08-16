@@ -412,20 +412,19 @@ async def test_a_settled_no_is_remembered(
 async def test_operator_user_id_is_none_without_the_env_var(db_env: Any) -> None:
     await _users(db_env, OPERATOR_ID)
     assert await adoption.operator_user_id() is None
-    assert await adoption.admin_identity() == adoption.LOCAL_USER_ID
 
 
-async def test_admin_identity_follows_the_operator_after_sign_in(
+async def test_operator_user_id_follows_the_operator_after_sign_in(
     db_env: Any, clerk_api: FakeClerk, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Before sign-in the pre-F3 data is under `local`; after adoption it is
-    under the Clerk id — and the interim admin path has to follow it, or the
-    operator's dashboard goes blank on the day they first sign in."""
+    under the Clerk id — and `operator_user_id` (the ambient identity for the
+    legacy research pipeline) has to follow it."""
     monkeypatch.setenv(adoption.OPERATOR_EMAIL_ENV, OPERATOR_EMAIL)
     await _seed_local(db_env)
     await _users(db_env, OPERATOR_ID)
 
-    assert await adoption.admin_identity() == adoption.LOCAL_USER_ID
+    assert await adoption.operator_user_id() is None
 
     adoption.reset_adoption_cache()
     async with db_env() as session:
@@ -433,10 +432,9 @@ async def test_admin_identity_follows_the_operator_after_sign_in(
 
     adoption.reset_adoption_cache()
     assert await adoption.operator_user_id() == OPERATOR_ID
-    assert await adoption.admin_identity() == OPERATOR_ID
 
 
-async def test_a_stranger_never_becomes_the_admin_identity(
+async def test_a_stranger_never_becomes_the_operator(
     db_env: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv(adoption.OPERATOR_EMAIL_ENV, OPERATOR_EMAIL)
@@ -449,7 +447,6 @@ async def test_a_stranger_never_becomes_the_admin_identity(
         await session.commit()
 
     assert await adoption.operator_user_id() is None
-    assert await adoption.admin_identity() == adoption.LOCAL_USER_ID
 
 
 async def test_an_underscore_in_the_operator_email_is_not_a_wildcard(
@@ -459,8 +456,8 @@ async def test_an_underscore_in_the_operator_email_is_not_a_wildcard(
 
     With `ilike`, an operator address of `ops_admin@example.com` also matches a
     signed-up `opsXadmin@example.com` — and whoever owns that address becomes
-    `operator_user_id()`, which is the ambient identity *and* the identity every
-    interim admin-header request acts as.
+    `operator_user_id()`, which is the ambient identity for the legacy research
+    pipeline.
     """
     monkeypatch.setenv(adoption.OPERATOR_EMAIL_ENV, "ops_admin@example.com")
     await _users(db_env, STRANGER_ID)
@@ -472,7 +469,6 @@ async def test_an_underscore_in_the_operator_email_is_not_a_wildcard(
         await session.commit()
 
     assert await adoption.operator_user_id() is None
-    assert await adoption.admin_identity() == adoption.LOCAL_USER_ID
 
 
 async def test_a_percent_in_the_operator_email_is_not_a_wildcard(

@@ -19,12 +19,10 @@ export const API_BASE =
  * the caller's headers unchanged and this is a plain `fetch` — same method,
  * same headers, same body as before card F2.
  *
- * Card F3 made the backend per-user, so the Clerk token is now the credential
- * that matters. The interim C0 admin-secret header still rides alongside on
- * `/portfolio/*` — with `NEXT_PUBLIC_AUTH_ENABLED` off there is no sign-in UI
- * in production, so removing it before card L1 would lock the operator out of
- * their own dashboard. It is **not** sent to `/auth/login` or `/auth/logout`
- * any more: linking is identity-bound, and the backend refuses it there.
+ * Card F3 made the backend per-user, so the Clerk token is the only credential
+ * that matters. The interim C0 admin-secret header is **gone** — card L1 removed
+ * `withAuth`'s admin path and the backend no longer accepts one anywhere, so no
+ * request from this client carries it, on `/portfolio/*` or elsewhere.
  */
 async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
   return fetch(url, { ...init, headers: await withAuth(init.headers) });
@@ -251,15 +249,13 @@ export interface AuthStatus {
 /**
  * GET /auth/status — is **this caller** linked to IND Money?
  *
- * Per-user since F3. The admin secret rides along so a flag-off operator build
- * still reports their own link rather than a flat "not connected"; a request
- * with neither credential is answered for nobody, which is the point — this
+ * Per-user since F3, JWT-only since L1: the `withAuth` bearer is the credential.
+ * The interim admin-secret header was removed with the rest of the F3 §5 path;
+ * a caller with no session is answered for nobody, which is the point — this
  * endpoint used to tell the whole internet whether the operator was connected.
  */
 export async function getAuthStatus(): Promise<AuthStatus> {
-  const response = await apiFetch(`${API_BASE}/auth/status`, {
-    headers: ADMIN_SECRET ? { "x-alphadesk-admin-secret": ADMIN_SECRET } : undefined,
-  });
+  const response = await apiFetch(`${API_BASE}/auth/status`);
   if (!response.ok) throw new Error(`Auth status failed (${response.status}).`);
   return response.json();
 }
@@ -286,6 +282,28 @@ export async function startAuthLogin(): Promise<string> {
 export async function logoutAuth(): Promise<void> {
   const response = await apiFetch(`${API_BASE}/auth/logout`, { method: "POST" });
   if (!response.ok) throw new Error(`Logout failed (${response.status}).`);
+}
+
+/** The confirmation `DELETE /account` returns. */
+export interface DeleteAccountResult {
+  deleted: boolean;
+  user_id: string;
+  /** True if the broker grant was also killed upstream; false/null otherwise. */
+  revoked_upstream: boolean | null;
+  revocation_error?: string | null;
+}
+
+/**
+ * DELETE /account — the DPDP "delete my data" action (card L1).
+ *
+ * Revokes the broker token upstream, then cascade-deletes the signed-in user
+ * and every row they own. JWT-only (the `withAuth` bearer); a user can only
+ * delete their **own** data. Irreversible — the caller confirms first.
+ */
+export async function deleteAccount(): Promise<DeleteAccountResult> {
+  const response = await apiFetch(`${API_BASE}/account`, { method: "DELETE" });
+  if (!response.ok) throw new Error(`Delete failed (${response.status}).`);
+  return response.json();
 }
 
 export interface WatchlistItem {
@@ -321,23 +339,11 @@ export async function removeFromWatchlist(symbol: string): Promise<void> {
 }
 
 // --------------------------------------------------------------------------- //
-// Portfolio dashboard (card D1) — read-only, and gated
+// Portfolio dashboard (card D1) — read-only, per-user
 // --------------------------------------------------------------------------- //
-/**
- * The interim C0 admin secret, sent on every `/portfolio/*` request.
- *
- * **Never set this in Vercel (or any hosted environment).** `NEXT_PUBLIC_*` values are
- * inlined into the JavaScript bundle every visitor downloads, so setting it in a
- * deployment publishes the operator's portfolio to the world. It belongs in
- * `frontend/.env.local` (gitignored) on the operator's own machine and nowhere
- * else.
- *
- * F3 made it **optional** rather than required: with `NEXT_PUBLIC_AUTH_ENABLED`
- * on, the Clerk session token is the credential and this is not needed at all.
- * It survives for the flag-off interim only, and card L1 removes it along with
- * the backend half.
- */
-export const ADMIN_SECRET = process.env.NEXT_PUBLIC_ALPHADESK_ADMIN_SECRET || "";
+// The interim C0 admin secret was removed at card L1 along with its backend
+// half (the F3 §5 checklist). With `NEXT_PUBLIC_AUTH_ENABLED` on, the Clerk
+// session token (`withAuth`) is the only credential `/portfolio/*` ever needs.
 
 /** Money arrives as a decimal string — see `backend/api/routes/portfolio.py`. */
 export type Money = string | null;
@@ -429,7 +435,7 @@ export interface HistoryResponse {
  * The backend never returns a bare 500 for a source failure, so `code` is
  * always one the dashboard has a state for: `not_linked` (Connect gate),
  * `rate_limited` (quiet retry notice), `unverified_shape` (the IND_STOCK
- * boundary), `locked` (no admin secret configured here).
+ * boundary), `locked` (sign-in not compiled into this build).
  */
 export class PortfolioError extends Error {
   readonly status: number;
@@ -450,16 +456,15 @@ async function portfolioFetch<T>(
   signal?: AbortSignal,
   { method = "GET" }: { method?: "GET" | "POST" } = {},
 ): Promise<T> {
-  // Flag off, the admin secret is the only credential this build can produce,
-  // so its absence really is a locked build. Flag on, a signed-out visitor is
-  // an ordinary state and the backend's 401 is the honest answer — refusing to
-  // make the request would render "locked" at somebody who just needs to sign
-  // in.
-  if (!ADMIN_SECRET && !AUTH_ENABLED) {
+  // Flag off there is no way to produce a credential, so the build is locked.
+  // Flag on, a signed-out visitor is an ordinary state and the backend's 401 is
+  // the honest answer — refusing to make the request would render "locked" at
+  // somebody who just needs to sign in.
+  if (!AUTH_ENABLED) {
     throw new PortfolioError(
       0,
       "locked",
-      "No admin secret is configured in this build.",
+      "Sign-in is not switched on in this build.",
     );
   }
 
@@ -467,7 +472,6 @@ async function portfolioFetch<T>(
   try {
     response = await apiFetch(`${API_BASE}${path}`, {
       method,
-      headers: ADMIN_SECRET ? { "x-alphadesk-admin-secret": ADMIN_SECRET } : undefined,
       cache: "no-store",
       signal,
     });
@@ -608,8 +612,8 @@ export interface OverviewHandlers {
 /**
  * POST /portfolio/overview — stream the AI narrative over Python-computed metrics.
  *
- * Same gate as the rest of `/portfolio/*` (Clerk JWT, or the interim admin
- * secret until L1). The stream always ends in a `complete` event carrying every
+ * Same gate as the rest of `/portfolio/*` (Clerk JWT). The stream always ends
+ * in a `complete` event carrying every
  * metric; when the model is unavailable that event is flagged `degraded` and the
  * narrative is empty — the panel then renders "AI overview unavailable" while
  * every number still shows. A source failure (unlinked, throttled) is a normal
@@ -619,8 +623,8 @@ export async function streamOverview(
   handlers: OverviewHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
-  if (!ADMIN_SECRET && !AUTH_ENABLED) {
-    handlers.onError?.("No admin secret is configured in this build.", 0);
+  if (!AUTH_ENABLED) {
+    handlers.onError?.("Sign-in is not switched on in this build.", 0);
     return;
   }
 
@@ -628,7 +632,6 @@ export async function streamOverview(
   try {
     response = await apiFetch(`${API_BASE}/portfolio/overview`, {
       method: "POST",
-      headers: ADMIN_SECRET ? { "x-alphadesk-admin-secret": ADMIN_SECRET } : undefined,
       cache: "no-store",
       signal,
     });

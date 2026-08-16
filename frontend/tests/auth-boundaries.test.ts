@@ -124,10 +124,11 @@ describe("lib/api.ts", () => {
     expect(api).toMatch(/withAuth\(init\.headers\)/);
   });
 
-  it("still sends the interim C0 admin header (card L1 is what removes it)", () => {
-    // F3 narrowed it to `/portfolio/*` and made it optional; it cannot go away
-    // entirely until sign-in is switched on in production. Which endpoints it
-    // reaches is pinned in `auth-credentials.test.ts`.
-    expect(api).toMatch(/x-alphadesk-admin-secret/);
+  it("no longer sends the interim C0 admin header (removed at card L1)", () => {
+    // The F3 §5 removal: with sign-in on in production, the Clerk token is the
+    // only credential `/portfolio/*` needs. Neither the header nor the env var
+    // that fed it survives in the client.
+    expect(api).not.toMatch(/x-alphadesk-admin-secret/);
+    expect(api).not.toMatch(/NEXT_PUBLIC_ALPHADESK_ADMIN_SECRET/);
   });
 });

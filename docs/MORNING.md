@@ -153,3 +153,35 @@ See `docs/STATUS.md` (always current) and the per-card `docs/SPECS/` +
   end-to-end narrative against your live linked account is the only thing a mock
   could not do — run `/portfolio` signed in (or single-tenant dev) with the key
   set to see it.
+
+## L1 — THE INVITE GATE IS OPEN (built; your remaining steps to actually invite)
+
+L1 is built and merged-ready on `feat/prelaunch`. The code side of the gate is
+done: delete-my-data, consent-at-link-time, real privacy/terms, rate-limit 429s,
+the F3 §5 admin removal, and `NEXT_PUBLIC_AUTH_ENABLED` flipped **on** (via
+committed `frontend/.env.production`). The remaining steps are all **operator
+wiring** — nothing ships to a real person until these are done:
+
+1. **Enable Clerk Waitlist mode** in the Clerk Dashboard (Configure → Restrictions
+   → Waitlist), so a stranger who visits registers interest instead of signing up.
+2. **Set the real Clerk keys on Vercel** — `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and
+   `CLERK_SECRET_KEY` (plain, not `NEXT_PUBLIC_`). The flag is on now, so a build
+   with placeholder keys is a **broken** site (F2 landmine: `clerk-js` navigates
+   every page to a `host_invalid` error). Real keys, no exceptions. The Space
+   already has `CLERK_JWKS_URL` / `CLERK_ISSUER` / `CLERK_AUTHORIZED_PARTIES` from
+   F3 — confirm `CLERK_AUTHORIZED_PARTIES` includes the live frontend origin.
+3. **Unset `ALPHADESK_ADMIN_SECRET` on the Space** (F3 §5 step 8). The code that
+   read it is deleted, so this changes nothing functionally — it is hygiene, to
+   retire the dead secret. After this, the operator reaches `/portfolio` and the
+   Lab by **signing in with Clerk**, not the admin header (which no longer works).
+4. **Re-link IND Money the real way:** sign in on the live site, click Connect,
+   agree on the consent screen, complete the broker OAuth. (The old
+   admin-header `POST /auth/login` reconnect is gone.) This is also the last
+   unverified end-to-end path — the real link + a real `DELETE /account` against
+   Neon.
+5. **Approve the first users** from the Clerk Dashboard as invites go out.
+
+Optional but recommended: tune `RATE_LIMIT_PER_CALLER_MAX` / `RATE_LIMIT_GLOBAL_MAX`
+on the Space if the defaults (60 / 600 per 60s on `/analyze`, `/portfolio/overview`,
+`/auth/login`) are looser or tighter than you want. And keep the OpenAI provider-side
+budget cap from the A1 items above — the app-side ceilings degrade, they do not bill-stop.

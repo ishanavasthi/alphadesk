@@ -1,18 +1,17 @@
 /**
- * Which credential goes to which endpoint, after card F3 made the backend
- * per-user.
+ * Which credential goes to which endpoint — the post-L1 state.
  *
- * Three rules, and each of them is a security decision rather than a style one:
+ * Card L1 executed the F3 §5 removal, so the interim C0 admin secret is gone
+ * from the client entirely. What remains:
  *
- * 1. **`/auth/login` and `/auth/logout` never carry the admin secret.** The
- *    backend refuses it there, and it should never be offered: a link made
- *    under a shared operator secret has no owner, which is the process-wide
- *    credential F3 deleted.
- * 2. **`/portfolio/*` still carries it when the build has one.** Sign-in is off
- *    in production until card L1, so this is the operator's only way in.
- * 3. **A missing admin secret is not a locked build once sign-in is on.** The
- *    Clerk token becomes the credential, and refusing to make the request would
- *    render "locked" at a visitor who simply needs to sign in.
+ * 1. **No endpoint carries an admin header.** Not `/auth/*`, not `/portfolio/*` —
+ *    even a build that still has the old `NEXT_PUBLIC_ALPHADESK_ADMIN_SECRET`
+ *    env var set sends nothing, because the code that read it is deleted.
+ * 2. **The Clerk session token (via `withAuth`) is the only credential.** With
+ *    sign-in on it is attached automatically; a signed-out visitor gets the
+ *    backend's honest 401.
+ * 3. **A flag-off build is locked.** With `NEXT_PUBLIC_AUTH_ENABLED` off there is
+ *    no credential to send, so `/portfolio/*` calls short-circuit to `locked`.
  *
  * Driven through the real exported functions with a stubbed `fetch`, so the
  * assertions are about what leaves the browser.
@@ -87,32 +86,33 @@ describe("linking is identity-bound", () => {
     expect(headerOf(calls[0].init, ADMIN_HEADER)).toBeNull();
   });
 
-  it("does send it to /auth/status, which is a read and per-caller", async () => {
+  it("no longer sends the admin header to /auth/status (removed at L1)", async () => {
     const calls = stubFetch(200, { authenticated: true });
     const api = await loadApi({ NEXT_PUBLIC_ALPHADESK_ADMIN_SECRET: "operator-secret" });
 
     await api.getAuthStatus();
 
-    expect(headerOf(calls[0].init, ADMIN_HEADER)).toBe("operator-secret");
+    // The F3 §5 removal: even with the old env var set, no admin header leaves.
+    expect(headerOf(calls[0].init, ADMIN_HEADER)).toBeNull();
   });
 });
 
 describe("/portfolio/* credentials", () => {
-  it("sends the interim admin secret when the build has one", async () => {
+  it("never sends an admin header, even with the old env var set (removed at L1)", async () => {
     const calls = stubFetch(200, { user_id: "local" });
-    const api = await loadApi({ NEXT_PUBLIC_ALPHADESK_ADMIN_SECRET: "operator-secret" });
+    const api = await loadApi({
+      NEXT_PUBLIC_ALPHADESK_ADMIN_SECRET: "operator-secret",
+      NEXT_PUBLIC_AUTH_ENABLED: "true",
+    });
 
     await api.getPortfolioSummary();
 
-    expect(headerOf(calls[0].init, ADMIN_HEADER)).toBe("operator-secret");
+    expect(headerOf(calls[0].init, ADMIN_HEADER)).toBeNull();
   });
 
-  it("is a locked build when there is no secret and no sign-in", async () => {
+  it("is a locked build when sign-in is not compiled in", async () => {
     stubFetch();
-    const api = await loadApi({
-      NEXT_PUBLIC_ALPHADESK_ADMIN_SECRET: undefined,
-      NEXT_PUBLIC_AUTH_ENABLED: undefined,
-    });
+    const api = await loadApi({ NEXT_PUBLIC_AUTH_ENABLED: undefined });
 
     await expect(api.getPortfolioSummary()).rejects.toMatchObject({ code: "locked" });
     expect(fetch).not.toHaveBeenCalled();

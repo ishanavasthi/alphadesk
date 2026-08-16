@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ADMIN_SECRET,
   PortfolioError,
   capturePortfolioSnapshot,
   getPortfolioAllocation,
@@ -15,6 +14,7 @@ import {
   type PortfolioSummary,
 } from "@/lib/api";
 import { AUTH_ENABLED } from "@/lib/auth";
+import { useLinkConsent } from "@/components/consent/LinkConsent";
 import { AiOverview } from "@/components/portfolio/AiOverview";
 import { AllocationBars, AllocationBarsSkeleton } from "@/components/portfolio/AllocationBars";
 import { CapStrip } from "@/components/portfolio/CapStrip";
@@ -118,6 +118,7 @@ export default function PortfolioPage() {
 
   const [connectBusy, setConnectBusy] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const { begin: beginConsent, dialog: consentDialog } = useLinkConsent();
 
   const [captureState, setCaptureState] = useState<CaptureState>("idle");
 
@@ -135,10 +136,10 @@ export default function PortfolioPage() {
   const sectorToken = useRef(0);
 
   useEffect(() => {
-    // Flag off, the admin secret is the only credential this build can send, so
-    // its absence is a locked build. Flag on, a signed-out visitor is a normal
-    // state the backend answers 401 for, and `unauthorized` is what renders.
-    if (!ADMIN_SECRET && !AUTH_ENABLED) {
+    // Flag off there is no credential this build can send, so it is locked.
+    // Flag on, a signed-out visitor is a normal state the backend answers 401
+    // for, and `unauthorized` is what renders.
+    if (!AUTH_ENABLED) {
       setPhase("locked");
       return;
     }
@@ -261,19 +262,21 @@ export default function PortfolioPage() {
     return () => clearTimeout(timer);
   }, [captureState]);
 
-  const connect = useCallback(async () => {
+  const runConnect = useCallback(async () => {
     setConnectBusy(true);
     setConnectError(null);
     try {
       const url = await startAuthLogin();
       window.location.href = url;
     } catch (err) {
-      setConnectError(
-        `${(err as Error).message} Connecting is an operator-only action on this deployment.`,
-      );
+      setConnectError((err as Error).message);
       setConnectBusy(false);
     }
   }, []);
+
+  // The Connect button routes through the link-time consent screen (card L1) —
+  // there is no path to `/auth/login` here that skips it.
+  const connect = useCallback(() => beginConsent(runConnect), [beginConsent, runConnect]);
 
   /**
    * Switch the sector card to one asset type (or back to the whole portfolio).
@@ -327,7 +330,12 @@ export default function PortfolioPage() {
   if (phase === "locked") return <LockedState />;
   if (phase === "unauthorized") return <UnauthorizedState />;
   if (phase === "connect") {
-    return <ConnectGate onConnect={connect} busy={connectBusy} error={connectError} />;
+    return (
+      <>
+        <ConnectGate onConnect={connect} busy={connectBusy} error={connectError} />
+        {consentDialog}
+      </>
+    );
   }
   if (phase === "error") return <SourceErrorState message={errorMessage} onRetry={refresh} />;
   if (phase === "loading" || !summary) {

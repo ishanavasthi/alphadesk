@@ -1,41 +1,35 @@
 import type { ReactNode } from "react";
 
-import { Badge } from "@/components/portfolio/ui";
-
 /**
- * The shared frame for the `/privacy` and `/terms` placeholder pages (card U1).
+ * The shared frame for the `/privacy` and `/terms` policy pages.
  *
- * These exist now so the footer's Privacy/Terms links — which D1, A1 and the
- * demo already render on every page — resolve to a real page (200) instead of a
- * 404. **The full policy is card L1's work**; a `soon` badge and a one-line note
- * say so rather than presenting a stub as the finished document. A product that
- * asks for account access owes the reader reachable links here even before the
- * text is final.
+ * Card U1 shipped these as reachable placeholders; **card L1 fills them with the
+ * real content** — the DPDP data-fiduciary obligations, the named subprocessors,
+ * the retention and deletion policy. A product that reads someone's net worth
+ * owes them a real, reachable policy, linked from the footer of every page.
  */
 export function LegalPage({
   title,
+  updated,
   summary,
   children,
 }: {
   title: string;
+  updated: string;
   summary: string;
-  children?: ReactNode;
+  children: ReactNode;
 }) {
   return (
     <main className="mx-auto max-w-2xl px-4 py-16 sm:px-6">
-      <div className="mb-3 flex items-center gap-2.5">
-        <h1 className="text-xl font-semibold tracking-[-0.02em]">{title}</h1>
-        <Badge variant="soon">L1 · full policy at launch</Badge>
+      <h1 className="text-xl font-semibold tracking-[-0.02em]">{title}</h1>
+      <p className="mt-1 text-xs text-[var(--adp-faint)]">Last updated {updated}</p>
+      <p className="mt-4 text-[14px] leading-relaxed text-muted-foreground">{summary}</p>
+      <div className="mt-8 space-y-6 text-[13.5px] leading-relaxed text-muted-foreground [&_h2]:mt-1 [&_h2]:text-[15px] [&_h2]:font-semibold [&_h2]:text-foreground [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5 [&_a]:underline [&_a:hover]:text-foreground">
+        {children}
       </div>
-      <p className="text-[14px] leading-relaxed text-muted-foreground">{summary}</p>
-      {children ? (
-        <div className="mt-6 space-y-3 text-[13.5px] leading-relaxed text-muted-foreground">
-          {children}
-        </div>
-      ) : null}
-      <p className="mt-8 text-xs text-[var(--adp-faint)]">
-        This is a placeholder. The complete policy is published at launch. Questions
-        in the meantime: open an issue on the project&rsquo;s GitHub.
+      <p className="mt-10 text-xs text-[var(--adp-faint)]">
+        Questions, or a request under your data-protection rights? Open an issue on the
+        project&rsquo;s GitHub, or use &ldquo;Delete my data&rdquo; in the account menu.
       </p>
     </main>
   );

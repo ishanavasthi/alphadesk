@@ -1,6 +1,10 @@
 "use client";
 
 import { SignInButton, UserButton, useUser } from "@clerk/nextjs";
+import { Trash2 } from "lucide-react";
+import { useState } from "react";
+
+import { DeleteMyDataDialog } from "@/components/clerk/DeleteMyDataDialog";
 
 /**
  * The top-bar identity control: avatar menu when signed in, "Sign in" when not.
@@ -16,6 +20,7 @@ import { SignInButton, UserButton, useUser } from "@clerk/nextjs";
  */
 export function ClerkUserMenu() {
   const { isLoaded, isSignedIn } = useUser();
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   if (!isLoaded) {
     // Same footprint as the avatar it becomes, so the row never reflows.
@@ -35,5 +40,20 @@ export function ClerkUserMenu() {
     );
   }
 
-  return <UserButton appearance={{ elements: { avatarBox: "h-7 w-7" } }} />;
+  return (
+    <>
+      <UserButton appearance={{ elements: { avatarBox: "h-7 w-7" } }}>
+        {/* The DPDP "delete my data" action lives in the account menu (a4-shell).
+            It opens an explicit type-to-confirm dialog before anything happens. */}
+        <UserButton.MenuItems>
+          <UserButton.Action
+            label="Delete my data"
+            labelIcon={<Trash2 className="h-3.5 w-3.5" />}
+            onClick={() => setDeleteOpen(true)}
+          />
+        </UserButton.MenuItems>
+      </UserButton>
+      <DeleteMyDataDialog open={deleteOpen} onClose={() => setDeleteOpen(false)} />
+    </>
+  );
 }

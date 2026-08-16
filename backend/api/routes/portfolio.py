@@ -9,9 +9,8 @@ rules shape the whole file:
    boundary M1 established (`docs/SPECS/M1.md` §8) does not stop at
    `backend/portfolio/`.
 2. **Every route is per user.** The user id comes from a verified Clerk session
-   token, or — until card L1 turns sign-in on in production — from the interim
-   C0 admin secret, which acts as the operator. See :func:`portfolio_identity`
-   and :func:`_admin_identity`; the second of those is marked for deletion.
+   token (`portfolio_identity`); single-tenant dev serves ``"local"``. The
+   interim C0 admin-secret path was removed at card L1 (the F3 §5 checklist).
 3. **No source failure becomes a raw 500.** Every ``PortfolioSourceError`` maps
    to a status the frontend can act on, with a machine-readable ``code``.
 
@@ -49,6 +48,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import bearer_token, register_identity, verify_token
+from tools.ind_money_auth import LOCAL_USER_ID, single_tenant_mode
 from portfolio.connectors import (
     IndMoneyConnector,
     PortfolioConnector,
@@ -129,39 +129,8 @@ def _needs_capture(captured_at: Optional[datetime]) -> bool:
 # --------------------------------------------------------------------------- #
 # Who is asking?
 # --------------------------------------------------------------------------- #
-async def _admin_identity(supplied: Optional[str]) -> str:
-    """INTERIM — the C0 admin-secret path. **Delete this at card L1.**
-
-    Removal is one function and its two call sites: this, and the
-    `x_alphadesk_admin_secret` parameter of :func:`portfolio_identity`. It dies
-    the moment `ALPHADESK_ADMIN_SECRET` is unset in the Space, which is part of
-    the L1 release checklist (`docs/SPECS/F3.md` §interim).
-
-    Why it survives F3 at all: `NEXT_PUBLIC_AUTH_ENABLED` is **off** in
-    production until L1, so the deployed frontend has no sign-in UI and can mint
-    no Clerk token. A pure-JWT gate here would lock the operator out of their own
-    dashboard for the whole interval between this card and that release — the
-    exact failure F2 §1 declined to cause. So `/portfolio/*` accepts either.
-
-    `/auth/login` and `/auth/logout` do **not**. Linking is identity-bound now,
-    and an admin-header link path is precisely what C0 existed to stop.
-
-    The identity an admin-header request acts as is the operator's — their Clerk
-    id once they have signed in (adoption moved the data there) and ``"local"``
-    before that (where the data still is). Never a stranger, never "the only
-    user in the table"; see `services.adoption.admin_identity`.
-    """
-    from api.main import _require_admin
-
-    _require_admin(supplied)
-    from services.adoption import admin_identity
-
-    return await admin_identity()
-
-
 async def portfolio_identity(
     authorization: Optional[str] = Header(default=None),
-    x_alphadesk_admin_secret: Optional[str] = Header(default=None),
     # `optional_session` is the *lazy* session dependency: it yields None when
     # `DATABASE_URL` is unset and otherwise hands over a session object without
     # connecting, so resolving it before the token costs nothing and cannot
@@ -170,24 +139,29 @@ async def portfolio_identity(
     # depending on `verified_claims` ahead of the session.)
     session: Optional[AsyncSession] = Depends(optional_session),
 ) -> str:
-    """The user these routes serve: a verified Clerk id, or the interim operator.
+    """The user these routes serve: a verified Clerk id (or the local operator).
 
-    A JWT wins whenever one is present, so the moment L1 flips the flag every
-    request is identity-bound with no further change here. A request with **no**
-    `Authorization` header falls through to the interim admin path above.
+    **JWT-only in production as of card L1.** The interim C0 admin-secret path
+    was removed here (the F3 §5 checklist): `NEXT_PUBLIC_AUTH_ENABLED` is now on,
+    every visitor mints a Clerk token, and an admin-header request no longer
+    authenticates anything. A caller with **no** verified identity gets the
+    backend's 401 (`bearer_token` raises on a missing header), never a
+    fall-through to an unowned credential.
 
-    A *bad* `Authorization` header is a 401, never a fall-through to the admin
-    secret: letting a rejected token retry as an anonymous admin request would
-    make the weaker credential the effective one.
+    The one exception is single-tenant dev (`ALPHADESK_SINGLE_TENANT=1`, the
+    operator's own machine, which has no Clerk instance): with no token it serves
+    ``"local"``, the same identity that machine's broker link and snapshots are
+    keyed under — matching `_lab_identity` and `_link_identity`. That flag stays
+    unset in every deployed environment.
     """
-    if authorization:
-        claims = await asyncio.to_thread(verify_token, bearer_token(authorization))
-        if session is None:
-            # No database on this deployment: the token is still the identity,
-            # there is simply nowhere to record that we have seen it.
-            return str(claims["sub"])
-        return await register_identity(session, claims)
-    return await _admin_identity(x_alphadesk_admin_secret)
+    if not authorization and single_tenant_mode():
+        return LOCAL_USER_ID
+    claims = await asyncio.to_thread(verify_token, bearer_token(authorization))
+    if session is None:
+        # No database on this deployment: the token is still the identity,
+        # there is simply nowhere to record that we have seen it.
+        return str(claims["sub"])
+    return await register_identity(session, claims)
 
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
@@ -247,6 +221,17 @@ def connector_factory() -> Callable[[str], PortfolioConnector]:
 def reset_connector() -> None:
     """Drop every cached connector (tests, and a source switch in dev)."""
     _connectors.clear()
+
+
+def evict_connector(user_id: str) -> None:
+    """Drop one user's cached connector (card L1, delete-my-data).
+
+    The connector holds a reference to the user's `AuthStore`, which caches
+    decrypted tokens. When the account is deleted the connector must go too, or a
+    later request under a re-used id could be served by a stale one carrying
+    credentials that no longer belong to anyone.
+    """
+    _connectors.pop(user_id, None)
 
 
 # --------------------------------------------------------------------------- #
@@ -647,6 +632,7 @@ __all__ = [
     "SOURCE_ENV",
     "connector_factory",
     "connector_for_request",
+    "evict_connector",
     "get_connector",
     "portfolio_identity",
     "reset_connector",

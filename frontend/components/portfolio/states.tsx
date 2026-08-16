@@ -96,39 +96,31 @@ export function ConnectGate({
  * This build has no credential it could send.
  *
  * The backend is per-user as of card F3, so the credential that matters is a
- * Clerk session token. Until card L1 turns sign-in on, this build has none to
- * offer, and the interim operator secret is the only thing left — so a build
- * without it is locked. Both this state and the secret disappear at L1.
+ * Clerk session token. This state renders only in a build compiled with
+ * `NEXT_PUBLIC_AUTH_ENABLED` off — with the flag on (the shipped state after
+ * L1) a signed-out visitor sees the sign-in prompt instead.
  */
 export function LockedState() {
   return (
     <Gate glyph="🔒" title="Portfolio is locked on this deployment">
       <p className="mb-3 text-[13px] text-muted-foreground">
         The backend serves each person their own portfolio, but sign-in is not switched on in
-        this build yet — so there is no account to see it as. It opens at{" "}
-        <b className="font-semibold text-foreground">card L1</b>.
+        this build — so there is no account to see it as.
       </p>
       <p className="text-xs text-[var(--adp-faint)]">
-        Running this locally? Put <code>NEXT_PUBLIC_ALPHADESK_ADMIN_SECRET</code> in{" "}
-        <code>frontend/.env.local</code> — never in a hosted environment, where it would be
-        compiled into the public bundle.
+        This is a build compiled with sign-in disabled. The live site has it on;
+        sign in there to see your own dashboard.
       </p>
-      <div className="mt-3.5">
-        <Badge variant="soon">L1 · sign-in</Badge>
-      </div>
     </Gate>
   );
 }
 
-/** The backend answered 401: no valid session, and no accepted operator secret. */
+/** The backend answered 401: no valid session. */
 export function UnauthorizedState() {
   return (
     <Gate glyph="⚠" title="Not signed in">
       <p className="text-[13px] text-muted-foreground">
-        The backend answered 401. Sign in to see your own portfolio — or, on an operator build,
-        check that <code>NEXT_PUBLIC_ALPHADESK_ADMIN_SECRET</code> in
-        <code> frontend/.env.local</code> matches <code>ALPHADESK_ADMIN_SECRET</code> in the
-        backend&rsquo;s environment.
+        The backend answered 401. Sign in to see your own portfolio.
       </p>
     </Gate>
   );

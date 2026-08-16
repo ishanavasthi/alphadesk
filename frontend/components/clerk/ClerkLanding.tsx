@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { useIndMoney } from "@/components/AuthProvider";
+import { useLinkConsent } from "@/components/consent/LinkConsent";
 import { ConnectGate } from "@/components/portfolio/states";
 import { startAuthLogin } from "@/lib/api";
 
@@ -59,8 +60,9 @@ export function ClerkLanding({ children }: { children: ReactNode }) {
 function ConnectGateBranch() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { begin: beginConsent, dialog: consentDialog } = useLinkConsent();
 
-  const connect = useCallback(async () => {
+  const runConnect = useCallback(async () => {
     setBusy(true);
     setError(null);
     try {
@@ -72,9 +74,14 @@ function ConnectGateBranch() {
     }
   }, []);
 
+  // Consent-at-link-time (card L1): the gate button opens the consent screen,
+  // and only agreeing there starts OAuth.
+  const connect = useCallback(() => beginConsent(runConnect), [beginConsent, runConnect]);
+
   return (
     <div className="mx-auto max-w-[1120px] px-4 sm:px-6">
       <ConnectGate onConnect={connect} busy={busy} error={error} />
+      {consentDialog}
     </div>
   );
 }

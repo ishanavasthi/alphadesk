@@ -197,7 +197,7 @@ async def test_single_tenant_dev_can_still_link_without_a_token(
 
 
 # --------------------------------------------------------------------------- #
-# The interim admin path on /portfolio/*
+# /portfolio/* is JWT-only after L1 (the interim admin path is gone)
 # --------------------------------------------------------------------------- #
 ROUTES = [
     "/portfolio/summary",
@@ -208,9 +208,15 @@ ROUTES = [
 
 
 @pytest.mark.parametrize("route", ROUTES)
-async def test_the_admin_header_still_works_until_l1(client: Any, route: str) -> None:
+async def test_the_admin_header_no_longer_authenticates(client: Any, route: str) -> None:
+    """The F3 §5 removal: an admin-header `/portfolio/*` request is 401 now.
+
+    `ALPHADESK_ADMIN_SECRET` is set by the `env` fixture, so this proves the
+    header is inert even when the old secret is still configured — the code path
+    is gone, not merely unconfigured.
+    """
     app.dependency_overrides[connector_for_request] = lambda: StubConnector()
-    assert (await client.get(route, headers=ADMIN)).status_code == 200
+    assert (await client.get(route, headers=ADMIN)).status_code == 401
 
 
 @pytest.mark.parametrize("route", ROUTES)
@@ -222,19 +228,15 @@ async def test_a_jwt_works_without_the_admin_header(
 
 
 @pytest.mark.parametrize("route", ROUTES)
-async def test_neither_credential_is_401(client: Any, route: str) -> None:
+async def test_no_credential_is_401(client: Any, route: str) -> None:
     app.dependency_overrides[connector_for_request] = lambda: StubConnector()
     assert (await client.get(route)).status_code == 401
 
 
-async def test_a_bad_token_does_not_fall_through_to_the_admin_path(
+async def test_a_bad_token_with_the_admin_secret_is_still_401(
     client: Any, clerk: rsa.RSAPrivateKey
 ) -> None:
-    """Presenting a rejected token *and* the admin secret must not succeed.
-
-    Otherwise the effective credential is whichever of the two is weaker, and
-    every future tightening of the token path is decorative.
-    """
+    """A rejected token alongside the (now inert) admin secret is 401."""
     app.dependency_overrides[connector_for_request] = lambda: StubConnector()
     response = await client.get(
         "/portfolio/summary",
@@ -243,19 +245,13 @@ async def test_a_bad_token_does_not_fall_through_to_the_admin_path(
     assert response.status_code == 401
 
 
-async def test_an_expired_token_does_not_fall_through_either(
+async def test_an_expired_token_with_the_admin_secret_is_still_401(
     client: Any, clerk: rsa.RSAPrivateKey
 ) -> None:
     app.dependency_overrides[connector_for_request] = lambda: StubConnector()
     stale = bearer(clerk, USER_A, exp=1)
     response = await client.get("/portfolio/summary", headers={**stale, **ADMIN})
     assert response.status_code == 401
-
-
-async def test_the_admin_path_acts_as_local_before_adoption(client: Any) -> None:
-    app.dependency_overrides[connector_for_request] = lambda: StubConnector()
-    body = (await client.get("/portfolio/summary", headers=ADMIN)).json()
-    assert body["user_id"] == auth.LOCAL_USER_ID
 
 
 async def test_auth_status_registers_the_identity_too(
@@ -280,23 +276,15 @@ async def test_auth_status_registers_the_identity_too(
     assert USER_A in rows
 
 
-async def test_the_admin_path_follows_the_operator_after_adoption(
-    client: Any, clerk: rsa.RSAPrivateKey, monkeypatch: pytest.MonkeyPatch
+async def test_single_tenant_dev_serves_local_on_portfolio(
+    client: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The operator signs in once; the admin header must keep reaching the same
-    data afterwards, or their dashboard empties out on the day identity lands."""
-    monkeypatch.setenv(adoption.OPERATOR_EMAIL_ENV, "operator@example.com")
+    """With the admin path gone, single-tenant dev is the operator's headerless
+    way into `/portfolio/*` — served as ``"local"``, matching the Lab."""
+    monkeypatch.setenv("ALPHADESK_SINGLE_TENANT", "1")
     app.dependency_overrides[connector_for_request] = lambda: StubConnector()
-
-    signed_in = await client.get(
-        "/portfolio/summary",
-        headers=bearer(clerk, USER_A, email="operator@example.com"),
-    )
-    assert signed_in.json()["user_id"] == USER_A
-
-    adoption.reset_adoption_cache()
-    body = (await client.get("/portfolio/summary", headers=ADMIN)).json()
-    assert body["user_id"] == USER_A
+    body = (await client.get("/portfolio/summary")).json()
+    assert body["user_id"] == auth.LOCAL_USER_ID
 
 
 # --------------------------------------------------------------------------- #
@@ -399,42 +387,39 @@ async def test_every_callback_branch_escapes(client: Any) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The interim admin path has exactly one acceptance rule
+# No admin-header path authenticates anything after L1 (the F3 §5 checklist)
 # --------------------------------------------------------------------------- #
-async def test_every_admin_site_goes_through_one_function(
+async def test_no_admin_path_authenticates_post_l1(
     client: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Unsetting `ALPHADESK_ADMIN_SECRET` must close **every** interim site.
+    """The whole point of the L1 removal, pinned across every interim site.
 
-    That is the L1 removal story, and it only holds while there is one
-    acceptance rule. This card's review found a third site with its own inline
-    comparison, which no removal note mentioned — so the property is pinned:
-    with the secret unset, none of the three admits anyone.
+    `ALPHADESK_ADMIN_SECRET` is **set** (the `env` fixture), so this proves the
+    header is inert because the code is gone, not because the secret is missing:
+    the write site (`/auth/login`) and the read sites (`/portfolio/*`,
+    `/auth/status`) all refuse to act as anybody.
     """
     app.dependency_overrides[connector_for_request] = lambda: StubConnector()
-    monkeypatch.delenv("ALPHADESK_ADMIN_SECRET", raising=False)
 
     assert (await client.get("/portfolio/summary", headers=ADMIN)).status_code == 401
     assert (await client.post("/auth/login", headers=ADMIN)).status_code == 401
-    # /auth/status never 401s — it answers for nobody instead.
+    # /auth/status never 401s — it answers for nobody instead of the operator.
     assert (await client.get("/auth/status", headers=ADMIN)).json()["user_id"] is None
 
 
-async def test_auth_status_accepts_the_admin_header_while_the_flag_is_off(
-    client: Any
-) -> None:
-    """Ledgered, not accidental: `/auth/status` is a read, and the flag-off v1
-    page polls it with no session. It is in the L1 removal checklist with the
-    other two — see `docs/SPECS/F3.md` §5."""
+async def test_auth_status_ignores_the_admin_header(client: Any) -> None:
+    """`/auth/status` used to report the operator's link under the admin secret;
+    after L1 an admin header is nobody, exactly like an anonymous caller."""
     body = (await client.get("/auth/status", headers=ADMIN)).json()
-    assert body["user_id"] == auth.LOCAL_USER_ID
-
-
-async def test_a_wrong_admin_secret_is_nobody_not_the_operator(client: Any) -> None:
-    body = (
-        await client.get(
-            "/auth/status", headers={"x-alphadesk-admin-secret": "wrong"}
-        )
-    ).json()
     assert body["user_id"] is None
     assert body["authenticated"] is False
+
+
+async def test_auth_status_serves_local_in_single_tenant_dev(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The operator's own machine (`ALPHADESK_SINGLE_TENANT=1`) reports its
+    ``"local"`` link with no token — the F3 §5 replacement for the admin path."""
+    monkeypatch.setenv("ALPHADESK_SINGLE_TENANT", "1")
+    body = (await client.get("/auth/status")).json()
+    assert body["user_id"] == auth.LOCAL_USER_ID

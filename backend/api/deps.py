@@ -420,6 +420,18 @@ def reset_seen_users() -> None:
     _SEEN_USERS.clear()
 
 
+def forget_seen_user(user_id: str) -> None:
+    """Drop one id from the write-avoidance cache (card L1, delete-my-data).
+
+    After `DELETE /account` removes a user's row, this id must not stay in
+    `_SEEN_USERS`: if the same Clerk id signed in again, `ensure_user` would see
+    it as "already inserted" and skip the insert, and the first per-user write
+    (a broker link, a snapshot) would fail its FK onto a `users` row that no
+    longer exists.
+    """
+    _SEEN_USERS.discard(user_id)
+
+
 async def ensure_user(session: AsyncSession, user_id: str, email: str | None) -> None:
     """Insert `user_id` into `users` if this process has not already done so.
 
@@ -553,6 +565,7 @@ __all__ = [
     "claim_email",
     "current_user",
     "ensure_user",
+    "forget_seen_user",
     "get_jwk_client",
     "register_identity",
     "require_authorized_parties",
