@@ -5,7 +5,6 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -47,7 +46,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [busy, setBusy] = useState(false);
   const [waking, setWaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refresh = useCallback(async (): Promise<boolean> => {
     try {
@@ -57,13 +55,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       setAuthed(false);
       return false;
-    }
-  }, []);
-
-  const stopPolling = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
     }
   }, []);
 
@@ -87,48 +78,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })();
     return () => {
       controller.abort();
-      stopPolling();
     };
-  }, [refresh, stopPolling]);
+  }, [refresh]);
 
   const { begin: beginConsent, dialog: consentDialog } = useLinkConsent();
 
-  // The real OAuth start, run only after the consent screen is agreed. The
-  // popup opens synchronously inside the agree click (see `useLinkConsent`), so
-  // it keeps the user activation a popup blocker requires.
+  // The real OAuth start, run only after the consent screen is agreed.
+  //
+  // This navigates the current tab, like every other OAuth flow a user has
+  // seen. It used to open a 520x720 popup and poll `/auth/status` from the
+  // opener until the callback landed — which meant two failure modes this does
+  // not have: a blocked popup fell back to navigating anyway (with nothing left
+  // polling), and the backend's callback page dead-ended on its own origin
+  // telling the user to close a window that was, in that case, their only tab.
+  // The backend now redirects back to `/portfolio?ind=…`, so there is nothing
+  // to poll for — the return trip carries the answer.
   const runConnect = useCallback(async () => {
     if (busy) return;
     setBusy(true);
     setError(null);
-    const popup = window.open("", "_blank", "width=520,height=720");
     try {
       const url = await startAuthLogin();
-      if (popup && !popup.closed) {
-        popup.location.href = url;
-      } else {
-        // Popup blocked: fall back to navigating this tab to the login page.
-        window.location.href = url;
-        return;
-      }
-      // Poll until the backend reports authenticated (callback completed).
-      stopPolling();
-      pollRef.current = setInterval(async () => {
-        if (await refresh()) {
-          stopPolling();
-          setBusy(false);
-        }
-      }, 2000);
-      // Give up the spinner after 3 minutes regardless.
-      setTimeout(() => {
-        stopPolling();
-        setBusy(false);
-      }, 180_000);
+      window.location.href = url;
     } catch (err) {
-      popup?.close();
       setError(describe(err));
       setBusy(false);
     }
-  }, [busy, refresh, stopPolling]);
+  }, [busy]);
 
   // The Connect button routes through consent, always. There is no path from
   // here to `/auth/login` that skips it (card L1).

@@ -27,9 +27,9 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 # Load backend/.env so LLM keys, LANGCHAIN_*, IND_MONEY_MCP_URL are present
@@ -432,6 +432,61 @@ display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
     )
 
 
+#: Where the callback sends the browser once the exchange is done. The path is
+#: fixed and the origin comes from server configuration — **nothing here is
+#: derived from the request**, which is what keeps an OAuth callback from
+#: becoming an open redirect.
+_CALLBACK_LANDING_PATH = "/portfolio"
+
+#: The only `reason` values the callback will ever put in a URL. A broker error
+#: body is attacker-influenced text; echoing it into a query string would move
+#: the reflected-XSS problem `_auth_html` solved onto the frontend origin. The
+#: frontend maps these codes to its own copy.
+_REASON_DENIED = "denied"
+_REASON_MISSING = "missing_params"
+_REASON_STATE = "state"
+_REASON_FAILED = "failed"
+
+
+def _frontend_base_url() -> Optional[str]:
+    """Origin to send the browser back to, or None to stay on this page.
+
+    Read per request rather than at import so an operator can set it without a
+    rebuild, and so tests can drive both branches with `monkeypatch.setenv`.
+
+    `FRONTEND_BASE_URL` wins; otherwise the first `CORS_ALLOW_ORIGINS` entry is
+    used, which in every real deployment *is* the frontend. When neither is set
+    — single-tenant local dev with no frontend running — this returns None and
+    the callback keeps rendering the self-contained page it always did.
+    """
+    explicit = (os.environ.get("FRONTEND_BASE_URL") or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    for origin in os.environ.get("CORS_ALLOW_ORIGINS", "").split(","):
+        origin = origin.strip()
+        if origin:
+            return origin.rstrip("/")
+    return None
+
+
+def _callback_result(
+    message: str, *, ok: bool = False, reason: Optional[str] = None
+) -> Response:
+    """Land the browser back on the frontend, or render the standalone page.
+
+    The popup this endpoint was written for is gone (the frontend navigates the
+    current tab, like every other OAuth flow a user has seen), so dead-ending on
+    the backend origin with "you can close this window" would strand them.
+    """
+    base = _frontend_base_url()
+    if base is None:
+        return _auth_html(message, ok)
+    query = "ind=connected" if ok else f"ind=error&reason={reason or _REASON_FAILED}"
+    return RedirectResponse(
+        f"{base}{_CALLBACK_LANDING_PATH}?{query}", status_code=303
+    )
+
+
 async def _link_identity(
     authorization: Optional[str] = Header(default=None),
     session: Optional[Any] = Depends(optional_session),
@@ -561,31 +616,42 @@ async def auth_logout_endpoint(
     return await logout(user_id)
 
 
-@app.get("/auth/callback", response_class=HTMLResponse)
+@app.get("/auth/callback")
 async def auth_callback_endpoint(
     code: Optional[str] = None,
     state: Optional[str] = None,
     error: Optional[str] = None,
-) -> HTMLResponse:
-    """OAuth redirect target — exchanges the code for tokens.
+) -> Response:
+    """OAuth redirect target — exchanges the code for tokens, then goes home.
 
     **No identity is read off this request.** Not a cookie, not a header, not a
     query parameter beyond the OAuth ones: the owner comes from the
     `oauth_pending` row `state` names, which was written before the user ever
     left for the broker. A state that is unknown, already used, or older than
     ten minutes links nothing and says so.
+
+    On a configured deployment the browser is sent back to the frontend (see
+    `_callback_result`); with no frontend configured it still renders the
+    standalone page, so local single-tenant dev is unchanged.
     """
     if error:
-        return _auth_html(f"Authorization failed: {error}")
+        return _callback_result(
+            f"Authorization failed: {error}", reason=_REASON_DENIED
+        )
     if not code or not state:
-        return _auth_html("Missing authorization code or state.")
+        return _callback_result(
+            "Missing authorization code or state.", reason=_REASON_MISSING
+        )
     try:
         await complete_login(code, state)
     except OAuthStateError as exc:
-        return _auth_html(f"{exc} Nothing was connected.")
+        return _callback_result(f"{exc} Nothing was connected.", reason=_REASON_STATE)
     except Exception:  # noqa: BLE001 - the message can carry broker payload text
-        return _auth_html("Login failed. Please start the connection again.")
-    return _auth_html("IND Money connected.", ok=True)
+        return _callback_result(
+            "Login failed. Please start the connection again.",
+            reason=_REASON_FAILED,
+        )
+    return _callback_result("IND Money connected.", ok=True)
 
 
 @app.post("/analyze")

@@ -32,7 +32,11 @@ import {
 
 beforeEach(() => {
   startAuthLogin.mockClear();
-  // A real popup object so `runConnect` doesn't fall back to navigation.
+  // `runConnect` navigates the current tab now; jsdom logs "Not implemented"
+  // for that and carries on, which is fine — these tests assert that
+  // `/auth/login` was reached, not where the browser went next. `open` stays
+  // stubbed so a regression back to the popup would fail loudly here rather
+  // than silently open a window in the test environment.
   vi.stubGlobal("open", vi.fn(() => ({ closed: false, location: { href: "" } })));
 });
 

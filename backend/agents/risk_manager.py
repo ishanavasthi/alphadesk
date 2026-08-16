@@ -8,7 +8,7 @@ enforcement is deterministic (correctness must not depend on the LLM):
 - Analyst 'avoid' recommendations are rejected
 
 Each recommendation yields a ``RiskAssessment`` with a PASS / REJECT / FLAG
-decision. ``llama-3.3-70b-versatile`` is used only to attach human-readable risk
+decision. ``openai/gpt-oss-120b`` is used only to attach human-readable risk
 notes. If every candidate is rejected, ``state.rejection_reason`` is set.
 """
 
@@ -25,7 +25,9 @@ from graph.state import (
     RiskAssessment,
 )
 
-RISK_MODEL = "llama-3.3-70b-versatile"
+# NOTE: the ``openai/`` prefix is part of the *Groq* model id (GPT OSS 120B
+# served by Groq) — this agent still routes through Groq, not OpenAI.
+RISK_MODEL = "openai/gpt-oss-120b"
 MIN_CONFIDENCE = 0.70
 MAX_PER_SECTOR = 3
 _FLAG_BAND = 0.75  # passes guardrails but flagged for review when below this

@@ -8,525 +8,232 @@ pinned: false
 ---
 # AlphaDesk
 
-AlphaDesk is a multi-agent Indian equity research system built with LangGraph. It
-works like an automated research desk: it scans the NSE market, researches
-candidates, writes structured analyst reports, enforces risk guardrails, and
-requires human approval before adding any stock to a paper watchlist.
+AlphaDesk is a **multi-user portfolio analyzer for Indian retail investors**.
+You sign in, link your IND Money account, and see your net worth, allocation,
+holdings and daily history — with an AI overview that narrates *verified,
+computed numbers* (never invented ones). The original multi-agent stock
+research desk lives on as a clearly-labelled **Lab** — impressive machinery,
+explicitly a simulation.
 
-Market data comes from the IND Money MCP server (read only). Language reasoning
-runs on Groq. The frontend is a dark, Bloomberg-terminal-style Next.js app.
+A LangGraph + FastAPI backend serves a Bloomberg-adjacent Next.js frontend.
+Market and portfolio data come from the read-only **IND Money MCP** server;
+identity is **Clerk**; state persists to **Neon Postgres**.
 
-> No real orders are ever placed. Order placement is out of scope; the broker
-> layer is a stub for future integration.
+> **No real orders are ever placed.** The broker layer is a stub by design.
+> The product is **descriptive analytics only** — analysis of what *is*, never
+> forward forecasts or instrument-level buy/sell advice on real holdings.
 
-## Table of contents
+> **Build status:** v2 is complete — see `V2_PLAN.md` (plan of record),
+> `docs/STATUS.md` (card ledger), and `docs/MORNING.md` (the operator runbook /
+> handoff). Per-card contracts are in `docs/SPECS/` and `docs/TESTING/`.
 
-- [Features](#features)
-- [Architecture](#architecture)
-- [The agent pipeline](#the-agent-pipeline)
-- [Human in the loop and approval](#human-in-the-loop-and-approval)
-- [IND Money MCP and OAuth](#ind-money-mcp-and-oauth)
-- [Shared state model](#shared-state-model)
-- [RAG (dormant)](#rag-dormant)
-- [Tech stack](#tech-stack)
-- [Project structure](#project-structure)
-- [API reference](#api-reference)
-- [Frontend](#frontend)
-- [Getting started](#getting-started)
-- [Environment variables](#environment-variables)
-- [Guardrails](#guardrails)
-- [Observability](#observability)
-- [Extending the system](#extending-the-system)
-- [Limitations](#limitations)
+## The two surfaces
 
-## Features
-
-- Five specialized agents wired into a single LangGraph: Scanner, Research,
-  Analyst, RiskManager, Execution.
-- Natural language queries. Ask for a theme ("momentum stocks in IT") or name
-  explicit tickers ("Analyse NDTV, Zee, Sun TV").
-- Server Sent Events stream each agent's progress to the UI in real time.
-- Risk guardrails: minimum confidence, maximum stocks per sector, and a human
-  approval gate before anything reaches the watchlist.
-- Paper watchlist maintained inside AlphaDesk, since the IND Money MCP is read
-  only and cannot modify real broker watchlists.
-- A retrieval augmented generation path over NSE filing PDFs (ChromaDB + a local
-  ONNX MiniLM embedding model). Dormant in v2: the corpus is empty and chromadb
-  is not installed, so the Analyst runs with no filing context. See
-  [RAG (dormant)](#rag-dormant).
-- Full OAuth support for the IND Money MCP, including an in app "Connect" button
-  that runs the authorization code plus PKCE flow with dynamic client
-  registration.
-- Every analysis is persisted server side and reachable at a shareable URL, so a
-  page refresh does not lose the results.
-- LangSmith tracing on by default for observability.
+| Surface | Route | What it is |
+| --- | --- | --- |
+| **Portfolio** | `/portfolio` | Your real net worth, allocation, sortable holdings, net-worth trend, and a multi-agent **AI overview** over computed metrics. |
+| **Demo** | `/demo` | The full dashboard rendered from synthetic fixtures + a pre-generated narrative. Public, no sign-in, no LLM call — how anyone without an IND Money account sees the product. |
+| **Lab** | `/lab` | The research desk: scans NSE movers, writes analyst reports, enforces risk guardrails, and stages picks onto a **paper** watchlist behind a human gate. A labelled simulation, never shown next to real holdings. |
 
 ## Architecture
 
 ```mermaid
 flowchart LR
   subgraph Browser
-    UI[Next.js Terminal UI]
+    UI[Next.js UI - shadcn portfolio + terminal Lab]
   end
-
-  subgraph Backend[FastAPI Backend]
-    API[REST plus SSE API]
-    Graph[LangGraph Pipeline]
-    Auth[OAuth Token Manager]
-    RAG[RAG Retriever - dormant]
-    Store[In-memory run and watchlist store]
+  subgraph Vercel
+    UI
   end
-
+  subgraph Backend[FastAPI on HF Space]
+    API[REST + SSE]
+    PGraph[Portfolio: metrics + AI overview graph]
+    LGraph[Lab: research pipeline]
+    Conn[Per-source connectors -> Holding model]
+    Auth[Per-user OAuth AuthStore - encrypted]
+    Snap[Snapshot service]
+  end
   subgraph External
-    MCP[IND Money MCP server]
-    Groq[Groq LLMs]
-    LS[LangSmith]
+    Clerk[Clerk identity]
+    Neon[(Neon Postgres)]
+    MCP[IND Money MCP]
+    OpenAI[OpenAI - overview]
+    Groq[Groq - Lab]
+    FX[frankfurter.dev USD/INR]
   end
-
-  UI -->|SSE and REST| API
-  API --> Graph
-  API --> Store
-  Graph -.->|no filing corpus in v2| RAG
-  Graph -->|tool calls| MCP
-  Graph -->|LLM calls| Groq
-  Auth -->|bearer token| MCP
-  Graph -.-> Auth
-  Graph -.->|traces| LS
+  UI -->|JWT| API
+  Clerk -->|verify JWT networklessly| API
+  API --> Conn --> MCP
+  API --> PGraph --> OpenAI
+  API --> LGraph --> Groq
+  Auth -->|per-user token| MCP
+  Snap --> Neon
+  Snap --> FX
+  API --> Neon
 ```
 
-The browser talks only to the FastAPI backend. The backend runs the LangGraph
-pipeline, calls the IND Money MCP for market data (authenticated by the OAuth
-manager), and calls Groq for reasoning. The RAG retriever is wired into the
-Analyst but dormant — see [RAG (dormant)](#rag-dormant).
+Everything downstream of a broker reads **one shape** — a normalized `Holding`
+model (`backend/portfolio/models.py`). Each source (IND Money today, a `stub`
+connector for the demo/tests) maps its vendor payload into `Holding`; no vendor
+field name appears above the connector boundary. The dashboard, allocation
+math, snapshots, and AI metrics all consume `Holding` and know nothing about
+IND Money.
 
-## The agent pipeline
+## Identity & multi-tenancy
 
-The graph is a linear pipeline with one conditional branch and one human gate.
+- **Clerk** for sign-in (Waitlist-gated for launch). The backend verifies Clerk
+  session JWTs networklessly (RS256 against the JWKS), holding **no Clerk
+  secret**; it upserts a `users` row on first sight. `azp` and `sid` checks are
+  mandatory (fail-closed 503/401).
+- **Per-user broker links.** Each user's IND Money OAuth link is bound to their
+  Clerk identity and stored **Fernet-encrypted** in Postgres, with the OAuth
+  `state` bound to the user server-side (no cookie). There is no shared,
+  ambient, or admin-secret credential path — every endpoint derives identity
+  from the verified token, and cross-user access returns 404 (never leaks
+  existence).
 
-```mermaid
-flowchart TD
-  Start([user_query]) --> Scanner
+## Data model & persistence
 
-  Scanner -->|scan_results| Research
-  Research -->|research_reports| Analyst
-  Analyst -->|analyst_recommendations| Risk[RiskManager]
-  Risk -->|risk_assessments| Decision{any PASS or FLAG?}
+- **Neon Postgres** via SQLModel + Alembic (migrations `0001`–`0005`). Tables:
+  `users`, `broker_links`, `oauth_pending`, `snapshot_days` (+ `snapshot_holdings`,
+  `snapshot_raw`), `watchlist`. Every user-scoped table cascade-deletes with the
+  user (the basis for one-click **delete-my-data**).
+- **Daily snapshots.** A GitHub Actions job (`snapshot.yml`, ~23:45 IST + a
+  retry) captures each linked user's normalized holdings + total into
+  `snapshot_days`, plus the day's **USD/INR rate** (frankfurter.dev). Attribution
+  is IST calendar-day with a 06:00 cutoff; the first capture of a day wins; a
+  missed snapshot can never be backfilled, so the design targets *acquisition*
+  failure (skip a dead link, keep a partial bucket set, NULL the FX rate — never
+  abort the batch). A staleness banner surfaces a stalled job.
+- **Lab state is ephemeral** (in-memory, per-user, `MemorySaver`) except the
+  **paper watchlist**, which persists denormalized (each row is a self-contained
+  decision record; the originating run id is an opaque non-FK reference).
 
-  Decision -->|no| End1([END with rejection_reason])
-  Decision -->|yes| Gate[[interrupt_before execution]]
-  Gate -->|human approves| Execution
-  Execution -->|paper_watchlist and approved_actions| End2([END])
-```
+## AI overview (portfolio)
 
-Each agent is a pure asynchronous function with the signature
-`async (state: PortfolioState) -> PortfolioState`. It reads from the shared state,
-adds its output, and returns the state.
+The overview's numbers are **computed in Python first** — Herfindahl index,
+top-N and single-holding weights, sector concentration, week-over-week
+net-worth delta. Then a fan-out of specialists (`allocation_critic`,
+`concentration_risk`, `sip_health`, `performance_attribution`) → a synthesizer
+narrates *those verified metrics*.
 
-| Agent | Model | Responsibility | IND Money tools |
-| ----- | ----- | -------------- | --------------- |
-| Scanner | llama-3.1-8b-instant | Read query intent, scan movers by category and resolve named tickers | get_indian_stocks_movers, lookup_ind_keys, get_indian_stocks_details |
-| Research | llama-3.1-8b-instant | Deep dive per candidate, compile fundamentals and options notes | get_indian_stocks_details, get_indian_stocks_option_chain, get_indian_stocks_greeks_history |
-| Analyst | llama-3.3-70b-versatile | Synthesize bull and bear thesis, target, confidence, risks, catalysts | RAG retriever (dormant, returns no context) |
-| RiskManager | llama-3.3-70b-versatile | Enforce guardrails, assign PASS, FLAG, or REJECT | pure logic on state, LLM for notes |
-| Execution | none | Stage approved stocks into the paper watchlist behind the human gate | none |
+- **Agents may not invent figures.** A number reaches the UI only as a metric
+  chip bound to a computed value; any digit in free-written prose trips a
+  scripted fallback. Every figure in the narrative is shown beside its source
+  metric.
+- **Graceful degradation is a requirement.** With the LLM unavailable (no key,
+  provider down, rate-limited, budget exceeded) the dashboard renders
+  completely — every computed number intact — and the panel shows "AI overview
+  unavailable". Never an error page.
+- **Routing:** portfolio agents use OpenAI (`provider="openai"`); the four Lab
+  agents stay on Groq at their existing tiers, untouched. Prompts are routed
+  through `redact()` (aggregates + symbols only — never account numbers, broker
+  ids, emails, or the Clerk `user_id`). LangSmith tracing is on for the Lab
+  graph, off for the portfolio graph (someone's finances) at config level.
 
-Scanner intent: the query is routed by the lightweight model into a set of mover
-categories (such as top-gainers or most-active) and a set of explicit symbols. If
-the query names stocks, AlphaDesk returns only those stocks, resolving each name
-to its IND Money `ind_key` with one lookup per name. Otherwise it scans movers.
+XIRR is intentionally absent — the MCP is point-in-time and carries no dated
+cashflows (verified in the C2 data spike); the per-holding return metric is a
+simple cumulative return, and a holding with no reported cost basis renders
+"—", never a fabricated −100%.
 
-## Human in the loop and approval
+## The Lab (research desk — labelled simulation)
 
-The graph is compiled with `interrupt_before=["execution"]`, so it pauses before
-the Execution agent runs. The frontend shows the recommendations and an approval
-prompt. Nothing is staged until a human approves.
+A linear LangGraph over `PortfolioState`: Scanner → Research → Analyst →
+RiskManager → (human gate) → Execution. Each agent is a pure
+`async (state) -> state` function. The graph is compiled with
+`interrupt_before=["execution"]` + a checkpointer, so it pauses before staging
+anything; nothing reaches the paper watchlist without approval. Guardrails
+(`backend/agents/risk_manager.py`): minimum confidence 0.70 (below → REJECT),
+[0.70, 0.75) → FLAG, max 3 stocks per known sector, analyst `avoid` → REJECT.
+Its picks are never rendered in the same view as real holdings.
 
-```mermaid
-sequenceDiagram
-  participant U as User
-  participant F as Frontend
-  participant A as FastAPI
-  participant G as LangGraph
+## Security & privacy
 
-  U->>F: Enter query
-  F->>A: POST /analyze
-  A->>G: astream(initial state)
-  loop per agent
-    G-->>A: node update
-    A-->>F: SSE update event
-  end
-  G-->>A: pause before execution
-  A-->>F: SSE complete (recommendations, risk, action_id)
-  Note over A: analysis stored, reachable at /a/run_id
-
-  U->>F: Approve
-  F->>A: POST /approve (action_id, approved)
-  A->>G: resume with human_approved true
-  G-->>A: final state (paper_watchlist, approved_actions)
-  A-->>F: result
-```
-
-On approval, the Execution agent stages every recommendation that cleared the
-guardrails into `pending_actions`, adds the symbols to `paper_watchlist`, then
-moves the actions into `approved_actions`. If a broker adapter were configured it
-would call `broker.place_order`; with no broker it logs and persists only.
-
-## IND Money MCP and OAuth
-
-All market data flows through the IND Money MCP server over streamable HTTP. Two
-facts shape the integration:
-
-1. Every instrument is keyed by `ind_key` (for example `INDS00577`), not by
-   ticker symbol. Tickers are resolved with `lookup_ind_keys`.
-2. The server authenticates with OAuth 2.0. Access tokens expire about hourly and
-   are refreshed automatically with the stored refresh token. Responses are
-   wrapped as `{"result": "<stringified JSON>"}` and unwrapped by the client.
-
-The token manager (`backend/tools/ind_money_auth.py`) keeps a valid bearer token,
-refreshing on demand and persisting rotated tokens to a local cache file. It can
-seed credentials from environment variables, from its own cache, or from an
-existing Claude Code `indmoney` login.
-
-For a fresh machine, the in app Connect button drives the full login flow:
-
-```mermaid
-sequenceDiagram
-  participant F as Frontend
-  participant A as FastAPI
-  participant S as IND Money Auth Server
-  participant B as Browser Popup
-
-  F->>A: POST /auth/login
-  A->>S: Discover metadata
-  A->>S: Dynamic client registration
-  A-->>F: authorization_url (PKCE S256)
-  F->>B: window.open(authorization_url)
-  B->>S: Login and consent
-  S->>A: GET /auth/callback?code and state
-  A->>S: POST /token (code plus verifier)
-  S-->>A: access and refresh tokens
-  Note over A: persist tokens to cache
-  F->>A: poll GET /auth/status
-  A-->>F: authenticated
-```
-
-The login registers its own client bound to the backend redirect URI, so it does
-not interfere with the Claude Code session. After a successful exchange, the
-backend owns its own refresh chain.
-
-## Shared state model
-
-A single Pydantic model, `PortfolioState`, flows through every node. Defined in
-`backend/graph/state.py`.
-
-```mermaid
-classDiagram
-  class PortfolioState {
-    user_query
-    scan_results
-    research_reports
-    analyst_recommendations
-    risk_assessments
-    pending_actions
-    approved_actions
-    execution_history
-    paper_watchlist
-    human_approved
-    rejection_reason
-  }
-  class ScanResult {
-    symbol
-    ind_key
-    sector
-    signal
-    last_price
-    change_percent
-  }
-  class ResearchReport {
-    symbol
-    summary
-    fundamentals
-    options_insight
-    sources
-  }
-  class AnalystRecommendation {
-    symbol
-    action
-    confidence
-    bull_thesis
-    bear_thesis
-    key_risks
-    catalysts
-    target_price
-  }
-  class RiskAssessment {
-    symbol
-    sector
-    decision
-    approved
-    confidence
-    violations
-  }
-  class PendingAction {
-    action_type
-    symbol
-    status
-    requires_human
-  }
-
-  PortfolioState --> ScanResult
-  PortfolioState --> ResearchReport
-  PortfolioState --> AnalystRecommendation
-  PortfolioState --> RiskAssessment
-  PortfolioState --> PendingAction
-```
-
-`research_reports` is a dictionary keyed by symbol. The action and risk decisions
-are constrained values: action is one of buy, hold, or avoid; decision is one of
-PASS, FLAG, or REJECT.
-
-## RAG (dormant)
-
-AlphaDesk ships a retrieval path over NSE filing PDFs, but **it is unplugged as
-of v2** and the Analyst produces its reports without any filing context:
-
-- `data/nse_docs/` is empty — there is no filing corpus in the repo.
-- `chromadb`, `pypdf` and `langchain-text-splitters` are not in
-  `requirements.txt` and are not installed in the Docker image.
-- The code stays in place: `backend/rag/ingest.py` (chunk and embed PDFs) and
-  `backend/rag/retriever.py` (semantic search). The retriever degrades
-  gracefully — a missing chromadb or an un-ingested collection makes
-  `get_relevant_context()` return `[]`, so the Analyst is unaffected.
-
-Dropping it kept the image small: no `build-essential` apt layer, no
-onnxruntime download, no index baked at build time.
-
-To re-enable RAG:
-
-1. Add `chromadb`, `pypdf` and `langchain-text-splitters` back to
-   `requirements.txt` (pinned, like every other dependency).
-2. Put PDFs into `data/nse_docs/`.
-3. Run `cd backend && python -m rag.ingest` to build `data/chroma_db/`.
-4. For the Docker image, restore the `build-essential` apt layer, the
-   `COPY data/ ./data/` line, and the `RUN cd backend && python -m rag.ingest`
-   step (see `docs/SPECS/C1.md`).
+- Per-user identity on every endpoint; cross-user access is 404, not 403.
+- Broker tokens Fernet-encrypted at rest, never logged, never returned to the
+  frontend. `/demo` is structurally networkless (no auth/LLM call). LLM prompts
+  are redacted.
+- **Delete-my-data** (`DELETE /account`) revokes the broker token upstream, then
+  a single `DELETE FROM users` cascades every table atomically (+ clears
+  per-user in-memory caches). Rate limits + app-side spend caps guard the
+  expensive endpoints; the internal snapshot routes are `CRON_SECRET`-gated.
+- Privacy/terms name every subprocessor (Groq, OpenAI, LangSmith, Clerk, Neon,
+  Hugging Face, Vercel); a consent screen is unskippable before the OAuth
+  redirect.
 
 ## Tech stack
 
-- Backend: Python 3.11 or newer, LangGraph, FastAPI, httpx, Pydantic.
-- LLM: Groq via langchain-groq by default. Set `OPENAI_BASE_URL`,
-  `OPENAI_COMPATIBLE_MODEL`, and `OPENAI_API_KEY` to use an OpenAI-compatible
-  endpoint instead.
-- Market data: IND Money MCP server, accessed with the `mcp` Python SDK.
-- RAG: ChromaDB with the built in ONNX MiniLM embedding function — code present
-  but dormant, not installed. See [RAG (dormant)](#rag-dormant).
-- Frontend: Next.js 15, TypeScript, Tailwind CSS, shadcn/ui (new-york), lucide
-  icons.
-- Observability: LangSmith.
+- **Backend:** Python 3.11+, FastAPI, LangGraph, SQLModel + Alembic, asyncpg,
+  `cryptography` (Fernet), PyJWT (Clerk verification), the `mcp` SDK. Every dep
+  pinned (`==`).
+- **Frontend:** Next.js 15, TypeScript, Tailwind, shadcn/ui (portfolio surfaces)
+  + the evolved terminal aesthetic (Lab), Recharts, Clerk Next.js SDK.
+- **Data/infra:** Neon Postgres, Clerk, IND Money MCP, OpenAI (overview), Groq
+  (Lab), frankfurter.dev (FX), LangSmith (Lab tracing). Backend on Hugging Face
+  Spaces (Docker, port 7860); frontend on Vercel.
+
+## Getting started (local dev)
+
+```bash
+python -m venv .venv && source .venv/bin/activate     # repo-root venv
+pip install -r requirements.txt -r requirements-dev.txt
+cp backend/.env.example backend/.env                  # then fill values
+
+# A local Postgres for the DB layer (see docs/TESTING/F1.md):
+docker run --rm -d -e POSTGRES_PASSWORD=test -e POSTGRES_DB=alphadesk \
+  -p 5433:5432 postgres:16
+cd backend
+DATABASE_URL="postgresql+asyncpg://postgres:test@localhost:5433/alphadesk" \
+  alembic upgrade head
+uvicorn api.main:app --reload --port 8000             # docs at /docs
+```
+
+Local single-tenant dev (no Clerk): set `ALPHADESK_SINGLE_TENANT=1` in
+`backend/.env` and use the Connect button (links as `user_id="local"`).
+
+```bash
+cd frontend && npm install
+npm run dev                                           # localhost:3000
+```
+
+Run the test suite the CI way — with `backend/.env` absent (or `DATABASE_URL`
+unset) and a throwaway `TEST_DATABASE_URL` Postgres — for a clean **674 passed**
+(see `docs/MORNING.md` §5 for the one rate-limit-test caveat).
+
+## Deployment
+
+Full env-var wiring and the go-live sequence are in **`DEPLOY.md`**; the operator
+runbook (current state, what was wired, remaining steps) is in
+**`docs/MORNING.md`**. In short: frontend → Vercel (root `frontend`), backend →
+HF Space (from the binary-free `space-deploy` snapshot branch), database →
+Neon, identity → Clerk (Waitlist mode). The site ships gated behind
+`NEXT_PUBLIC_AUTH_ENABLED` — flip it on (with real Clerk keys on Vercel) to go
+live.
 
 ## Project structure
 
 ```
 alphadesk/
-├── README.md
-├── requirements.txt
+├── V2_PLAN.md · DEPLOY.md · CLAUDE.md
+├── docs/            # STATUS.md (ledger), MORNING.md (runbook), SPECS/, TESTING/, design/
 ├── backend/
-│   ├── agents/
-│   │   ├── scanner.py          # query intent, market scan, candidate selection
-│   │   ├── research.py         # per candidate deep dive
-│   │   ├── analyst.py          # structured recommendation (RAG context dormant)
-│   │   ├── risk_manager.py     # guardrail enforcement, PASS / FLAG / REJECT
-│   │   └── execution.py        # human gated paper watchlist staging
-│   ├── tools/
-│   │   ├── ind_money.py        # IND Money MCP wrapped as LangGraph tools
-│   │   └── ind_money_auth.py   # OAuth token refresh and interactive login
-│   ├── broker/
-│   │   ├── base.py             # BrokerAdapter abstract class and loader (stub)
-│   │   └── README.md
-│   ├── graph/
-│   │   ├── state.py            # PortfolioState and nested Pydantic models
-│   │   └── graph.py            # nodes, edges, conditional routing, HiTL gate
-│   ├── rag/                    # dormant in v2, see "RAG (dormant)"
-│   │   ├── ingest.py           # load and chunk NSE PDFs into ChromaDB
-│   │   └── retriever.py        # semantic search over the nse_filings collection
-│   ├── api/
-│   │   └── main.py             # FastAPI app: SSE, approval, auth, persistence
-│   └── evals/
-│       └── test_cases.py
-├── frontend/
-│   ├── app/
-│   │   ├── page.tsx            # home: query bar and live dashboard
-│   │   ├── a/[id]/page.tsx     # persisted analysis view
-│   │   └── layout.tsx
-│   ├── components/             # TopBar, AuthButton, WatchlistButton, dashboard,
-│   │   └── ui/                 # RecommendationCard, ApprovalModal, and shadcn ui
-│   └── lib/
-│       ├── api.ts              # typed SSE and REST client
-│       └── utils.ts
-└── data/                       # RAG only; empty in v2 and not copied into the image
-    └── nse_docs/               # PDFs for RAG ingestion
+│   ├── api/         # main.py (Lab + auth), routes/ (portfolio, overview, internal, account)
+│   ├── portfolio/   # Holding model + connectors (ind_money, stub)
+│   ├── agents/      # Lab agents + agents/portfolio/ (metrics, redact, AI overview)
+│   ├── graph/       # Lab pipeline + portfolio_graph + portfolio_config (tracing off)
+│   ├── services/    # snapshots, adoption
+│   ├── tools/       # IND Money MCP + per-user OAuth AuthStore
+│   ├── db/          # SQLModel models, async session, Fernet crypto
+│   ├── alembic/     # migrations 0001–0005
+│   ├── rag/         # dormant (unplugged at C1)
+│   └── tests/
+├── frontend/        # app/ (portfolio, demo, lab, marketing, legal), components/, lib/
+└── .github/workflows/  # keepalive.yml, snapshot.yml
 ```
 
-The OAuth token cache is written under `backend/` at runtime and is git ignored,
-as is the ChromaDB vector store under `data/` if RAG is ever re-enabled.
+## RAG (dormant)
 
-## API reference
-
-Base URL defaults to `http://127.0.0.1:8000`.
-
-| Method | Path | Purpose |
-| ------ | ---- | ------- |
-| GET | `/` | Health check |
-| POST | `/analyze` | Run the pipeline, stream agent updates as Server Sent Events |
-| POST | `/approve` | Approve or reject the staged batch and resume the graph |
-| GET | `/status/{run_id}` | Current state of a run |
-| GET | `/analyses` | List stored analyses, most recent first |
-| GET | `/analysis/{run_id}` | Full stored analysis for the /a/run_id view |
-| GET | `/watchlist` | Cumulative paper watchlist |
-| DELETE | `/watchlist/{symbol}` | Remove a symbol from the paper watchlist |
-| GET | `/auth/status` | Whether the backend is authenticated with IND Money |
-| POST | `/auth/login` | Begin OAuth login, returns the authorization URL |
-| GET | `/auth/callback` | OAuth redirect target, exchanges the code for tokens |
-
-The `/analyze` stream emits `start`, then one `update` per agent, then a
-`complete` event carrying the recommendations, risk assessments, and an
-`action_id` when the run is awaiting approval. Errors arrive as an `error` event.
-
-## Frontend
-
-The UI is a single page terminal styled application.
-
-- `app/page.tsx` is the home view. It holds a command line style query bar and, on
-  submit, renders the live dashboard. When a run starts, the URL is updated to
-  `/a/<run_id>` so a refresh reopens the analysis.
-- `app/a/[id]/page.tsx` loads a stored analysis from the backend and renders the
-  same recommendation cards and approval flow, so analyses survive a refresh and
-  can be shared by URL.
-- `ResultsDashboard` consumes the `/analyze` SSE stream and drives the five stage
-  pipeline rail in real time.
-- `RecommendationCard` shows the bull and bear thesis, target price, confidence,
-  and two badges. The green badge is the Analyst call; the flag badge is the
-  RiskManager verdict. Hovering a badge explains it.
-- `ApprovalModal` lists the stocks that cleared the guardrails and calls
-  `/approve`.
-- The top bar carries a Connect IND Money button, a Watchlist viewer, a GitHub
-  link, and a live indicator.
-
-## Getting started
-
-Prerequisites: Python 3.11 or newer, Node.js 18 or newer, a Groq API key, and
-access to the IND Money MCP server.
-
-### Backend
-
-```bash
-python -m venv .venv
-# Windows PowerShell
-.\.venv\Scripts\Activate.ps1
-# macOS or Linux
-# source .venv/bin/activate
-
-pip install -r requirements.txt
-
-cp backend/.env.example backend/.env   # then fill in the values
-
-# run the API
-cd backend
-uvicorn api.main:app --reload --port 8000
-```
-
-The interactive API docs are served at `http://127.0.0.1:8000/docs`.
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-cp .env.local.example .env.local       # optional, has sane defaults
-npm run dev                             # http://localhost:3000
-```
-
-The backend already allows the localhost and 127.0.0.1 origins on port 3000.
-
-### Authenticate with IND Money
-
-Open the app and click Connect IND Money in the top bar. A popup opens the IND
-Money login. After you consent, the button turns green and the backend holds its
-own refresh chain.
-
-## Environment variables
-
-Backend, in `backend/.env`:
-
-| Variable | Required | Description |
-| -------- | -------- | ----------- |
-| `GROQ_API_KEY` | yes, unless using OpenAI-compatible | Groq API key for default LLM calls |
-| `OPENAI_API_KEY` | yes, if using OpenAI-compatible | API key for the compatible endpoint |
-| `OPENAI_BASE_URL` | optional | OpenAI-compatible API base URL; enables compatible-provider mode |
-| `OPENAI_COMPATIBLE_MODEL` | optional | Model name for the compatible endpoint; enables compatible-provider mode |
-| `IND_MONEY_MCP_URL` | yes | Streamable HTTP URL of the IND Money MCP server |
-| `LANGCHAIN_API_KEY` | recommended | LangSmith key for tracing |
-| `LANGCHAIN_TRACING_V2` | recommended | Set to true to enable tracing |
-| `LANGCHAIN_PROJECT` | optional | LangSmith project name |
-| `IND_MONEY_OAUTH_CLIENT_ID` | optional | Dedicated OAuth client id |
-| `IND_MONEY_OAUTH_REFRESH_TOKEN` | optional | Dedicated OAuth refresh token seed |
-| `IND_MONEY_OAUTH_SCOPE` | optional | OAuth scope, defaults to portfolio:read |
-| `IND_MONEY_MCP_TOKEN` | optional | Static bearer token, skips refresh |
-| `IND_MONEY_AUTH_REDIRECT` | optional | OAuth redirect URI for the login button |
-| `BROKER` | optional | Broker name; leave blank for paper only |
-
-Frontend, in `frontend/.env.local`:
-
-| Variable | Description |
-| -------- | ----------- |
-| `NEXT_PUBLIC_API_URL` | Backend base URL, defaults to http://127.0.0.1:8000 |
-
-## Guardrails
-
-Enforced by the RiskManager:
-
-- Minimum confidence to proceed: 0.70. Below this the stock is rejected.
-- Maximum stocks per known sector: 3. Stocks with an unknown sector are exempt.
-- A recommendation with an analyst action of avoid is rejected.
-- Any transition from `pending_actions` to `approved_actions` requires
-  `human_approved` to be true.
-
-A recommendation that clears the guardrails with confidence below 0.75 is marked
-FLAG rather than PASS. FLAG is a caution label, not a separate gate; flagged
-stocks are still approvable.
-
-## Observability
-
-LangSmith tracing is controlled by environment variables and is intended to stay
-on. Each run is given a stable id that is passed to LangGraph as the run id, so it
-becomes the LangSmith trace root and the same id is used as the checkpointer
-thread id and the application run handle.
-
-## Extending the system
-
-Order placement is intentionally out of scope. The interface for a future broker
-lives in `backend/broker/base.py` as the `BrokerAdapter` abstract class with a
-`load_broker` factory. To add a broker, for example Dhan:
-
-1. Create `backend/broker/dhan.py` implementing `BrokerAdapter`.
-2. Set `BROKER=dhan` in the backend environment.
-3. The Execution agent already calls `broker.place_order` when a broker is
-   configured, so no agent changes are needed.
-4. Add a human confirmation step for order value above a chosen threshold.
-
-Without a broker, approved actions remain in `approved_actions` and stocks remain
-in the paper watchlist. No orders are placed.
-
-## Limitations
-
-- The IND Money MCP is read only. AlphaDesk cannot modify your real broker
-  watchlist, so it maintains its own paper watchlist.
-- Run history, the paper watchlist, and stored analyses live in memory on the
-  backend. They survive a browser refresh but not a backend restart. Swap the in
-  memory stores for a file or database to make them durable.
-- RAG is dormant: the filing corpus is empty and chromadb is not installed, so
-  the Analyst reasons from market data alone. See [RAG (dormant)](#rag-dormant).
-  (When re-enabled, scanned or image only PDFs are still skipped — extraction is
-  text based with no OCR.)
-- The MemorySaver checkpointer is in process. Use a persistent checkpointer for a
-  production deployment.
+The retrieval path over NSE filing PDFs is **unplugged as of v2**: the corpus is
+empty and `chromadb`/`pypdf`/`langchain-text-splitters` are not installed, so the
+Lab Analyst runs with no filing context. The code stays in `backend/rag/`
+(degrades to `[]`). Re-enable path: `docs/SPECS/C1.md`.

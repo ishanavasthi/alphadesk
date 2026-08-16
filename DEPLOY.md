@@ -82,6 +82,7 @@ Mark secrets as **Secret**.
 | `IND_MONEY_MCP_URL` | `https://mcp.indmoney.com/mcp` | the MCP server |
 | `IND_MONEY_AUTH_REDIRECT` | `https://<user>-alphadesk.hf.space/auth/callback` | **critical** — exact public backend URL |
 | `CORS_ALLOW_ORIGINS` | `https://alphadesk.ishanavasthi.in,https://<your-vercel>.vercel.app` | comma-separated frontend origins |
+| `FRONTEND_BASE_URL` | `https://alphadesk.ishanavasthi.in` | optional — where `/auth/callback` sends the browser after linking. Defaults to the **first** `CORS_ALLOW_ORIGINS` entry, so set it only when that first entry is not the site users are on. Unset *and* no CORS origins ⇒ the callback renders its standalone page instead of redirecting (local single-tenant dev) |
 | `CORS_ALLOW_ORIGIN_REGEX` | `https://[a-z0-9-]+\.vercel\.app` | optional — Vercel preview deploys |
 | `LANGCHAIN_API_KEY` | LangSmith key | secret; **research-graph tracing only** — the portfolio graph is tracing-off at config level regardless |
 | `LANGCHAIN_TRACING_V2` | `true` | on for the research graph |
