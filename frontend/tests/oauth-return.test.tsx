@@ -39,7 +39,17 @@ vi.mock("@/lib/api", async () => {
 });
 
 import PortfolioPage from "@/app/portfolio/page";
+import { PortfolioProvider } from "@/components/portfolio/PortfolioProvider";
 import { getPortfolioSummary } from "@/lib/api";
+
+/** The surface as the route layout assembles it: provider first, page inside. */
+function renderDashboard() {
+  return render(
+    <PortfolioProvider>
+      <PortfolioPage />
+    </PortfolioProvider>,
+  );
+}
 
 /** Land on /portfolio with the query string the callback redirected with. */
 function arriveWith(query: string): void {
@@ -58,7 +68,7 @@ describe("returning from the OAuth callback", () => {
   it("shows why a failed link failed", async () => {
     arriveWith("?ind=error&reason=denied");
 
-    render(<PortfolioPage />);
+    renderDashboard();
 
     expect(
       await screen.findByText(/You declined the IND Money authorisation/i),
@@ -68,7 +78,7 @@ describe("returning from the OAuth callback", () => {
   it("falls back to generic copy for an unrecognised reason", async () => {
     arriveWith("?ind=error&reason=some_future_code");
 
-    render(<PortfolioPage />);
+    renderDashboard();
 
     expect(
       await screen.findByText(/Connecting to IND Money failed/i),
@@ -78,7 +88,7 @@ describe("returning from the OAuth callback", () => {
   it("strips the callback parameters so a refresh cannot replay them", async () => {
     arriveWith("?ind=error&reason=denied");
 
-    render(<PortfolioPage />);
+    renderDashboard();
 
     await waitFor(() => expect(window.location.search).toBe(""));
     expect(window.location.pathname).toBe("/portfolio");
@@ -87,7 +97,7 @@ describe("returning from the OAuth callback", () => {
   it("keeps unrelated query parameters", async () => {
     arriveWith("?ind=connected&keep=me");
 
-    render(<PortfolioPage />);
+    renderDashboard();
 
     await waitFor(() => expect(window.location.search).toBe("?keep=me"));
   });
@@ -95,7 +105,7 @@ describe("returning from the OAuth callback", () => {
   it("says nothing on a successful return", async () => {
     arriveWith("?ind=connected");
 
-    render(<PortfolioPage />);
+    renderDashboard();
 
     await waitFor(() => expect(window.location.search).toBe(""));
     expect(screen.queryByText(/failed|declined|expired/i)).toBeNull();
@@ -104,7 +114,7 @@ describe("returning from the OAuth callback", () => {
   it("leaves an ordinary visit alone", async () => {
     arriveWith("");
 
-    render(<PortfolioPage />);
+    renderDashboard();
 
     await waitFor(() => expect(window.location.pathname).toBe("/portfolio"));
     expect(screen.queryByText(/failed|declined|expired/i)).toBeNull();

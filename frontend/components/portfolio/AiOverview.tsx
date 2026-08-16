@@ -32,6 +32,14 @@ import { Badge, Button, Card } from "@/components/portfolio/ui";
  * narrative artifact this way, so an anonymous visitor never triggers an LLM
  * call. The streaming effect is skipped entirely (not merely ignored), and the
  * Regenerate button — which would need a live stream — is hidden.
+ *
+ * ## Cached mode (`cached` + `onComplete`) — the dashboard's back button
+ *
+ * `cached` is the same "render a finished overview, make no stream" behaviour,
+ * but it **keeps** Regenerate: the run is over, not frozen. The dashboard's
+ * route layout holds the last completed overview and hands it back here, so
+ * walking to Holdings and returning re-reads what is already written instead of
+ * paying five agents to say it again. `onComplete` is how the run gets there.
  */
 
 const AGENTS = [
@@ -56,19 +64,43 @@ function allDone(): Record<string, AgentState> {
   return Object.fromEntries(AGENTS.map((a) => [a, "done" as AgentState]));
 }
 
-export function AiOverview({ initial }: { initial?: OverviewComplete } = {}) {
+export function AiOverview({
+  initial,
+  cached,
+  onComplete,
+}: {
+  initial?: OverviewComplete;
+  /** A completed run to re-render instead of streaming a fresh one. */
+  cached?: OverviewComplete | null;
+  /** Called with every live run that completes, so a caller can keep it. */
+  onComplete?: (data: OverviewComplete) => void;
+} = {}) {
+  // Both modes start from a finished overview; only `initial` also gives up the
+  // Regenerate button, because /demo has no stream to regenerate against.
+  const seed = initial ?? cached ?? null;
   const [phase, setPhase] = useState<Phase>(
-    initial ? (initial.degraded ? "degraded" : "ready") : "loading",
+    seed ? (seed.degraded ? "degraded" : "ready") : "loading",
   );
-  const [narrative, setNarrative] = useState<OverviewParagraph[]>(initial?.narrative ?? []);
-  const [metrics, setMetrics] = useState<OverviewMetric[]>(initial?.metrics ?? []);
-  const [reason, setReason] = useState<string | null>(initial?.reason ?? null);
+  const [narrative, setNarrative] = useState<OverviewParagraph[]>(seed?.narrative ?? []);
+  const [metrics, setMetrics] = useState<OverviewMetric[]>(seed?.metrics ?? []);
+  const [reason, setReason] = useState<string | null>(seed?.reason ?? null);
   const [errorMessage, setErrorMessage] = useState("");
   const [agentStates, setAgentStates] = useState<Record<string, AgentState>>(
-    initial ? allDone() : {},
+    seed ? allDone() : {},
   );
   const [runKey, setRunKey] = useState(0);
   const aborter = useRef<AbortController | null>(null);
+  /**
+   * Whether the cached run still stands in for a stream.
+   *
+   * Consumed once, on mount: pressing Regenerate must reach the model, and a
+   * cache that kept swallowing runs would make the button a lie.
+   */
+  const cachedIsFresh = useRef(Boolean(cached));
+  // Read through a ref so a caller passing an inline handler cannot restart the
+  // stream by re-rendering.
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   const applyComplete = useCallback((data: OverviewComplete) => {
     setMetrics(data.metrics);
@@ -80,12 +112,18 @@ export function AiOverview({ initial }: { initial?: OverviewComplete } = {}) {
       for (const key of Object.keys(next)) next[key] = "done";
       return next;
     });
+    onCompleteRef.current?.(data);
   }, []);
 
   useEffect(() => {
     // Static mode: the overview is already in hand (card U1's /demo serves A1's
     // committed artifact). No stream, so a public visitor never hits the LLM.
     if (initial) return;
+    // Cached mode: this run already happened on a previous visit to the page.
+    if (cachedIsFresh.current) {
+      cachedIsFresh.current = false;
+      return;
+    }
 
     const controller = new AbortController();
     aborter.current?.abort();

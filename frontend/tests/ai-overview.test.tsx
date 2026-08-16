@@ -104,3 +104,45 @@ describe("AiOverview — narrative path", () => {
     expect(screen.getByText(/computed in Python/i)).toBeTruthy();
   });
 });
+
+/**
+ * Cached mode — the dashboard's back button.
+ *
+ * The `/portfolio` route layout keeps the last completed run, so walking to
+ * Holdings and returning re-reads it. Re-streaming there would spend five agents
+ * (and the daily budget) restating a paragraph that is already written.
+ */
+describe("AiOverview — cached mode", () => {
+  const COMPLETED: OverviewComplete = {
+    status: "complete",
+    degraded: false,
+    reason: null,
+    scripted: false,
+    metrics: METRICS,
+    agents: [],
+    narrative: [{ segments: [{ text: "A run that already happened." }] }],
+  };
+
+  it("renders a cached run without streaming, and keeps Regenerate", () => {
+    driver = () => {
+      throw new Error("cached mode must not open a stream");
+    };
+
+    render(<AiOverview cached={COMPLETED} onComplete={() => {}} />);
+
+    expect(screen.getByText("A run that already happened.")).toBeTruthy();
+    // Unlike /demo's frozen `initial`, the run is over — not unrepeatable.
+    expect(screen.getByLabelText(/Regenerate the AI overview/i)).toBeTruthy();
+  });
+
+  it("hands a live run back to its caller so the next visit can reuse it", async () => {
+    const kept = vi.fn();
+    driver = (h) => {
+      h.onComplete?.(COMPLETED);
+    };
+
+    render(<AiOverview onComplete={kept} />);
+
+    await waitFor(() => expect(kept).toHaveBeenCalledWith(COMPLETED));
+  });
+});
