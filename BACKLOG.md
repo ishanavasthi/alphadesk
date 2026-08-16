@@ -152,6 +152,56 @@ environment.
 
 ---
 
+## Configurable model routing + NVIDIA NIM as a second provider
+
+**Status:** deferred, but with a live trigger — on 2026-08-16 Groq decommissioned
+`llama-3.3-70b-versatile`, which the Analyst and Risk Manager had **hardcoded**
+(`ANALYST_MODEL`, `RISK_MODEL`). The swap to `openai/gpt-oss-120b` was a code
+change and a redeploy, because there is no way to name a model from config. The
+next such notice should be a `.env` edit, not a commit.
+
+Two stages, in this order — the second is worthless without the first.
+
+**Stage 1 — models configurable via `.env`.**
+Every per-agent model constant (`SCANNER_MODEL`, `RESEARCH_MODEL`,
+`ANALYST_MODEL`, `RISK_MODEL`, and the portfolio-overview models) becomes an env
+override with the current value as its default, so an unset env keeps today's
+behaviour exactly. Add NVIDIA NIM (`https://integrate.api.nvidia.com/v1`) as a
+named provider in `get_chat_llm` — it is OpenAI-compatible, so it is closer to a
+third `Provider` literal than to new transport code.
+
+Design constraints, because this touches the one helper that A1 hardened:
+
+- `provider=` must keep winning over the environment. The whole point of
+  `agents/llm.py` is that a stray env var cannot reroute the portfolio agents
+  off real OpenAI, and per-agent tiering in the Lab cannot silently collapse to
+  one model. A config surface that re-opens that hole is a regression, not a
+  feature — the existing `test_llm_routing.py` assertions are the contract.
+- Prefer explicit per-agent vars (`ALPHADESK_ANALYST_MODEL=...`) over a single
+  global override. One var that sets every agent's model *is* the collapsed
+  tiering A1 spent effort preventing.
+- The Analyst and Risk Manager both use `.with_structured_output`, and the
+  Analyst's `confidence` feeds hard guardrail thresholds (0.70 REJECT / 0.75
+  FLAG). Any model reachable from config must support structured output, and a
+  swap needs a real pipeline run to check the confidence distribution — a green
+  `pytest` proves nothing here, since no test exercises those two agents.
+- Validate the model name at startup, not mid-pipeline: a typo in `.env` should
+  fail the boot, not surface as a failed run three agents deep.
+
+**Stage 2 — model switching in the frontend.**
+Only after Stage 1 exists, and it needs its own plan. Open questions to settle
+*before* building it: is the choice per-user (persisted where?) or per-run; is it
+exposed for the Lab only, or for the portfolio overview too — where model choice
+changes the cost and quality of *financial* output; and who absorbs the spend
+when a user picks the expensive model. Related: **Bring-your-own LLM key** below,
+which answers that last question by moving the bill to the user. If both ship,
+they should ship as one coherent surface rather than two unrelated selectors.
+
+**Pick up when:** the next model deprecation notice lands, or a second provider
+is actually wanted for cost/latency reasons — whichever comes first.
+
+---
+
 ## Small, cheap, not yet scheduled
 
 ### `segments` on `get_indian_stocks_details`

@@ -2,7 +2,7 @@
 
 Pure async node ``(state: PortfolioState) -> PortfolioState``. For each
 ``ResearchReport`` it gathers RAG context (``rag.retriever``) plus IND key
-references (``lookup_ind_keys``), then uses ``llama-3.3-70b-versatile`` to
+references (``lookup_ind_keys``), then uses ``openai/gpt-oss-120b`` to
 produce an ``AnalystRecommendation`` (bull/bear thesis, price target, confidence,
 key risks, catalysts) written into ``state.analyst_recommendations``.
 """
@@ -17,7 +17,9 @@ from agents.llm import get_chat_llm
 from graph.state import AnalystRecommendation, PortfolioState, ResearchReport
 from rag.retriever import get_relevant_context
 
-ANALYST_MODEL = "llama-3.3-70b-versatile"
+# NOTE: the ``openai/`` prefix is part of the *Groq* model id (GPT OSS 120B
+# served by Groq) — this agent still routes through Groq, not OpenAI.
+ANALYST_MODEL = "openai/gpt-oss-120b"
 
 
 class _AnalystOutput(BaseModel):
