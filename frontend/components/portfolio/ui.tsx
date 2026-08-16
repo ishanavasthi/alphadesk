@@ -23,7 +23,7 @@ export function Card({
   return (
     <div
       className={cn(
-        "rounded-lg border border-border bg-card p-5 shadow-[0_1px_2px_rgba(0,0,0,.04)]",
+        "rounded-lg border border-border bg-card p-5 shadow-[0_1px_2px_var(--adp-shadow)]",
         className,
       )}
       {...props}
@@ -49,10 +49,10 @@ const badgeVariants = cva(
     variants: {
       variant: {
         type: "border border-border bg-secondary text-muted-foreground",
-        us: "border border-[var(--adp-accent-ring)] bg-[var(--adp-accent-soft)] text-[#1d4ed8]",
-        good: "border border-[#a7f3d0] bg-[#ecfdf5] text-[#047857]",
+        us: "border border-[var(--adp-accent-ring)] bg-[var(--adp-accent-soft)] text-[var(--adp-chip-ink)]",
+        good: "border border-[var(--adp-good-bd)] bg-[var(--adp-good-bg)] text-[var(--adp-good-ink)]",
         warn: "border border-[var(--adp-warn-bd)] bg-[var(--adp-warn-bg)] text-[var(--adp-warn-ink)]",
-        lab: "border border-[#e9d5ff] bg-[#faf5ff] text-[#7e22ce]",
+        lab: "border border-[var(--adp-lab-bd)] bg-[var(--adp-lab-bg)] text-[var(--adp-lab-ink)]",
         soon: "border border-dashed border-border bg-secondary text-[var(--adp-faint)]",
       },
     },
@@ -74,7 +74,8 @@ const buttonVariants = cva(
     variants: {
       variant: {
         primary: "bg-primary text-primary-foreground hover:bg-primary/90",
-        accent: "bg-[var(--adp-accent)] text-white hover:bg-[#1d4ed8]",
+        accent:
+          "bg-[var(--adp-accent)] text-[var(--adp-accent-ink)] hover:bg-[var(--adp-accent-strong)]",
         outline: "border-border bg-card text-foreground hover:bg-secondary",
         ghost: "text-muted-foreground hover:bg-secondary",
         destructive: "text-[var(--adp-bad)] hover:bg-secondary",

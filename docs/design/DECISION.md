@@ -75,3 +75,49 @@ the implementation vehicle.
   analytics only · not investment advice` + Privacy/Terms links.
 - Focus visible (2px accent outline), reduced-motion respected, tables
   scroll in their own container — no page-level horizontal scroll at 375px.
+
+## Dark variant (added 2026-08-16, issue #8)
+
+Dark is an **additive variant of the direction locked above, not a second
+direction**: the same zinc family, the same measurements, radii, type scale
+and chart rules. Only the token *values* change, on
+`[data-adp][data-adp-theme="dark"]` in `frontend/app/portfolio/portfolio.css`.
+No component branches on the theme — a component that needs to know which
+theme it is in is a component that has escaped the token set.
+
+Scope is the `[data-adp]` dashboard surface. The Lab keeps its own dark
+terminal chrome and the marketing pages stay light.
+
+Behaviour: the OS preference is the default, a toggle in the dashboard top bar
+overrides it and persists in `localStorage["adp-theme"]`, and an inline script
+in the portfolio layout applies the attribute before first paint so neither
+theme flashes. With no stored choice the surface keeps following the OS live.
+
+| Token | Light | Dark |
+| --- | --- | --- |
+| ground / `--background` | `#fafafa` | `#09090b` |
+| ink / `--foreground` | `#09090b` | `#f5f5f5` |
+| card, popover | `#ffffff` | `#131316` |
+| border, input | `#e4e4e7` | `#27272b` |
+| secondary / muted / accent | `#f4f4f5` | `#1d1d20` |
+| muted ink | `#71717a` | `#9c9ca5` |
+| primary / on-primary | `#18181b` / `#ffffff` | `#f5f5f5` / `#121216` |
+| ring | `#2563eb` | `#3b82f6` |
+| `--adp-accent` | `#2563eb` | `#3b82f6` |
+| `--adp-accent-soft` / `-ring` / `-strong` | `#eff6ff` / `#bfdbfe` / `#1d4ed8` | `#1e2a4a` / `#1d4ed8` / `#60a5fa` |
+| `--adp-good` / `--adp-bad` (P&L) | `#059669` / `#dc2626` | `#34d399` / `#f87171` |
+| `--adp-faint` | `#a1a1aa` | `#52525b` |
+| `--adp-track` / `--adp-hairline` | `#f4f4f5` | `#1c1c1f` |
+| warn bg / bd / ink | `#fffbeb` / `#fde68a` / `#92400e` | `#2a2205` / `#854d0e` / `#fbbf24` |
+| `good` badge bg / bd / ink | `#ecfdf5` / `#a7f3d0` / `#047857` | `#052e22` / `#065f46` / `#6ee7b7` |
+| `lab` badge bg / bd / ink | `#faf5ff` / `#e9d5ff` / `#7e22ce` | `#2a1240` / `#6b21a8` / `#d8b4fe` |
+| chip ink (metric chip, `US` badge) | `#1d4ed8` | `#93c5fd` |
+| narrative prose ink | `#27272a` | `#d4d4d8` |
+| tooltip bg / ink | `#09090b` / `#ffffff` | `#f4f4f5` / `#09090b` |
+| cap ramp L → M → S | `#1d4ed8` → `#60a5fa` → `#bfdbfe` | `#93c5fd` → `#3b82f6` → `#1e3a8a` |
+
+The cap ramp is walked the other way on dark — light to dark instead of dark to
+light — so lightness stays monotonic across the ordered bands in both themes.
+Bands beyond three still sample the ramp by per-channel interpolation
+(`color-mix(in srgb, …)` over the tokens), which reproduces the locked three
+exactly.

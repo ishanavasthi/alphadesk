@@ -29,3 +29,20 @@ if (!("ResizeObserver" in globalThis)) {
   (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver =
     ResizeObserverStub;
 }
+
+// jsdom ships no `matchMedia`, and the dashboard's theme toggle asks it what the
+// OS preference is. The stub answers "light" and accepts listeners, which is the
+// honest default for a headless run — a test that cares about the dark branch
+// overrides it itself.
+if (typeof window !== "undefined" && !window.matchMedia) {
+  window.matchMedia = ((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+}
