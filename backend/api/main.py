@@ -44,8 +44,9 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 from api.routes.account import router as account_router  # noqa: E402
 from api.routes.internal import router as internal_router  # noqa: E402
 from api.routes.overview import router as overview_router  # noqa: E402
+from api.routes.portfolio import evict_connector  # noqa: E402
 from api.routes.portfolio import router as portfolio_router  # noqa: E402
-from db.models import Watchlist, utcnow  # noqa: E402
+from db.models import BrokerLink, Watchlist, utcnow  # noqa: E402
 from graph.graph import alphaDesk_graph, resume_after_approval  # noqa: E402
 from graph.state import PortfolioState  # noqa: E402
 from api.deps import (  # noqa: E402
@@ -58,11 +59,13 @@ from tools.ind_money_auth import (  # noqa: E402
     LOCAL_USER_ID,
     MCPAuthError,
     OAuthStateError,
+    SOURCE,
     auth_status,
     begin_login,
     bind_run_user,
     complete_login,
     ensure_user_row,
+    forget_auth_store,
     logout,
     single_tenant_mode,
     unbind_run_user,
@@ -614,6 +617,58 @@ async def auth_logout_endpoint(
 ) -> Dict[str, object]:
     """Unlink IND Money for the signed-in user: revoke upstream, then delete."""
     return await logout(user_id)
+
+
+async def _has_broker_link(session: Optional[AsyncSession], user_id: str) -> bool:
+    """Whether ``user_id`` has an IND Money link row to disconnect.
+
+    Read *before* the unlink so the response can tell "we just disconnected you"
+    apart from "you were never connected" — the second press of a button is not
+    an error, and neither is a stale tab. A row that exists but cannot be
+    decrypted still counts as a link: the user has something to disconnect, and
+    the unlink is what removes it.
+
+    With no database configured (`DATABASE_URL` unset) there is no row either
+    way, and the caller falls back to whether there was a grant to revoke.
+    """
+    if session is None:
+        return False
+    result = await session.execute(
+        select(BrokerLink.id).where(
+            BrokerLink.user_id == user_id, BrokerLink.source == SOURCE
+        )
+    )
+    return result.scalars().first() is not None
+
+
+@app.post("/auth/unlink")
+async def auth_unlink_endpoint(
+    user_id: str = Depends(_link_identity),
+    session: Optional[AsyncSession] = Depends(optional_session),
+) -> Dict[str, object]:
+    """Disconnect **this caller's** IND Money link, from the dashboard.
+
+    The same ordered operation `logout` has always been: revoke the refresh
+    token upstream *first* (best-effort — an upstream failure still unlinks
+    locally, and is reported so the UI can say the grant may still need
+    revoking from IND Money's side), then delete the `broker_links` row. On top
+    of that it drops the caller's per-user in-memory state the way
+    `DELETE /account` does — the cached connector and the cached `AuthStore`
+    both hold *decrypted* tokens, and a disconnect that leaves them in the
+    process has not disconnected anything the next request would notice.
+
+    **Idempotent.** Unlinking an already-unlinked user is a 200 saying
+    ``not_linked``, never a 500 and never a lie about having revoked something.
+    """
+    linked = await _has_broker_link(session, user_id)
+    result = await logout(user_id)
+    evict_connector(user_id)
+    forget_auth_store(user_id)
+
+    revoked = result.get("revoked_upstream")
+    if not linked and revoked is None:
+        return {"status": "not_linked", "upstream_revoked": False}
+    return {"status": "unlinked", "upstream_revoked": bool(revoked)}
 
 
 @app.get("/auth/callback")

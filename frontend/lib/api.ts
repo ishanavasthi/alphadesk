@@ -311,6 +311,27 @@ export async function logoutAuth(): Promise<void> {
   if (!response.ok) throw new Error(`Logout failed (${response.status}).`);
 }
 
+/** The confirmation `POST /auth/unlink` returns. */
+export interface UnlinkResult {
+  /** `unlinked` if a link was removed; `not_linked` if there was none to remove. */
+  status: "unlinked" | "not_linked";
+  /** True only if the grant was also killed at IND Money's end. */
+  upstream_revoked: boolean;
+}
+
+/**
+ * POST /auth/unlink — disconnect **this caller's** IND Money link (issue #13).
+ *
+ * Revokes the grant upstream first, then deletes the stored link. JWT-only, like
+ * the rest of `/auth/*`; idempotent, so a second press answers `not_linked`
+ * rather than failing.
+ */
+export async function unlinkIndMoney(): Promise<UnlinkResult> {
+  const response = await apiFetch(`${API_BASE}/auth/unlink`, { method: "POST" });
+  if (!response.ok) throw new Error(`Unlink failed (${response.status}).`);
+  return response.json();
+}
+
 /** The confirmation `DELETE /account` returns. */
 export interface DeleteAccountResult {
   deleted: boolean;
