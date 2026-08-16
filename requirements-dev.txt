@@ -13,3 +13,7 @@
 # reachable, so `pytest` is green on a machine without Docker.
 pytest==9.1.1
 pytest-asyncio==1.4.0
+# Randomized test ordering — the suite is verified green under it (L1 fixed a
+# session-fixture teardown that only surfaced under random order). Pinned so CI
+# actually runs the ordering the guarantee was validated against.
+pytest-randomly==4.1.0
