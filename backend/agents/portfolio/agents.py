@@ -28,6 +28,18 @@ from agents.portfolio.redact import redact
 #: The OpenAI model the overview runs on. Cheap by default; override per deploy.
 OVERVIEW_MODEL = os.environ.get("OPENAI_OVERVIEW_MODEL", "").strip() or "gpt-4o-mini"
 
+#: Per-request timeout (seconds). A *stalled* provider connection would otherwise
+#: hold the SSE stream open near the server's ~600s ceiling; this makes a hung
+#: call degrade to "AI overview unavailable" promptly. (An immediate connection
+#: error already degrades fine.) Override with OPENAI_OVERVIEW_TIMEOUT.
+def _overview_timeout() -> float:
+    raw = (os.environ.get("OPENAI_OVERVIEW_TIMEOUT") or "").strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        return 30.0
+    return value if value > 0 else 30.0
+
 #: The specialist roster, in fan-out order. Each names the metric keys it may
 #: cite and the angle it reasons about. ``sip_health`` leans on the SIP roster
 #: and the cash/equity split; it says little when there is nothing to say.
@@ -83,7 +95,9 @@ class OverviewLLMError(RuntimeError):
 
 def default_llm_factory() -> Any:
     """Construct the overview chat model on real OpenAI (provider wins over env)."""
-    return get_chat_llm(OVERVIEW_MODEL, temperature=0.2, provider="openai")
+    return get_chat_llm(
+        OVERVIEW_MODEL, temperature=0.2, provider="openai", timeout=_overview_timeout()
+    )
 
 
 def _catalog(metrics: Mapping[str, Metric], keys: Sequence[str]) -> list[dict[str, Any]]:
@@ -153,13 +167,23 @@ async def run_synthesizer(
     llm: Any,
 ) -> str:
     available = [m for m in metrics.values() if m.available and m.unit != "text"]
-    catalog = _render_catalog(
+    # Route the synthesizer catalog through redact() too — the same gate the
+    # specialist path uses. Metrics are clean by construction today, but "every
+    # prompt is routed through redact()" (§8.1) must hold on this path as well,
+    # and it is the one most likely to grow free-text fields.
+    rows = redact(
         [
             {"cite": f"[[{m.key}]]", "label": m.label, "value": m.display, "note": m.detail}
             for m in available
         ]
     )
-    notes = "\n\n".join(f"[{name}] {text}" for name, text in findings.items() if text.strip())
+    catalog = _render_catalog(rows)
+    # The specialist findings are LLM-authored free text interpolated into this
+    # prompt — scrub them as well before they travel to the model.
+    safe_findings = redact({name: text for name, text in findings.items()})
+    notes = "\n\n".join(
+        f"[{name}] {text}" for name, text in safe_findings.items() if str(text).strip()
+    )
     user = (
         "Combine the specialist notes below into a single overview of two or "
         "three short paragraphs, separated by a blank line. Reuse the [[token]] "

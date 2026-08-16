@@ -114,26 +114,28 @@ def figures(text: str) -> list[str]:
 
 
 def invented_figures(
-    narrative: Sequence[Mapping[str, Any]], metrics: Sequence[Metric]
+    narrative: Sequence[Mapping[str, Any]], metrics: Sequence[Metric] | None = None
 ) -> list[str]:
-    """Figures in the narrative that do **not** trace to a metric display.
+    """Figures the model wrote as free prose rather than as a metric chip.
 
-    Empty list ⇒ every number in the narrative came from a computed metric.
-    A figure counts as traced if it is a substring of some metric's display
-    (so ``21.7%`` traces to the ``21.7%`` chip, and ``2`` to a count chip).
+    Empty list ⇒ every number in the narrative reached the reader **only as a
+    metric chip** (a ``[[token]]`` the synthesizer emitted, rendered from the
+    Python-computed ``display``). A number typed into a ``{"text"}`` segment is,
+    by definition, one the model wrote itself — so **any digit in a text segment
+    is flagged**, and the caller trips the scripted-prose fallback.
+
+    This is structural, not a substring trace: a substring check let a fabricated
+    but plausible numeral pass whenever it happened to be a substring of some
+    real display (``1.7%`` inside a ``21.7%`` chip, ``5 names``, a rupee
+    fragment). Numbers are allowed in the narrative **only** through chips, and a
+    chip's figure is always a computed display — so the ``metrics`` argument is no
+    longer needed to decide provenance and is accepted only for compatibility.
     """
-    displays = [m.display for m in metrics if m.display and m.display != "—"]
-    haystack = " ".join(displays)
     offenders: list[str] = []
-    for fig in figures(render_plain(narrative)):
-        # A bare separator or sign with no digit cannot occur (regex requires a
-        # digit). Trace it to any metric display containing it verbatim.
-        if fig in haystack:
-            continue
-        # Also accept the digit-core matching (e.g. "2" inside "2 of 9" detail).
-        if any(fig in d for d in displays):
-            continue
-        offenders.append(fig)
+    for para in narrative:
+        for seg in para.get("segments", []):
+            if "text" in seg:
+                offenders.extend(figures(str(seg["text"])))
     return offenders
 
 

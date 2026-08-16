@@ -42,12 +42,16 @@ OPENAI_OFFICIAL_BASE_URL = "https://api.openai.com/v1"
 Provider = Literal["openai", "groq", "compat"]
 
 
-def _chat_openai(model: str, temperature: float, base_url: Optional[str]) -> Any:
+def _chat_openai(
+    model: str, temperature: float, base_url: Optional[str], timeout: Optional[float]
+) -> Any:
     from langchain_openai import ChatOpenAI
 
     kwargs: dict[str, Any] = {"model": model, "temperature": temperature}
     if base_url:
         kwargs["base_url"] = base_url
+    if timeout is not None:
+        kwargs["timeout"] = timeout
     return ChatOpenAI(**kwargs)
 
 
@@ -62,6 +66,7 @@ def get_chat_llm(
     *,
     temperature: float = 0,
     provider: Optional[Provider] = None,
+    timeout: Optional[float] = None,
 ) -> Any:
     """Return a chat model, routing by explicit ``provider`` first, then env.
 
@@ -80,12 +85,14 @@ def get_chat_llm(
             - ``None`` — env-selected default: compat **iff** ``OPENAI_BASE_URL``
               is set, otherwise Groq. A lone ``OPENAI_COMPATIBLE_MODEL`` is inert
               here, so the Lab keeps running Groq even when that leftover is set.
+        timeout: Per-request timeout (seconds) for the OpenAI/compat paths, so a
+            stalled connection fails fast instead of hanging. Ignored for Groq.
     """
     if provider == "openai":
         # Pin the official endpoint so a stray OPENAI_BASE_URL cannot redirect
         # this call, and use exactly the model asked for — never the compat
         # model name, which belongs to a different endpoint entirely.
-        return _chat_openai(default_model, temperature, OPENAI_OFFICIAL_BASE_URL)
+        return _chat_openai(default_model, temperature, OPENAI_OFFICIAL_BASE_URL, timeout)
 
     if provider == "groq":
         return _chat_groq(default_model, temperature)
@@ -98,7 +105,7 @@ def get_chat_llm(
                 "endpoint's base URL."
             )
         model = os.environ.get("OPENAI_COMPATIBLE_MODEL", "").strip() or default_model
-        return _chat_openai(model, temperature, base_url)
+        return _chat_openai(model, temperature, base_url, timeout)
 
     # provider is None: env-selected default. Compat mode requires a real
     # endpoint (OPENAI_BASE_URL). OPENAI_COMPATIBLE_MODEL alone does NOT switch
@@ -106,7 +113,7 @@ def get_chat_llm(
     base_url = os.environ.get("OPENAI_BASE_URL", "").strip()
     if base_url:
         model = os.environ.get("OPENAI_COMPATIBLE_MODEL", "").strip() or default_model
-        return _chat_openai(model, temperature, base_url)
+        return _chat_openai(model, temperature, base_url, timeout)
 
     return _chat_groq(default_model, temperature)
 
