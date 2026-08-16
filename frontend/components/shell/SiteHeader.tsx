@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Github } from "lucide-react";
 
 import { AUTH_ENABLED } from "@/lib/auth";
+import { ThemeToggle } from "@/components/portfolio/ThemeToggle";
 
 import { AppNav } from "./AppNav";
 import { SiteAuthSlot } from "./SiteAuthSlot";
@@ -14,20 +15,25 @@ import { SiteAuthSlot } from "./SiteAuthSlot";
  * the product/marketing surfaces, the dark terminal `TopBar` lives on the Lab
  * (`/lab/*`, in that segment's own layout), and `/portfolio` carries its own
  * `PortfolioTopBar`. There is no per-route conditional in the root layout any
- * more — each surface declares its own chrome. This replaces the interim
+ * more: each surface declares its own chrome. This replaces the interim
  * `TerminalChrome` component D1 left for U1 to retire.
  *
  * The identity slot is flag-gated (`SiteAuthSlot`): flag off it renders nothing
  * and ships no Clerk; flag on it shows sign-in / the account avatar.
+ *
+ * `ThemeToggle` is the dashboard's own component, mounted here unchanged: it
+ * flips `data-adp-theme` on the `#adp-root` wrapper the marketing layout
+ * declares and stores the choice under `adp-theme`, so light and dark are one
+ * mechanism and one stored choice across the whole product.
  */
 export function SiteHeader() {
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur">
-      <div className="mx-auto flex h-14 max-w-[1120px] items-center gap-5 px-4 sm:px-6">
+      <div className="mx-auto flex h-14 max-w-[1120px] items-center gap-3 px-4 sm:gap-5 sm:px-6">
         <Link href="/" className="font-semibold tracking-[-0.01em]">
           alpha<b className="text-[var(--adp-accent)]">Desk</b>
         </Link>
-        <nav className="flex items-center gap-4 text-[13px] text-muted-foreground">
+        <nav className="flex items-center gap-3 whitespace-nowrap text-[13px] text-muted-foreground sm:gap-4">
           <Link href="/demo" className="transition-colors hover:text-foreground">
             Live demo
           </Link>
@@ -40,20 +46,24 @@ export function SiteHeader() {
                 { href: "/portfolio", label: "Portfolio" },
                 { href: "/lab", label: "Lab" },
               ]}
-              className="text-[13px]"
+              className="text-[13px] whitespace-nowrap"
             />
           ) : null}
         </nav>
         <span className="flex-1" />
+        {/* At 375px the row has no slack: the nav has to stay on one line, so
+            this icon steps aside below `sm`. Nothing is lost — the footer
+            carries the same repository link as "Open source" on every page. */}
         <a
           href="https://github.com/ishanavasthi/alphadesk"
           target="_blank"
           rel="noopener noreferrer"
           aria-label="Source code on GitHub"
-          className="text-muted-foreground transition-colors hover:text-foreground"
+          className="hidden text-muted-foreground transition-colors hover:text-foreground sm:block"
         >
           <Github className="h-4 w-4" />
         </a>
+        <ThemeToggle />
         <SiteAuthSlot />
       </div>
     </header>
