@@ -90,6 +90,53 @@ const REFRESH_COOLDOWN_S = 30;
  * hand. Fetching the widest window is what makes the narrow ones free.
  */
 const HISTORY_DAYS = 365;
+/**
+ * How old the remembered walk may be before the buckets are re-read (issue #15).
+ *
+ * The instant paint below re-uses the last holdings walk when the summary says
+ * nothing has moved. This is the other half of that judgement: a page left open
+ * across a lunch break should re-read the rows even if the source's `as_of`
+ * happens to match, because "nothing changed" gets less believable with time.
+ */
+const REWALK_AFTER_MS = 15 * 60 * 1000;
+
+/**
+ * The last successful load, kept at module scope so a remount can paint it.
+ *
+ * Deliberately **not** React state (a fresh provider has none), and deliberately
+ * **not** localStorage (per the issue's decision): holdings are the most
+ * sensitive thing this app touches, and memory that dies with the tab is the
+ * honest storage for them. Its only job is that leaving `/portfolio` and coming
+ * back — or a nav that unmounts the layout — repaints what was on screen a
+ * moment ago instead of an empty "Reading your portfolio…" while the source is
+ * walked again.
+ *
+ * Nothing here invents a number: what is painted is a real reading, and the
+ * existing "read <time>" stamp shows the *stored* `as_of`, so the page never
+ * claims to be fresher than it is. The revalidation that follows is what makes
+ * it true again.
+ */
+interface LastKnown {
+  summary: PortfolioSummary;
+  buckets: Bucket[];
+  history: TrendPoint[];
+  lastCapturedAt: string | null;
+  /** When this walk completed, in `Date.now()` terms. */
+  fetchedAt: number;
+}
+
+let lastKnown: LastKnown | null = null;
+
+/**
+ * Forget the instant-paint store.
+ *
+ * Called when a gate answers (there is nothing this reader may see), and by
+ * tests that render the provider more than once in a file — a module-level
+ * cache would otherwise let one test's portfolio paint inside the next one's.
+ */
+export function resetPortfolioMemory(): void {
+  lastKnown = null;
+}
 
 type Phase = "loading" | "ready" | "locked" | "unauthorized" | "connect" | "error";
 
@@ -167,15 +214,29 @@ export function usePortfolio(): PortfolioContextValue {
 }
 
 export function PortfolioProvider({ children }: { children: ReactNode }) {
-  const [phase, setPhase] = useState<Phase>("loading");
+  // The instant paint: a remount starts from the last successful load rather
+  // than from nothing. The revalidation in the effect below is what keeps that
+  // honest — this is a head start, not a substitute for reading the source.
+  const [phase, setPhase] = useState<Phase>(
+    AUTH_ENABLED && lastKnown ? "ready" : "loading",
+  );
   const [errorMessage, setErrorMessage] = useState("");
-  const [summary, setSummary] = useState<PortfolioSummary | null>(null);
-  const [history, setHistory] = useState<TrendPoint[]>([]);
-  const [lastCapturedAt, setLastCapturedAt] = useState<string | null>(null);
-  const [buckets, setBuckets] = useState<Bucket[]>([]);
+  const [summary, setSummary] = useState<PortfolioSummary | null>(
+    lastKnown?.summary ?? null,
+  );
+  const [history, setHistory] = useState<TrendPoint[]>(lastKnown?.history ?? []);
+  const [lastCapturedAt, setLastCapturedAt] = useState<string | null>(
+    lastKnown?.lastCapturedAt ?? null,
+  );
+  const [buckets, setBuckets] = useState<Bucket[]>(lastKnown?.buckets ?? []);
   const [loadingHoldings, setLoadingHoldings] = useState(false);
   const [throttle, setThrottle] = useState<number | null>(null);
-  const [refreshKey, setRefreshKey] = useState(0);
+  // `fresh` is the Refresh button: it bypasses the backend cache and always
+  // re-walks, so it is part of the reload identity rather than a separate ref.
+  const [reload, setReload] = useState<{ key: number; fresh: boolean }>({
+    key: 0,
+    fresh: false,
+  });
 
   const [cooldown, setCooldown] = useState(0);
 
@@ -243,6 +304,7 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     // Flag on, a signed-out visitor is a normal state the backend answers 401
     // for, and `unauthorized` is what renders.
     if (!AUTH_ENABLED) {
+      resetPortfolioMemory();
       setPhase("locked");
       return;
     }
@@ -252,11 +314,15 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     aborter.current?.abort();
     aborter.current = controller;
     const { signal } = controller;
+    // Refresh is a deliberate re-read, so it never paints from memory.
+    const memory = reload.fresh ? null : lastKnown;
 
     const run = async () => {
-      setPhase("loading");
       setThrottle(null);
-      setBuckets([]);
+      if (memory === null) {
+        setPhase("loading");
+        setBuckets([]);
+      }
       // A reload invalidates any drill-down in flight along with everything else.
       sectorToken.current += 1;
       sectorAborter.current?.abort();
@@ -268,14 +334,23 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
 
       let snapshot: PortfolioSummary;
       try {
-        snapshot = await getPortfolioSummary(signal);
+        snapshot = await getPortfolioSummary(signal, reload.fresh);
       } catch (err) {
         if (signal.aborted) return;
         const failure = err as PortfolioError;
-        if (failure.code === "locked") setPhase("locked");
-        else if (failure.code === "unauthorized") setPhase("unauthorized");
-        else if (failure.code === "not_linked") setPhase("connect");
-        else {
+        // A gate always beats the memory: whatever was painted, this reader may
+        // not see it now. Forgetting it is what stops a signed-out tab from
+        // showing the previous session's holdings behind the gate.
+        if (failure.code === "locked") {
+          resetPortfolioMemory();
+          setPhase("locked");
+        } else if (failure.code === "unauthorized") {
+          resetPortfolioMemory();
+          setPhase("unauthorized");
+        } else if (failure.code === "not_linked") {
+          resetPortfolioMemory();
+          setPhase("connect");
+        } else {
           setErrorMessage(failure.message || "The portfolio source could not be read.");
           setPhase("error");
         }
@@ -285,17 +360,51 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       setSummary(snapshot);
       setPhase("ready");
 
+      let points = memory?.history ?? [];
+      let capturedAt = memory?.lastCapturedAt ?? null;
       try {
         const captured = await getPortfolioHistory(HISTORY_DAYS, signal);
         if (signal.aborted) return;
-        setHistory(toTrendPoints(captured.points));
-        setLastCapturedAt(captured.last_captured_at);
+        points = toTrendPoints(captured.points);
+        capturedAt = captured.last_captured_at;
+        setHistory(points);
+        setLastCapturedAt(capturedAt);
       } catch {
         // History is additive; its absence must never take the page down.
-        if (!signal.aborted) setHistory([]);
+        if (!signal.aborted) {
+          points = [];
+          setHistory(points);
+        }
       }
 
-      await loadHoldings(snapshot, signal, setBuckets, setLoadingHoldings, setThrottle);
+      // The expensive part. Skipped entirely when the painted walk is still the
+      // answer — same reading (`as_of`), recent enough — which is what makes a
+      // return to this surface cost one cached summary call instead of a walk of
+      // every bucket the portfolio has.
+      let walked = memory?.buckets ?? [];
+      const rewalk =
+        memory === null ||
+        memory.summary.as_of !== snapshot.as_of ||
+        Date.now() - memory.fetchedAt > REWALK_AFTER_MS;
+      if (rewalk) {
+        if (memory !== null) setBuckets([]);
+        walked = await loadHoldings(
+          snapshot,
+          signal,
+          setBuckets,
+          setLoadingHoldings,
+          setThrottle,
+          reload.fresh,
+        );
+      }
+      if (signal.aborted) return;
+      lastKnown = {
+        summary: snapshot,
+        buckets: walked,
+        history: points,
+        lastCapturedAt: capturedAt,
+        fetchedAt: Date.now(),
+      };
     };
 
     void run();
@@ -303,7 +412,7 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       controller.abort();
       sectorAborter.current?.abort();
     };
-  }, [refreshKey]);
+  }, [reload]);
 
   // Counts the Refresh cooldown down one second at a time, purely for the label.
   useEffect(() => {
@@ -312,7 +421,12 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(timer);
   }, [cooldown]);
 
-  const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
+  // Refresh is the one read that is *always* a real one: it skips the painted
+  // memory, sends `fresh=1` past the backend's cache, and re-walks every bucket.
+  const refresh = useCallback(
+    () => setReload((current) => ({ key: current.key + 1, fresh: true })),
+    [],
+  );
 
   /**
    * Take today's snapshot now, and reload the history line when one lands.
@@ -514,6 +628,9 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
  * out-of-enum buckets share the single `UNKNOWN` query), and paced. A throttled
  * bucket waits out the source's own suggested delay once, then gives up for this
  * load rather than hammering a server that just said no.
+ *
+ * Returns the walk it completed, so the caller can remember it for the instant
+ * paint; the progressive `setBuckets` is still what renders it as it arrives.
  */
 async function loadHoldings(
   snapshot: PortfolioSummary,
@@ -521,7 +638,8 @@ async function loadHoldings(
   setBuckets: (update: (current: Bucket[]) => Bucket[]) => void,
   setLoadingHoldings: (value: boolean) => void,
   setThrottle: (value: number | null) => void,
-): Promise<void> {
+  fresh = false,
+): Promise<Bucket[]> {
   const wanted = new Map<string, { label: string; value: number | null }>();
   for (const slice of snapshot.by_asset_type) {
     const key = slice.asset_type;
@@ -543,6 +661,7 @@ async function loadHoldings(
     (a, b) => (b[1].value ?? 0) - (a[1].value ?? 0),
   );
 
+  const walked: Bucket[] = [];
   setLoadingHoldings(true);
   for (const [assetType, meta] of ordered) {
     if (signal.aborted) break;
@@ -558,11 +677,11 @@ async function loadHoldings(
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const response = await getPortfolioHoldings(assetType, signal);
+        const response = await getPortfolioHoldings(assetType, signal, fresh);
         bucket = { ...bucket, status: "ok", rows: response.holdings };
         break;
       } catch (err) {
-        if (signal.aborted) return;
+        if (signal.aborted) return walked;
         const failure = err as PortfolioError;
         if (
           failure.code === "rate_limited" &&
@@ -593,10 +712,12 @@ async function loadHoldings(
       }
     }
 
-    if (signal.aborted) return;
+    if (signal.aborted) return walked;
     setThrottle(null);
+    walked.push(bucket);
     setBuckets((current) => [...current, bucket]);
     await sleep(CALL_SPACING_MS);
   }
   if (!signal.aborted) setLoadingHoldings(false);
+  return walked;
 }

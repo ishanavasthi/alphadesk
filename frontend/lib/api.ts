@@ -553,9 +553,24 @@ async function portfolioFetch<T>(
   );
 }
 
+/**
+ * `?fresh=1` — the backend's true cache bypass (issue #15).
+ *
+ * Only Refresh sends it. An ordinary page load may answer from the read-through
+ * cache; a reader who pressed the button asked for the source itself.
+ */
+const freshParam = (fresh: boolean | undefined, separator: "?" | "&"): string =>
+  fresh ? `${separator}fresh=1` : "";
+
 /** GET /portfolio/summary — totals, the snapshot's breakdowns, link health. */
-export function getPortfolioSummary(signal?: AbortSignal): Promise<PortfolioSummary> {
-  return portfolioFetch<PortfolioSummary>("/portfolio/summary", signal);
+export function getPortfolioSummary(
+  signal?: AbortSignal,
+  fresh?: boolean,
+): Promise<PortfolioSummary> {
+  return portfolioFetch<PortfolioSummary>(
+    `/portfolio/summary${freshParam(fresh, "?")}`,
+    signal,
+  );
 }
 
 /**
@@ -568,9 +583,10 @@ export function getPortfolioSummary(signal?: AbortSignal): Promise<PortfolioSumm
 export function getPortfolioHoldings(
   assetType: string,
   signal?: AbortSignal,
+  fresh?: boolean,
 ): Promise<HoldingsResponse> {
   return portfolioFetch<HoldingsResponse>(
-    `/portfolio/holdings?asset_type=${encodeURIComponent(assetType)}`,
+    `/portfolio/holdings?asset_type=${encodeURIComponent(assetType)}${freshParam(fresh, "&")}`,
     signal,
   );
 }
@@ -580,9 +596,11 @@ export function getPortfolioAllocation(
   assetType: string,
   by: "assets" | "sector" | "market_cap",
   signal?: AbortSignal,
+  fresh?: boolean,
 ): Promise<AllocationResponse> {
   return portfolioFetch<AllocationResponse>(
-    `/portfolio/allocation?asset_type=${encodeURIComponent(assetType)}&by=${by}`,
+    `/portfolio/allocation?asset_type=${encodeURIComponent(assetType)}&by=${by}` +
+      freshParam(fresh, "&"),
     signal,
   );
 }

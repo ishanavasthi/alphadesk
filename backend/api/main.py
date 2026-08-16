@@ -54,6 +54,7 @@ from api.deps import (  # noqa: E402
     register_identity,
     verify_token,
 )
+from services import portfolio_cache  # noqa: E402
 from services.snapshots import optional_session  # noqa: E402
 from tools.ind_money_auth import (  # noqa: E402
     LOCAL_USER_ID,
@@ -655,7 +656,9 @@ async def auth_unlink_endpoint(
     of that it drops the caller's per-user in-memory state the way
     `DELETE /account` does — the cached connector and the cached `AuthStore`
     both hold *decrypted* tokens, and a disconnect that leaves them in the
-    process has not disconnected anything the next request would notice.
+    process has not disconnected anything the next request would notice. The
+    read-through portfolio cache (issue #15) goes with them, for the same reason:
+    its rows are holdings read from the account that was just disconnected.
 
     **Idempotent.** Unlinking an already-unlinked user is a 200 saying
     ``not_linked``, never a 500 and never a lie about having revoked something.
@@ -664,6 +667,7 @@ async def auth_unlink_endpoint(
     result = await logout(user_id)
     evict_connector(user_id)
     forget_auth_store(user_id)
+    await portfolio_cache.invalidate_user(session, user_id)
 
     revoked = result.get("revoked_upstream")
     if not linked and revoked is None:
