@@ -1,8 +1,17 @@
 "use client";
 
+import Link from "next/link";
+
+import { AppNav } from "@/components/shell/AppNav";
 import { UserMenu } from "@/components/UserMenu";
 import type { PortfolioSummary } from "@/lib/api";
 import { Button, Chip } from "./ui";
+
+/** The product surfaces, in the order they are offered everywhere. */
+const NAV_LINKS = [
+  { href: "/portfolio", label: "Portfolio" },
+  { href: "/lab", label: "Lab" },
+];
 
 const LINK_LABEL: Record<PortfolioSummary["link_health"], { text: string; ok: boolean }> = {
   linked: { text: "IND Money · linked", ok: true },
@@ -77,10 +86,14 @@ export function PortfolioTopBar({
   // fixed 56px header would let them spill over the page title.
   return (
     <header className="mb-6 flex min-h-14 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border py-2">
-      <span className="font-semibold tracking-[-0.01em]">
+      {/* The dashboard overview *is* this surface's home, so the wordmark walks
+          back to it from a drill-down rather than leaving the app. */}
+      <Link href="/portfolio" className="font-semibold tracking-[-0.01em]">
         alpha<b className="text-[var(--adp-accent)]">Desk</b>
-      </span>
-      <span className="text-[13px] text-muted-foreground">/ Portfolio</span>
+      </Link>
+      {/* Replaces the static "/ Portfolio" breadcrumb: the same "you are here",
+          but the Lab is one click away instead of a typed URL. */}
+      <AppNav links={NAV_LINKS} className="text-[13px]" />
       <span className="flex-1" />
       <Button
         variant="outline"
