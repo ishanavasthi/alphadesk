@@ -36,7 +36,7 @@ export default function Home() {
         onReset={() => {
           setSubmitted(null);
           setQuery("");
-          if (typeof window !== "undefined") window.history.replaceState(null, "", "/");
+          if (typeof window !== "undefined") window.history.replaceState(null, "", "/lab");
         }}
       />
     );
