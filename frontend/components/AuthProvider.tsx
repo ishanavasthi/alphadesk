@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { getAuthStatus, logoutAuth, startAuthLogin, wakeBackend } from "@/lib/api";
+import { useLinkConsent } from "@/components/consent/LinkConsent";
 
 /** Turn a fetch/HTTP failure into something a user can act on. */
 function describe(err: unknown): string {
@@ -90,12 +91,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [refresh, stopPolling]);
 
-  const connect = useCallback(async () => {
+  const { begin: beginConsent, dialog: consentDialog } = useLinkConsent();
+
+  // The real OAuth start, run only after the consent screen is agreed. The
+  // popup opens synchronously inside the agree click (see `useLinkConsent`), so
+  // it keeps the user activation a popup blocker requires.
+  const runConnect = useCallback(async () => {
     if (busy) return;
     setBusy(true);
     setError(null);
-    // Open the popup synchronously, inside the click's user activation — opening
-    // it after the awaited fetch below gets blocked by popup blockers.
     const popup = window.open("", "_blank", "width=520,height=720");
     try {
       const url = await startAuthLogin();
@@ -126,6 +130,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [busy, refresh, stopPolling]);
 
+  // The Connect button routes through consent, always. There is no path from
+  // here to `/auth/login` that skips it (card L1).
+  const connect = useCallback(async () => {
+    if (busy) return;
+    beginConsent(runConnect);
+  }, [busy, beginConsent, runConnect]);
+
   const disconnect = useCallback(async () => {
     if (busy) return;
     setBusy(true);
@@ -143,6 +154,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider value={{ authed, waking, busy, error, connect, disconnect, refresh }}>
       {children}
+      {consentDialog}
     </AuthContext.Provider>
   );
 }

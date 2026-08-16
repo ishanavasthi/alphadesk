@@ -29,10 +29,17 @@ vi.mock("@clerk/nextjs", () => ({
   },
   useAuth: () => ({ getToken }),
   useUser: () => ({ isLoaded: true, isSignedIn: signedIn }),
-  UserButton: () => {
-    userButtonMounted();
-    return <div data-testid="clerk-user-button" />;
-  },
+  useClerk: () => ({ signOut: vi.fn() }),
+  UserButton: Object.assign(
+    () => {
+      userButtonMounted();
+      return <div data-testid="clerk-user-button" />;
+    },
+    {
+      MenuItems: ({ children }: { children: ReactNode }) => <>{children}</>,
+      Action: () => null,
+    },
+  ),
   SignInButton: ({ children }: { children: ReactNode }) => <>{children}</>,
   SignIn: () => <div data-testid="clerk-sign-in" />,
   Waitlist: () => <div data-testid="clerk-waitlist" />,
