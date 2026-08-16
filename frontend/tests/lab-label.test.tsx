@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 import LabLayout from "@/app/lab/layout";
@@ -11,8 +11,21 @@ import LabLayout from "@/app/lab/layout";
  * `app/lab/layout.tsx` so no page under `/lab` can render without it — this test
  * pins that it is there and that it names the two things that matter: this is a
  * simulation, and no orders are placed / it is not advice.
+ *
+ * The layout also renders the terminal `<TopBar/>` and wraps itself in
+ * `<AuthProvider>` as of card U1 (which retired the app-wide `TerminalChrome`
+ * and scoped the IND Money provider to the surfaces that read it). `fetch` is
+ * stubbed so the provider's warm-up ping stays offline instead of reaching for a
+ * real backend.
  */
 describe("the Lab label", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("offline in test"))));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("renders on the Lab layout, wrapping the page", () => {
     render(
       <LabLayout>

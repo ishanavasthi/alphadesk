@@ -9,9 +9,8 @@ import { AUTH_ENABLED } from "@/lib/auth";
  *
  * ## Why `next/dynamic` and not a plain import behind an `if`
  *
- * `<TopBar>` is reached through `<TerminalChrome>`, which is a client component
- * (it needs `usePathname`), so everything below it is client code. A static
- * `import { ClerkUserMenu }` here would therefore be linked into the page's
+ * This slot is a **client** component (it uses `next/dynamic`), so a static
+ * `import { ClerkUserMenu }` here would be linked into the page's
  * **initial** bundle and shipped to every visitor, flag or no flag — whether the
  * minifier then eliminated it would come down to how well cross-module constant
  * folding happened to work that release.

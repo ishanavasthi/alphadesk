@@ -24,6 +24,14 @@ import { Badge, Button, Card } from "@/components/portfolio/ui";
  * stream still delivers every metric with `degraded: true`; the panel then shows
  * "AI overview unavailable" where the narrative would be, and the metrics rail is
  * unchanged. The dashboard never depends on the model.
+ *
+ * ## Static mode (`initial`) — the `/demo` path
+ *
+ * Passing `initial` renders the panel from a **committed** overview and makes
+ * **no stream**: card U1's public `/demo` route serves card A1's frozen
+ * narrative artifact this way, so an anonymous visitor never triggers an LLM
+ * call. The streaming effect is skipped entirely (not merely ignored), and the
+ * Regenerate button — which would need a live stream — is hidden.
  */
 
 const AGENTS = [
@@ -43,13 +51,22 @@ const DEGRADE_COPY: Record<string, string> = {
   error: "AI overview unavailable — the narrative could not be generated.",
 };
 
-export function AiOverview() {
-  const [phase, setPhase] = useState<Phase>("loading");
-  const [narrative, setNarrative] = useState<OverviewParagraph[]>([]);
-  const [metrics, setMetrics] = useState<OverviewMetric[]>([]);
-  const [reason, setReason] = useState<string | null>(null);
+/** All agents marked done — the state a committed (already-run) overview is in. */
+function allDone(): Record<string, AgentState> {
+  return Object.fromEntries(AGENTS.map((a) => [a, "done" as AgentState]));
+}
+
+export function AiOverview({ initial }: { initial?: OverviewComplete } = {}) {
+  const [phase, setPhase] = useState<Phase>(
+    initial ? (initial.degraded ? "degraded" : "ready") : "loading",
+  );
+  const [narrative, setNarrative] = useState<OverviewParagraph[]>(initial?.narrative ?? []);
+  const [metrics, setMetrics] = useState<OverviewMetric[]>(initial?.metrics ?? []);
+  const [reason, setReason] = useState<string | null>(initial?.reason ?? null);
   const [errorMessage, setErrorMessage] = useState("");
-  const [agentStates, setAgentStates] = useState<Record<string, AgentState>>({});
+  const [agentStates, setAgentStates] = useState<Record<string, AgentState>>(
+    initial ? allDone() : {},
+  );
   const [runKey, setRunKey] = useState(0);
   const aborter = useRef<AbortController | null>(null);
 
@@ -66,6 +83,10 @@ export function AiOverview() {
   }, []);
 
   useEffect(() => {
+    // Static mode: the overview is already in hand (card U1's /demo serves A1's
+    // committed artifact). No stream, so a public visitor never hits the LLM.
+    if (initial) return;
+
     const controller = new AbortController();
     aborter.current?.abort();
     aborter.current = controller;
@@ -94,7 +115,7 @@ export function AiOverview() {
     );
 
     return () => controller.abort();
-  }, [runKey, applyComplete]);
+  }, [runKey, applyComplete, initial]);
 
   const regenerate = useCallback(() => setRunKey((k) => k + 1), []);
 
@@ -108,15 +129,17 @@ export function AiOverview() {
           <h2 className="text-sm font-semibold leading-tight">AI overview</h2>
           <Badge variant="lab">gpt · portfolio agents</Badge>
           <span className="flex-1" />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={regenerate}
-            disabled={phase === "loading"}
-            aria-label="Regenerate the AI overview"
-          >
-            ✦ Regenerate
-          </Button>
+          {initial ? null : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={regenerate}
+              disabled={phase === "loading"}
+              aria-label="Regenerate the AI overview"
+            >
+              ✦ Regenerate
+            </Button>
+          )}
         </div>
 
         <div className="mt-2.5 flex flex-wrap gap-1.5" aria-hidden={phase === "locked"}>
