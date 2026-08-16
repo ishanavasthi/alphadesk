@@ -23,7 +23,7 @@ import httpx
 import pytest
 from sqlalchemy import select, text
 
-from db.models import BrokerLink, SnapshotDay, SnapshotHolding, User, utcnow
+from db.models import BrokerLink, SnapshotDay, SnapshotHolding, User, Watchlist, utcnow
 from services import adoption
 
 # `asyncio_mode = auto` (pytest.ini) runs the async tests below; the sync ones
@@ -162,7 +162,7 @@ async def test_the_operator_adopts_the_local_history(
     async with db_env() as session:
         moved = await adoption.maybe_adopt(session, OPERATOR_ID, OPERATOR_EMAIL)
 
-    assert moved == {"broker_links": 1, "snapshot_days": 1}
+    assert moved == {"broker_links": 1, "snapshot_days": 1, "watchlist": 0}
     assert await _owner_of_days(db_env) == [OPERATOR_ID]
 
     async with db_env() as session:
@@ -188,8 +188,8 @@ async def test_adoption_is_idempotent(
         first = await adoption.adopt_local_data(session, OPERATOR_ID)
         second = await adoption.adopt_local_data(session, OPERATOR_ID)
 
-    assert first == {"broker_links": 1, "snapshot_days": 1}
-    assert second == {"broker_links": 0, "snapshot_days": 0}
+    assert first == {"broker_links": 1, "snapshot_days": 1, "watchlist": 0}
+    assert second == {"broker_links": 0, "snapshot_days": 0, "watchlist": 0}
     assert await _owner_of_days(db_env) == [OPERATOR_ID]
 
 
@@ -268,7 +268,7 @@ async def test_the_signed_in_users_own_rows_are_never_overwritten(
     async with db_env() as session:
         moved = await adoption.adopt_local_data(session, OPERATOR_ID)
 
-    assert moved == {"broker_links": 0, "snapshot_days": 0}
+    assert moved == {"broker_links": 0, "snapshot_days": 0, "watchlist": 0}
     async with db_env() as session:
         kept = (
             await session.execute(
@@ -356,7 +356,7 @@ async def test_a_clerk_outage_is_retried_not_remembered(
     clerk_api.fail = False
     async with db_env() as session:
         moved = await adoption.maybe_adopt(session, OPERATOR_ID, None)
-    assert moved == {"broker_links": 1, "snapshot_days": 1}
+    assert moved == {"broker_links": 1, "snapshot_days": 1, "watchlist": 0}
 
 
 async def test_a_clerk_5xx_is_also_retried(
@@ -546,3 +546,26 @@ def test_a_junk_payload_yields_no_email() -> None:
 
 async def test_clerk_lookup_is_skipped_without_a_secret_key() -> None:
     assert await adoption.clerk_primary_email("user_whatever") is None
+
+
+async def test_adoption_also_rekeys_a_local_watchlist_row(
+    db_env: Any, clerk_api: FakeClerk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `local` watchlist row (F4 schema) adopts too — symmetry with links/days."""
+    monkeypatch.setenv(adoption.OPERATOR_EMAIL_ENV, OPERATOR_EMAIL)
+    await _users(db_env, OPERATOR_ID)
+    async with db_env() as session:
+        session.add(User(id=adoption.LOCAL_USER_ID, created_at=utcnow()))
+        await session.commit()
+        session.add(
+            Watchlist(user_id=adoption.LOCAL_USER_ID, symbol="DEMOX", company="Demo X")
+        )
+        await session.commit()
+
+    async with db_env() as session:
+        moved = await adoption.maybe_adopt(session, OPERATOR_ID, OPERATOR_EMAIL)
+
+    assert moved["watchlist"] == 1
+    async with db_env() as session:
+        owners = (await session.execute(select(Watchlist.user_id))).scalars().all()
+    assert owners == [OPERATOR_ID]
