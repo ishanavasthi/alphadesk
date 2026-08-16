@@ -331,26 +331,27 @@ async def operator_user_id() -> Optional[str]:
     return found
 
 
-async def admin_identity() -> str:
-    """Which user an interim C0 admin-header request acts as.
+async def forget_user(user_id: str) -> None:
+    """Drop a deleted user from the adoption caches (card L1, delete-my-data).
 
-    **Interim — delete with the admin path at card L1.** Until
-    ``NEXT_PUBLIC_AUTH_ENABLED`` is flipped there is no sign-in UI in
-    production, so the operator's only way into their own dashboard is the C0
-    admin secret. It maps to the operator's Clerk id once they have signed in
-    (post-adoption, that is where the data lives) and otherwise to ``"local"``
-    (pre-adoption, that is where the data lives). It is never a stranger, and it
-    is never "whichever user exists".
+    `maybe_adopt` remembers a settled "not the operator" answer per user, and
+    `operator_user_id` caches the resolved operator id. When an account is
+    deleted, a stale "already decided" entry would make a later sign-in under a
+    re-used id skip the check it should re-run. Clearing the operator id if it
+    was this user also lets `operator_user_id` re-resolve from the table.
     """
-    return await operator_user_id() or LOCAL_USER_ID
+    global _operator_id
+    _adopted.discard(user_id)
+    if _operator_id == user_id:
+        _operator_id = None
 
 
 __all__ = [
     "CLERK_SECRET_ENV",
     "LOCAL_USER_ID",
     "OPERATOR_EMAIL_ENV",
-    "admin_identity",
     "adopt_local_data",
+    "forget_user",
     "OK",
     "REFUSED",
     "UNAVAILABLE",

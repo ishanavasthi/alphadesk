@@ -31,6 +31,16 @@ export default function LabLayout({ children }: { children: ReactNode }) {
         Lab — a live simulation. Runs aren&rsquo;t saved. Not investment advice; no orders are placed.
       </div>
       {children}
+      {/* Privacy/Terms are reachable from every page's footer (card L1). */}
+      <footer className="mt-8 flex flex-wrap items-center justify-center gap-3.5 border-t border-border px-4 py-4 font-mono text-[0.68rem] uppercase tracking-[0.1em] text-muted-foreground sm:px-6">
+        <span>Descriptive analytics only · not investment advice</span>
+        <a className="hover:text-foreground hover:underline" href="/privacy">
+          Privacy
+        </a>
+        <a className="hover:text-foreground hover:underline" href="/terms">
+          Terms
+        </a>
+      </footer>
     </AuthProvider>
   );
 }

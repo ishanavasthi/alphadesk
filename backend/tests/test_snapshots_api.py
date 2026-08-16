@@ -279,12 +279,16 @@ async def test_internal_snapshot_reports_errors_without_failing_the_request(
     }
 
 
-async def test_history_returns_the_captured_points(api: Any) -> None:
+async def test_history_returns_the_captured_points(
+    api: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     client, maker, connector = api
     for offset in (2, 1, 0):
         await _capture_via_service(maker, connector, PRIMARY_RUN - timedelta(days=offset))
 
-    body = (await client.get("/portfolio/history?days=90", headers=ADMIN_AUTH)).json()
+    # The interim admin path was removed at L1; single-tenant dev reads `local`.
+    monkeypatch.setenv("ALPHADESK_SINGLE_TENANT", "1")
+    body = (await client.get("/portfolio/history?days=90")).json()
     assert len(body["points"]) == 3
     dates = [p["date"] for p in body["points"]]
     assert dates == sorted(dates)
@@ -294,26 +298,34 @@ async def test_history_returns_the_captured_points(api: Any) -> None:
     assert body["note"] is None
 
 
-async def test_summary_carries_last_captured_at(api: Any) -> None:
+async def test_summary_carries_last_captured_at(
+    api: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     client, maker, connector = api
-    before = (await client.get("/portfolio/summary", headers=ADMIN_AUTH)).json()
+    monkeypatch.setenv("ALPHADESK_SINGLE_TENANT", "1")
+    before = (await client.get("/portfolio/summary")).json()
     assert before["last_captured_at"] is None
 
     await _capture_via_service(maker, connector, PRIMARY_RUN)
-    after = (await client.get("/portfolio/summary", headers=ADMIN_AUTH)).json()
+    after = (await client.get("/portfolio/summary")).json()
     assert after["last_captured_at"] is not None
 
 
-async def test_capture_button_route_is_admin_gated_and_idempotent(api: Any) -> None:
+async def test_capture_button_is_gated_and_idempotent(
+    api: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     client, maker, _ = api
 
+    # Gate: anonymous, single-tenant off → 401 (the L1 JWT-only posture).
     assert (await client.post("/portfolio/capture")).status_code == 401
 
-    first = await client.post("/portfolio/capture", headers=ADMIN_AUTH)
+    # The operator's own machine reads `local` with no token.
+    monkeypatch.setenv("ALPHADESK_SINGLE_TENANT", "1")
+    first = await client.post("/portfolio/capture")
     assert first.status_code == 200
     assert first.json()["status"] == svc.CAPTURED
 
-    second = await client.post("/portfolio/capture", headers=ADMIN_AUTH)
+    second = await client.post("/portfolio/capture")
     assert second.json()["status"] == svc.ALREADY_CAPTURED
 
     async with maker() as session:

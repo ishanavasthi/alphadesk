@@ -327,6 +327,21 @@ def reset_auth_stores() -> None:
     _locks.clear()
 
 
+def forget_auth_store(user_id: str) -> None:
+    """Drop the cached store and lock for one user (card L1, delete-my-data).
+
+    `reset_auth_stores` clears the whole process; erasing a single account should
+    reach only that account. A store caches **decrypted** tokens, so a deleted
+    user's must not linger in the process, and a lock kept without its store
+    protects nothing. Both caches are keyed by `(user_id, source)`, so drop every
+    source for this user.
+    """
+    for key in [k for k in _stores if k[0] == user_id]:
+        _stores.pop(key, None)
+    for key in [k for k in _locks if k[0] == user_id]:
+        _locks.pop(key, None)
+
+
 class AuthStore:
     """One user's IND Money credentials, backed by their ``broker_links`` row.
 
@@ -736,6 +751,35 @@ class AuthStore:
             "revocation_error": error,
         }
 
+    async def revoke_only(self) -> Dict[str, object]:
+        """Kill the grant upstream **without** deleting the local row.
+
+        `logout` revokes and then deletes `broker_links` in its own transaction.
+        The delete-my-data path (`DELETE /account`) must not do that: its own
+        single `DELETE FROM users` cascades the `broker_links` row, and a separate
+        earlier commit for the same row would reintroduce the two-write window
+        this card exists to close — a crash between the two leaves a half-erased
+        account. So this is `logout`'s network half alone, run **before** and
+        outside the account-delete transaction; the row goes with the cascade.
+
+        An upstream failure is reported, never raised: refusing to erase a user
+        because the broker's revocation endpoint was down would strand them.
+        """
+        await self.ensure_loaded()
+        revoked: Optional[bool] = None
+        error: Optional[str] = None
+        if self._refresh:
+            try:
+                revoked = await revoke_token(
+                    self._refresh, self._client_id, self._client_secret
+                )
+            except MCPAuthError as exc:
+                revoked, error = False, str(exc)
+                log.warning(
+                    "delete-my-data: upstream revocation failed for %s", self.user_id
+                )
+        return {"revoked_upstream": revoked, "revocation_error": error}
+
     # ----------------------------------------------------------------- status
     def _describe(self) -> Dict[str, object]:
         now = time.time()
@@ -894,6 +938,16 @@ async def auth_status(user_id: Optional[str] = None) -> Dict[str, object]:
 async def logout(user_id: Optional[str] = None) -> Dict[str, object]:
     """Unlink ``user_id``: revoke upstream, then forget the credentials."""
     return await AuthStore.for_user(user_id or await ambient_user_id()).logout()
+
+
+async def revoke_only(user_id: Optional[str] = None) -> Dict[str, object]:
+    """Revoke ``user_id``'s broker grant upstream **without** deleting the row.
+
+    The delete-my-data half of `logout`: used by `DELETE /account`, which does
+    its own single, atomic `DELETE FROM users` and must not have a separate
+    `broker_links` delete commit run ahead of it.
+    """
+    return await AuthStore.for_user(user_id or await ambient_user_id()).revoke_only()
 
 
 async def ambient_user_id() -> str:
@@ -1309,11 +1363,13 @@ __all__ = [
     "database_configured",
     "discover",
     "ensure_user_row",
+    "forget_auth_store",
     "get_access_token",
     "logout",
     "purge_expired_pending",
     "reset_auth_stores",
     "reset_discovery",
+    "revoke_only",
     "revoke_token",
     "single_tenant_mode",
     "unbind_run_user",

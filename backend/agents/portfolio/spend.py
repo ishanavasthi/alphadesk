@@ -93,6 +93,16 @@ class SpendLimiter:
             if used > 0:
                 self._per_user[user_id] = used - 1
 
+    def forget_user(self, user_id: str) -> None:
+        """Drop a deleted user's per-user tally (card L1, delete-my-data).
+
+        No PII lives here — just a count — but a deleted id should not keep a slot
+        in the per-user map, for symmetry with the rest of the erase path. The
+        global count is left alone: it is the whole app's budget, not this user's.
+        """
+        with self._lock:
+            self._per_user.pop(user_id, None)
+
     def snapshot(self) -> dict[str, int]:
         with self._lock:
             return {"global": self._global_count, "users": len(self._per_user)}

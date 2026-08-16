@@ -25,12 +25,17 @@ interface Deferred {
 /** Open drill-down requests, keyed by the asset type that was asked for. */
 const pending = new Map<string, Deferred>();
 
+// The page renders a locked state with sign-in off; force the flag on (card L1
+// removed the admin-secret path this test used to rely on).
+vi.mock("@/lib/auth", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/auth")>("@/lib/auth");
+  return { ...actual, AUTH_ENABLED: true };
+});
+
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return {
     ...actual,
-    // The page renders a locked state without a secret, so give it one.
-    ADMIN_SECRET: "test-secret",
     getPortfolioSummary: vi.fn(),
     getPortfolioHistory: vi.fn(),
     getPortfolioHoldings: vi.fn(),
