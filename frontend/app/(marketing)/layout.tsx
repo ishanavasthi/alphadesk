@@ -19,11 +19,11 @@ const THEME_BOOTSTRAP = `(function(){try{var r=document.getElementById("adp-root
 /**
  * The marketing group's shell: landing (`/`), `/privacy`, `/terms`.
  *
- * The shadcn chrome for the product surfaces: the `SiteHeader` and the
- * marketing footer (disclaimers, source link, Privacy/Terms, theme toggle) on
- * every page. `data-adp` scopes the token set exactly as `/portfolio` and
- * `/demo` do, and `id="adp-root"` is what the bootstrap above and `ThemeToggle`
- * reach for; `min-h-screen bg-background` covers the root body's terminal
+ * The shadcn chrome for the product surfaces: the `SiteHeader` (which carries
+ * the theme toggle) and the marketing footer (disclaimers, source link,
+ * Privacy/Terms) on every page. `data-adp` scopes the token set as `/portfolio`
+ * and `/demo` do, and `id="adp-root"` is what the bootstrap above and
+ * `ThemeToggle` reach for; `min-h-screen bg-background` covers the root body's terminal
  * near-black.
  */
 export default function MarketingLayout({ children }: { children: ReactNode }) {

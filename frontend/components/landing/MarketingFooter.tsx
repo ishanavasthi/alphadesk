@@ -1,19 +1,12 @@
 import Link from "next/link";
 import { Github } from "lucide-react";
 
-import { ThemeToggle } from "@/components/portfolio/ThemeToggle";
-
 /**
  * The marketing footer.
  *
  * `PortfolioFooter` carries the disclaimer and the legal links but no source
  * link, and the marketing pages are where the open-source repo is worth naming,
  * so this surface gets its own footer rather than an extra prop on a shared one.
- *
- * It also hosts the theme toggle. The dashboard mounts the same component in its
- * top bar; both write `localStorage["adp-theme"]` and flip the attribute on the
- * `#adp-root` wrapper, so there is one theme mechanism and one stored choice
- * across the whole product.
  */
 export function MarketingFooter() {
   return (
@@ -37,7 +30,6 @@ export function MarketingFooter() {
         <Link href="/terms" className="text-muted-foreground transition-colors hover:text-foreground">
           Terms
         </Link>
-        <ThemeToggle />
       </div>
     </footer>
   );

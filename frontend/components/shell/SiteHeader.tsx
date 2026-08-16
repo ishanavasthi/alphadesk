@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Github } from "lucide-react";
 
 import { AUTH_ENABLED } from "@/lib/auth";
+import { ThemeToggle } from "@/components/portfolio/ThemeToggle";
 
 import { AppNav } from "./AppNav";
 import { SiteAuthSlot } from "./SiteAuthSlot";
@@ -14,11 +15,16 @@ import { SiteAuthSlot } from "./SiteAuthSlot";
  * the product/marketing surfaces, the dark terminal `TopBar` lives on the Lab
  * (`/lab/*`, in that segment's own layout), and `/portfolio` carries its own
  * `PortfolioTopBar`. There is no per-route conditional in the root layout any
- * more — each surface declares its own chrome. This replaces the interim
+ * more: each surface declares its own chrome. This replaces the interim
  * `TerminalChrome` component D1 left for U1 to retire.
  *
  * The identity slot is flag-gated (`SiteAuthSlot`): flag off it renders nothing
  * and ships no Clerk; flag on it shows sign-in / the account avatar.
+ *
+ * `ThemeToggle` is the dashboard's own component, mounted here unchanged: it
+ * flips `data-adp-theme` on the `#adp-root` wrapper the marketing layout
+ * declares and stores the choice under `adp-theme`, so light and dark are one
+ * mechanism and one stored choice across the whole product.
  */
 export function SiteHeader() {
   return (
@@ -54,6 +60,7 @@ export function SiteHeader() {
         >
           <Github className="h-4 w-4" />
         </a>
+        <ThemeToggle />
         <SiteAuthSlot />
       </div>
     </header>
