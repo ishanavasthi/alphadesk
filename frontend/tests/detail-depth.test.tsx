@@ -33,7 +33,10 @@ vi.mock("@/lib/api", async () => {
 
 import PortfolioHoldingsPage from "@/app/portfolio/holdings/page";
 import PortfolioPerformancePage from "@/app/portfolio/performance/page";
-import { PortfolioProvider } from "@/components/portfolio/PortfolioProvider";
+import {
+  PortfolioProvider,
+  resetPortfolioMemory,
+} from "@/components/portfolio/PortfolioProvider";
 import {
   getPortfolioHistory,
   getPortfolioHoldings,
@@ -111,6 +114,9 @@ const NO_BASIS = {
 const point = (date: string, netWorth: string) => ({ date, net_worth: netWorth });
 
 beforeEach(() => {
+  // The provider remembers its last load at module scope (issue #15), so one
+  // test's portfolio would otherwise paint inside the next one's.
+  resetPortfolioMemory();
   vi.mocked(getPortfolioSummary).mockResolvedValue(SUMMARY as never);
   vi.mocked(getPortfolioHistory).mockResolvedValue({
     points: [],

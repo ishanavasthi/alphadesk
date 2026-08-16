@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 
 import { AppNav } from "@/components/shell/AppNav";
+import { UnlinkDialog } from "@/components/portfolio/UnlinkDialog";
 import { UserMenu } from "@/components/UserMenu";
 import type { PortfolioSummary } from "@/lib/api";
 import { ThemeToggle } from "./ThemeToggle";
@@ -83,6 +85,7 @@ export function PortfolioTopBar({
   captureState?: CaptureState;
 }) {
   const link = linkHealth ? LINK_LABEL[linkHealth] : null;
+  const [unlinking, setUnlinking] = useState(false);
   // min-height, not height: the actions wrap to a second row at 375px, and a
   // fixed 56px header would let them spill over the page title.
   return (
@@ -120,7 +123,26 @@ export function PortfolioTopBar({
       >
         ◫ {CAPTURE_LABEL[captureState]}
       </Button>
-      {link ? <Chip tone={link.ok ? "ok" : "warn"}>{link.text}</Chip> : null}
+      {/* The link chip is also where the link is *ended* (issue #13): the status
+          the reader is already looking at is the obvious place to press to
+          disconnect, and it saves inventing a second control for a rare act. */}
+      {link ? (
+        <button
+          type="button"
+          onClick={() => setUnlinking(true)}
+          title="Disconnect IND Money from AlphaDesk"
+          className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Chip tone={link.ok ? "ok" : "warn"}>{link.text}</Chip>
+        </button>
+      ) : null}
+      <UnlinkDialog
+        open={unlinking}
+        onOpenChange={setUnlinking}
+        // The next summary read answers `not_linked`, which is what puts the
+        // Connect gate back up in place of the dashboard.
+        onUnlinked={onRefresh}
+      />
       {demo ? <Chip>Demo data</Chip> : null}
       {/* "Who are you" — the same flag-gated Clerk slot the Lab bar carries, so
           signing out and "Delete my data" are reachable without leaving the

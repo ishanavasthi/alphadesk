@@ -39,7 +39,10 @@ vi.mock("@/lib/api", async () => {
 });
 
 import PortfolioPage from "@/app/portfolio/page";
-import { PortfolioProvider } from "@/components/portfolio/PortfolioProvider";
+import {
+  PortfolioProvider,
+  resetPortfolioMemory,
+} from "@/components/portfolio/PortfolioProvider";
 import { getPortfolioSummary } from "@/lib/api";
 
 /** The surface as the route layout assembles it: provider first, page inside. */
@@ -57,6 +60,9 @@ function arriveWith(query: string): void {
 }
 
 beforeEach(() => {
+  // The provider remembers its last load at module scope (issue #15), so one
+  // test's portfolio would otherwise paint inside the next one's.
+  resetPortfolioMemory();
   // Not linked, so the page settles on the Connect gate — where a link failure
   // is the thing the reader needs to see.
   vi.mocked(getPortfolioSummary).mockRejectedValue(

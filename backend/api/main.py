@@ -44,8 +44,9 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 from api.routes.account import router as account_router  # noqa: E402
 from api.routes.internal import router as internal_router  # noqa: E402
 from api.routes.overview import router as overview_router  # noqa: E402
+from api.routes.portfolio import evict_connector  # noqa: E402
 from api.routes.portfolio import router as portfolio_router  # noqa: E402
-from db.models import Watchlist, utcnow  # noqa: E402
+from db.models import BrokerLink, Watchlist, utcnow  # noqa: E402
 from graph.graph import alphaDesk_graph, resume_after_approval  # noqa: E402
 from graph.state import PortfolioState  # noqa: E402
 from api.deps import (  # noqa: E402
@@ -53,16 +54,19 @@ from api.deps import (  # noqa: E402
     register_identity,
     verify_token,
 )
+from services import portfolio_cache  # noqa: E402
 from services.snapshots import optional_session  # noqa: E402
 from tools.ind_money_auth import (  # noqa: E402
     LOCAL_USER_ID,
     MCPAuthError,
     OAuthStateError,
+    SOURCE,
     auth_status,
     begin_login,
     bind_run_user,
     complete_login,
     ensure_user_row,
+    forget_auth_store,
     logout,
     single_tenant_mode,
     unbind_run_user,
@@ -150,7 +154,13 @@ app.include_router(account_router)
 # another's run. The **one** durable exception is the paper watchlist, which
 # persists to the `watchlist` table (see `_persist_watchlist` / `read_watchlist`).
 #
-# run_id -> {"run_uuid": UUID, "user_id": str, "query": str, "status": str, ...}
+# A run is also **detached from its listener**: `/analyze` executes the pipeline
+# in a background `asyncio` task and the SSE response only drains that task's
+# event queue, so a browser that navigates away no longer kills the run
+# mid-flight and leaves `_RUNS` claiming `running` forever. See `_execute_run`.
+#
+# run_id -> {"run_uuid": UUID, "user_id": str, "query": str, "status": str,
+#            "queue": asyncio.Queue, "task": asyncio.Task, ...}
 _RUNS: Dict[str, Dict[str, Any]] = {}
 # action_id -> run_id (the pending approval batch a /approve call targets).
 _ACTIONS: Dict[str, str] = {}
@@ -307,8 +317,18 @@ def purge_user_lab_state(user_id: str) -> None:
     dicts — they are keyed by `user_id`, so a full deletion has to reach them
     too. Called by `DELETE /account` after the row cascade, so nothing the user
     generated survives in memory either.
+
+    A run that is still *executing* needs more than its record dropped: since
+    `/analyze` detaches the pipeline from the SSE response, the background task
+    outlives any listener and would keep running — spending the deleted user's
+    grant — long after the account is gone. Deletion is the deliberate
+    cancellation the task's `CancelledError` branch exists for, so cancel first,
+    then drop the record.
     """
     for run_id in [rid for rid, r in _RUNS.items() if r.get("user_id") == user_id]:
+        task = _RUNS[run_id].get("task")
+        if task is not None and not task.done():
+            task.cancel()
         _RUNS.pop(run_id, None)
     for rid in [rid for rid, a in _ANALYSES.items() if a.get("user_id") == user_id]:
         _ANALYSES.pop(rid, None)
@@ -616,6 +636,61 @@ async def auth_logout_endpoint(
     return await logout(user_id)
 
 
+async def _has_broker_link(session: Optional[AsyncSession], user_id: str) -> bool:
+    """Whether ``user_id`` has an IND Money link row to disconnect.
+
+    Read *before* the unlink so the response can tell "we just disconnected you"
+    apart from "you were never connected" — the second press of a button is not
+    an error, and neither is a stale tab. A row that exists but cannot be
+    decrypted still counts as a link: the user has something to disconnect, and
+    the unlink is what removes it.
+
+    With no database configured (`DATABASE_URL` unset) there is no row either
+    way, and the caller falls back to whether there was a grant to revoke.
+    """
+    if session is None:
+        return False
+    result = await session.execute(
+        select(BrokerLink.id).where(
+            BrokerLink.user_id == user_id, BrokerLink.source == SOURCE
+        )
+    )
+    return result.scalars().first() is not None
+
+
+@app.post("/auth/unlink")
+async def auth_unlink_endpoint(
+    user_id: str = Depends(_link_identity),
+    session: Optional[AsyncSession] = Depends(optional_session),
+) -> Dict[str, object]:
+    """Disconnect **this caller's** IND Money link, from the dashboard.
+
+    The same ordered operation `logout` has always been: revoke the refresh
+    token upstream *first* (best-effort — an upstream failure still unlinks
+    locally, and is reported so the UI can say the grant may still need
+    revoking from IND Money's side), then delete the `broker_links` row. On top
+    of that it drops the caller's per-user in-memory state the way
+    `DELETE /account` does — the cached connector and the cached `AuthStore`
+    both hold *decrypted* tokens, and a disconnect that leaves them in the
+    process has not disconnected anything the next request would notice. The
+    read-through portfolio cache (issue #15) goes with them, for the same reason:
+    its rows are holdings read from the account that was just disconnected.
+
+    **Idempotent.** Unlinking an already-unlinked user is a 200 saying
+    ``not_linked``, never a 500 and never a lie about having revoked something.
+    """
+    linked = await _has_broker_link(session, user_id)
+    result = await logout(user_id)
+    evict_connector(user_id)
+    forget_auth_store(user_id)
+    await portfolio_cache.invalidate_user(session, user_id)
+
+    revoked = result.get("revoked_upstream")
+    if not linked and revoked is None:
+        return {"status": "not_linked", "upstream_revoked": False}
+    return {"status": "unlinked", "upstream_revoked": bool(revoked)}
+
+
 @app.get("/auth/callback")
 async def auth_callback_endpoint(
     code: Optional[str] = None,
@@ -654,6 +729,104 @@ async def auth_callback_endpoint(
     return _callback_result("IND Money connected.", ok=True)
 
 
+async def _execute_run(
+    run_id: str, run_uuid: uuid.UUID, query: str, user_id: str, queue: "asyncio.Queue"
+) -> None:
+    """Run the graph to its natural end, pushing SSE frames onto ``queue``.
+
+    This is the whole run and it belongs to **nobody in particular**: it owns the
+    run-user binding, the graph stream, the `_RUNS` status transitions, the
+    `_ACTIONS` registration and the `_ANALYSES` write, and none of it needs a
+    listener. It used to be the body of `/analyze`'s response generator, which
+    meant an aborted request cancelled the generator and killed the pipeline
+    mid-flight while `_RUNS[run_id]` kept claiming `running` forever — a zombie
+    `/status` would poll to the end of time.
+
+    Each frame is already `_sse()`-encoded; a `None` sentinel means the stream is
+    over. `queue.put_nowait` on an unbounded queue never blocks and never
+    suspends, so a run emitting its handful of events cannot be wedged by a slow
+    (or absent) reader, and the sentinel in `finally` always lands.
+
+    `asyncio.CancelledError` is **only** ever a deliberate cancellation — account
+    deletion or shutdown, never a client disconnect — so it marks the run
+    `error` and re-raises rather than being swallowed like a pipeline failure.
+    """
+    config = _trace_config(run_id, run_uuid)
+    # Bind the caller's identity for the run so every userless MCP tool call
+    # the graph makes mints from this user's AuthStore. A ContextVar, so
+    # concurrent runs never cross; reset in `finally` so it never leaks.
+    token = bind_run_user(user_id)
+    queue.put_nowait(_sse("start", {"run_id": run_id, "status": "running"}))
+    try:
+        initial = PortfolioState(user_query=query, user_id=user_id)
+        async for chunk in alphaDesk_graph.astream(initial, config, stream_mode="updates"):
+            for node, payload in chunk.items():
+                if node.startswith("__"):  # skip interrupt/control markers
+                    continue
+                queue.put_nowait(_sse("update", _summarize_update(node, payload)))
+
+        snapshot = await alphaDesk_graph.aget_state(config)
+        state = _state_dict(snapshot)
+        awaiting = bool(getattr(snapshot, "next", None))
+
+        action_id: Optional[str] = None
+        if awaiting:
+            status = "awaiting_approval"
+            action_id = str(uuid.uuid4())
+            _ACTIONS[action_id] = run_id
+            _RUNS[run_id]["action_id"] = action_id
+        elif state.get("rejection_reason"):
+            status = "rejected"
+        else:
+            status = "completed"
+        _RUNS[run_id]["status"] = status
+
+        _ANALYSES[run_id] = {
+            "run_id": run_id,
+            "user_id": user_id,
+            "query": query,
+            "status": status,
+            "awaiting_approval": awaiting,
+            "action_id": action_id,
+            "analyst_recommendations": state.get("analyst_recommendations", []),
+            "risk_assessments": state.get("risk_assessments", []),
+            "rejection_reason": state.get("rejection_reason"),
+            "paper_watchlist": state.get("paper_watchlist", []),
+            "created_at": _now_iso(),
+        }
+
+        queue.put_nowait(
+            _sse(
+                "complete",
+                {
+                    "run_id": run_id,
+                    "status": status,
+                    "awaiting_approval": awaiting,
+                    "action_id": action_id,
+                    "analyst_recommendations": state.get("analyst_recommendations", []),
+                    "risk_assessments": state.get("risk_assessments", []),
+                    "rejection_reason": state.get("rejection_reason"),
+                },
+            )
+        )
+    except asyncio.CancelledError:
+        # Deliberate only. `.get()`, not `[...]`: account deletion drops the
+        # record on its way to cancelling us, and a note must not resurrect it.
+        record = _RUNS.get(run_id)
+        if record is not None:
+            record["status"] = "error"
+            record["error"] = "Run cancelled."
+        queue.put_nowait(_sse("error", {"run_id": run_id, "error": "Run cancelled."}))
+        raise
+    except Exception as exc:  # noqa: BLE001 - surface error to the client
+        _RUNS[run_id]["status"] = "error"
+        _RUNS[run_id]["error"] = str(exc)
+        queue.put_nowait(_sse("error", {"run_id": run_id, "error": str(exc)}))
+    finally:
+        unbind_run_user(token)
+        queue.put_nowait(None)
+
+
 @app.post("/analyze")
 async def analyze(
     body: AnalyzeRequest,
@@ -683,6 +856,12 @@ async def analyze(
     of the run (`bind_run_user`), so the pipeline's IND Money MCP calls mint from
     *this* user's `AuthStore` — never a process-wide or "whoever linked first"
     grant.
+
+    **The run outlives the stream.** The pipeline is a background task
+    (`_execute_run`) that pushes SSE frames onto a per-run queue; this response
+    only drains that queue. Closing the tab cancels the drain and nothing else,
+    so a run always reaches a terminal status and `/status/{run_id}` stays
+    truthful. For a connected client the event sequence is unchanged.
     """
     status_now = await auth_status(user_id)
     if not status_now.get("authenticated"):
@@ -697,77 +876,31 @@ async def analyze(
 
     run_uuid = uuid.uuid4()
     run_id = str(run_uuid)
+    queue: asyncio.Queue = asyncio.Queue()
     _RUNS[run_id] = {
         "run_uuid": run_uuid,
         "user_id": user_id,
         "query": body.query,
         "status": "running",
         "action_id": None,
+        "queue": queue,
+        "task": None,
     }
+    # Started *before* the response exists, and referenced from the run record so
+    # the loop cannot garbage-collect it: from here the run is the task's, not
+    # the response's. The handle is what account deletion and shutdown cancel.
+    task = asyncio.create_task(
+        _execute_run(run_id, run_uuid, body.query, user_id, queue)
+    )
+    _RUNS[run_id]["task"] = task
 
     async def event_stream():
-        config = _trace_config(run_id, run_uuid)
-        # Bind the caller's identity for the run so every userless MCP tool call
-        # the graph makes mints from this user's AuthStore. A ContextVar, so
-        # concurrent runs never cross; reset in `finally` so it never leaks.
-        token = bind_run_user(user_id)
-        yield _sse("start", {"run_id": run_id, "status": "running"})
-        try:
-            initial = PortfolioState(user_query=body.query, user_id=user_id)
-            async for chunk in alphaDesk_graph.astream(initial, config, stream_mode="updates"):
-                for node, payload in chunk.items():
-                    if node.startswith("__"):  # skip interrupt/control markers
-                        continue
-                    yield _sse("update", _summarize_update(node, payload))
-
-            snapshot = await alphaDesk_graph.aget_state(config)
-            state = _state_dict(snapshot)
-            awaiting = bool(getattr(snapshot, "next", None))
-
-            action_id: Optional[str] = None
-            if awaiting:
-                status = "awaiting_approval"
-                action_id = str(uuid.uuid4())
-                _ACTIONS[action_id] = run_id
-                _RUNS[run_id]["action_id"] = action_id
-            elif state.get("rejection_reason"):
-                status = "rejected"
-            else:
-                status = "completed"
-            _RUNS[run_id]["status"] = status
-
-            _ANALYSES[run_id] = {
-                "run_id": run_id,
-                "user_id": user_id,
-                "query": body.query,
-                "status": status,
-                "awaiting_approval": awaiting,
-                "action_id": action_id,
-                "analyst_recommendations": state.get("analyst_recommendations", []),
-                "risk_assessments": state.get("risk_assessments", []),
-                "rejection_reason": state.get("rejection_reason"),
-                "paper_watchlist": state.get("paper_watchlist", []),
-                "created_at": _now_iso(),
-            }
-
-            yield _sse(
-                "complete",
-                {
-                    "run_id": run_id,
-                    "status": status,
-                    "awaiting_approval": awaiting,
-                    "action_id": action_id,
-                    "analyst_recommendations": state.get("analyst_recommendations", []),
-                    "risk_assessments": state.get("risk_assessments", []),
-                    "rejection_reason": state.get("rejection_reason"),
-                },
-            )
-        except Exception as exc:  # noqa: BLE001 - surface error to the client
-            _RUNS[run_id]["status"] = "error"
-            _RUNS[run_id]["error"] = str(exc)
-            yield _sse("error", {"run_id": run_id, "error": str(exc)})
-        finally:
-            unbind_run_user(token)
+        """Relay only. Cancelling this drain (a disconnect) never touches the run."""
+        while True:
+            frame = await queue.get()
+            if frame is None:
+                return
+            yield frame
 
     return StreamingResponse(event_stream(), media_type="text/event-stream", headers=_SSE_HEADERS)
 

@@ -135,6 +135,33 @@ export async function getAnalysis(runId: string): Promise<AnalysisPayload> {
   return response.json();
 }
 
+export interface RunStatusPayload {
+  run_id: string;
+  status: string;
+  query?: string | null;
+  action_id: string | null;
+  awaiting_approval: boolean;
+  next: string[];
+  state: Record<string, unknown>;
+}
+
+/**
+ * GET /status/{id} — the live status of a run, including one still in flight.
+ *
+ * `/analysis/{id}` only exists once the run has finished (the backend writes the
+ * record on the `complete` event), so a run being re-attached mid-flight is a
+ * 404 there and a `"running"` here. Same ownership rule as everything else in
+ * the Lab: someone else's run is a 404, never a 403.
+ */
+export async function getRunStatus(runId: string): Promise<RunStatusPayload> {
+  const response = await apiFetch(`${API_BASE}/status/${encodeURIComponent(runId)}`, {
+    cache: "no-store",
+  });
+  if (response.status === 404) throw new Error("not_found");
+  if (!response.ok) throw new Error(`Status fetch failed (${response.status}).`);
+  return response.json();
+}
+
 interface StreamHandlers {
   onStart?: (e: { run_id: string; status: string }) => void;
   onUpdate?: (e: AgentUpdate) => void;
@@ -282,6 +309,27 @@ export async function startAuthLogin(): Promise<string> {
 export async function logoutAuth(): Promise<void> {
   const response = await apiFetch(`${API_BASE}/auth/logout`, { method: "POST" });
   if (!response.ok) throw new Error(`Logout failed (${response.status}).`);
+}
+
+/** The confirmation `POST /auth/unlink` returns. */
+export interface UnlinkResult {
+  /** `unlinked` if a link was removed; `not_linked` if there was none to remove. */
+  status: "unlinked" | "not_linked";
+  /** True only if the grant was also killed at IND Money's end. */
+  upstream_revoked: boolean;
+}
+
+/**
+ * POST /auth/unlink — disconnect **this caller's** IND Money link (issue #13).
+ *
+ * Revokes the grant upstream first, then deletes the stored link. JWT-only, like
+ * the rest of `/auth/*`; idempotent, so a second press answers `not_linked`
+ * rather than failing.
+ */
+export async function unlinkIndMoney(): Promise<UnlinkResult> {
+  const response = await apiFetch(`${API_BASE}/auth/unlink`, { method: "POST" });
+  if (!response.ok) throw new Error(`Unlink failed (${response.status}).`);
+  return response.json();
 }
 
 /** The confirmation `DELETE /account` returns. */
@@ -505,9 +553,24 @@ async function portfolioFetch<T>(
   );
 }
 
+/**
+ * `?fresh=1` — the backend's true cache bypass (issue #15).
+ *
+ * Only Refresh sends it. An ordinary page load may answer from the read-through
+ * cache; a reader who pressed the button asked for the source itself.
+ */
+const freshParam = (fresh: boolean | undefined, separator: "?" | "&"): string =>
+  fresh ? `${separator}fresh=1` : "";
+
 /** GET /portfolio/summary — totals, the snapshot's breakdowns, link health. */
-export function getPortfolioSummary(signal?: AbortSignal): Promise<PortfolioSummary> {
-  return portfolioFetch<PortfolioSummary>("/portfolio/summary", signal);
+export function getPortfolioSummary(
+  signal?: AbortSignal,
+  fresh?: boolean,
+): Promise<PortfolioSummary> {
+  return portfolioFetch<PortfolioSummary>(
+    `/portfolio/summary${freshParam(fresh, "?")}`,
+    signal,
+  );
 }
 
 /**
@@ -520,9 +583,10 @@ export function getPortfolioSummary(signal?: AbortSignal): Promise<PortfolioSumm
 export function getPortfolioHoldings(
   assetType: string,
   signal?: AbortSignal,
+  fresh?: boolean,
 ): Promise<HoldingsResponse> {
   return portfolioFetch<HoldingsResponse>(
-    `/portfolio/holdings?asset_type=${encodeURIComponent(assetType)}`,
+    `/portfolio/holdings?asset_type=${encodeURIComponent(assetType)}${freshParam(fresh, "&")}`,
     signal,
   );
 }
@@ -532,9 +596,11 @@ export function getPortfolioAllocation(
   assetType: string,
   by: "assets" | "sector" | "market_cap",
   signal?: AbortSignal,
+  fresh?: boolean,
 ): Promise<AllocationResponse> {
   return portfolioFetch<AllocationResponse>(
-    `/portfolio/allocation?asset_type=${encodeURIComponent(assetType)}&by=${by}`,
+    `/portfolio/allocation?asset_type=${encodeURIComponent(assetType)}&by=${by}` +
+      freshParam(fresh, "&"),
     signal,
   );
 }
@@ -600,6 +666,8 @@ export interface OverviewComplete {
   scripted: boolean;
   metrics: OverviewMetric[];
   agents: { node: string; status: string }[];
+  /** True when the backend replayed today's already-written narrative. */
+  saved?: boolean;
 }
 
 export interface OverviewHandlers {
@@ -618,19 +686,26 @@ export interface OverviewHandlers {
  * narrative is empty — the panel then renders "AI overview unavailable" while
  * every number still shows. A source failure (unlinked, throttled) is a normal
  * HTTP error **before** the stream opens, surfaced through `onError`.
+ *
+ * The narrative is written once per IST day: without `force` the backend replays
+ * whatever it already wrote today (same events, no `update`s, no spend). Pass
+ * `force` — the Regenerate button, and only that — to re-run the agents and
+ * overwrite the day's saved copy.
  */
 export async function streamOverview(
   handlers: OverviewHandlers,
   signal?: AbortSignal,
+  options?: { force?: boolean },
 ): Promise<void> {
   if (!AUTH_ENABLED) {
     handlers.onError?.("Sign-in is not switched on in this build.", 0);
     return;
   }
 
+  const url = `${API_BASE}/portfolio/overview${options?.force ? "?force=1" : ""}`;
   let response: Response;
   try {
-    response = await apiFetch(`${API_BASE}/portfolio/overview`, {
+    response = await apiFetch(url, {
       method: "POST",
       cache: "no-store",
       signal,
