@@ -96,6 +96,22 @@ interface Bucket {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * What `?reason=<code>` from the OAuth callback means, in the reader's terms.
+ *
+ * The backend sends a code from a closed set rather than the broker's own error
+ * text: that text is attacker-influenced, and putting it in a query string
+ * would hand this origin a string it then has to be careful with. Copy lives
+ * here, where it can say something useful; an unrecognised code falls back to
+ * `failed`.
+ */
+const LINK_FAILURES: Record<string, string> = {
+  denied: "You declined the IND Money authorisation. Nothing was connected.",
+  missing_params: "IND Money sent an incomplete response. Please try again.",
+  state: "That connection attempt expired. Please start again.",
+  failed: "Connecting to IND Money failed. Please try again.",
+};
+
 export default function PortfolioPage() {
   const [phase, setPhase] = useState<Phase>("loading");
   const [errorMessage, setErrorMessage] = useState("");
@@ -134,6 +150,37 @@ export default function PortfolioPage() {
    * label.
    */
   const sectorToken = useRef(0);
+
+  /**
+   * Read the outcome the OAuth callback redirected back with, then erase it.
+   *
+   * The backend used to end the link flow on its own origin with a "you can
+   * close this window" page — correct for the popup it was written for, a dead
+   * end once every call site navigates the current tab. It now sends the
+   * browser here with `?ind=connected` or `?ind=error&reason=<code>`.
+   *
+   * The parameters are stripped with `replaceState` so a refresh (or a shared
+   * URL) cannot replay an outcome that is no longer true. On success there is
+   * nothing else to do: the status fetch below finds the link and renders the
+   * dashboard.
+   */
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const outcome = params.get("ind");
+    if (!outcome) return;
+    if (outcome === "error") {
+      const reason = params.get("reason") ?? "";
+      setConnectError(LINK_FAILURES[reason] ?? LINK_FAILURES.failed);
+    }
+    params.delete("ind");
+    params.delete("reason");
+    const rest = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      window.location.pathname + (rest ? `?${rest}` : ""),
+    );
+  }, []);
 
   useEffect(() => {
     // Flag off there is no credential this build can send, so it is locked.
