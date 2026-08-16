@@ -7,8 +7,9 @@ purge together. A row left behind in any table is a defect this test exists to
 catch before it can happen for real.
 
 The exhaustiveness is deliberate: the test seeds `users`, `broker_links`,
-`oauth_pending`, `snapshot_days`, `snapshot_holdings`, `snapshot_raw` and
-`watchlist` — the whole schema (V2_PLAN §6) — plus the Lab's in-memory registries
+`oauth_pending`, `snapshot_days`, `snapshot_holdings`, `snapshot_raw`,
+`watchlist` and `portfolio_cache` — the whole schema (V2_PLAN §6, issue #15) —
+plus the Lab's in-memory registries
 and the no-database watchlist fallback, then asserts each is empty for the user
 afterward.
 """
@@ -32,6 +33,7 @@ from db import crypto
 from db.models import (
     BrokerLink,
     OAuthPending,
+    PortfolioCache,
     SnapshotDay,
     SnapshotHolding,
     SnapshotRaw,
@@ -54,6 +56,7 @@ ALL_MODELS = (
     SnapshotHolding,
     SnapshotRaw,
     Watchlist,
+    PortfolioCache,
 )
 
 
@@ -145,6 +148,15 @@ async def _seed_every_table(maker: Any) -> None:
                 action="buy",
                 run_id="run-abc",
                 added_at=_now(),
+            )
+        )
+        session.add(
+            PortfolioCache(
+                user_id=USER,
+                cache_key="summary",
+                payload={"net_worth": "1234567.89"},
+                as_of=_now(),
+                fetched_at=_now(),
             )
         )
         await session.commit()

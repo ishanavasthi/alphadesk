@@ -1,0 +1,838 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlphaDesk — The Market Edition</title>
+<meta name="description" content="AlphaDesk: a portfolio analyzer for Indian retail investors. Link IND Money read-only, see your whole net worth — verified numbers, daily history — plus an AI overview that narrates computed figures. Descriptive analytics only; not investment advice.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Newsreader:ital,opsz,wght@0,6..72,300..700;1,6..72,300..700&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   DALAL BROADSHEET — "Six AM Edition" palette
+   The pink-paper daily on a Bombay newsstand, 6am.
+   ============================================================ */
+:root{
+  --paper:#f5e9dc;        /* newsprint pink-cream */
+  --panel:#efdcc8;        /* deeper pink panel */
+  --ink:#1d1a15;          /* printing ink */
+  --ink-soft:#3f3a30;     /* worn ink */
+  --ink-faint:#6e6656;    /* photogravure grey */
+  --green:#0a6847;        /* market green */
+  --red:#b3261e;          /* market red */
+  --rule:rgba(29,26,21,.9);
+  --rule-soft:rgba(29,26,21,.28);
+  --rule-faint:rgba(29,26,21,.14);
+  --display:"Fraunces","Iowan Old Style","Playfair Display",Georgia,"Times New Roman",serif;
+  --body:"Newsreader","Iowan Old Style",Georgia,"Times New Roman",serif;
+  --mono:"IBM Plex Mono","Courier New",ui-monospace,monospace;
+  --measure:72ch;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{
+  background:var(--paper);
+  /* faint paper mottle */
+  background-image:
+    radial-gradient(rgba(29,26,21,.035) 1px, transparent 1.4px),
+    radial-gradient(rgba(255,255,255,.5) 1px, transparent 1.6px);
+  background-size:11px 11px,17px 17px;
+  background-position:0 0,6px 9px;
+  color:var(--ink);
+  font-family:var(--body);
+  font-size:17px;
+  line-height:1.55;
+  font-optical-sizing:auto;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+::selection{background:var(--ink);color:var(--paper)}
+a{color:inherit}
+a:focus-visible,button:focus-visible{outline:2px solid var(--ink);outline-offset:3px;border-radius:1px}
+img,svg{max-width:100%;display:block}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* ------------ page chrome: a broadsheet sheet ------------ */
+.sheet{
+  max-width:1180px;margin:0 auto;
+  border-left:1px solid var(--rule-soft);
+  border-right:1px solid var(--rule-soft);
+  background:transparent;
+}
+.pad{padding-left:clamp(16px,4vw,48px);padding-right:clamp(16px,4vw,48px)}
+
+/* ============ THE WIRE (signature motion: slow ticker) ============ */
+.wire{
+  border-bottom:1px solid var(--rule);
+  background:var(--ink);color:var(--paper);
+  overflow:hidden;white-space:nowrap;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;
+}
+.wire-inner{display:flex;align-items:stretch}
+.wire-label{
+  flex:none;padding:7px 12px;background:var(--paper);color:var(--ink);
+  border-right:1px solid var(--rule);font-weight:600;text-transform:uppercase;
+  position:relative;z-index:2;
+}
+.wire-scroll{flex:1;overflow:hidden;position:relative}
+.wire-track{display:inline-flex;padding:7px 0;animation:wire 80s linear infinite;will-change:transform}
+.wire-track span{padding:0 1.6em;flex:none}
+.wire .up{color:#8fd0b4}
+.wire .dn{color:#f0a49e}
+@keyframes wire{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+@media (prefers-reduced-motion:reduce){.wire-track{animation:none}}
+
+/* ===================== MASTHEAD ===================== */
+.mast{border-bottom:4px double var(--rule)}
+.mast-ears{
+  display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  padding-top:12px;padding-bottom:10px;
+  border-bottom:1px solid var(--rule-soft);
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-soft);
+}
+.mast-title{
+  text-align:center;padding:clamp(18px,4vw,34px) 8px clamp(10px,2.5vw,18px);
+}
+.mast-title h1{
+  font-family:var(--display);
+  font-weight:900;
+  font-variation-settings:"opsz" 144;
+  font-size:clamp(3rem,11.5vw,7.8rem);
+  line-height:.92;letter-spacing:.015em;
+  text-transform:uppercase;
+}
+.mast-title h1 .rupee{color:var(--red)}
+.dateline{
+  display:flex;align-items:center;gap:14px;
+  padding-bottom:12px;
+}
+.dateline::before,.dateline::after{content:"";flex:1;border-top:1px solid var(--rule)}
+.dateline span{
+  font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ink-soft);white-space:nowrap;
+}
+.mast-nav{
+  border-top:1px solid var(--rule);
+  display:flex;flex-wrap:wrap;justify-content:center;
+  font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+}
+.mast-nav a{
+  padding:9px 16px;text-decoration:none;border-left:1px solid var(--rule-faint);
+}
+.mast-nav a:first-child{border-left:none}
+.mast-nav a:hover{background:var(--panel)}
+
+/* ===================== HERO: the front-page lead ===================== */
+.hero{padding-top:clamp(26px,4vw,44px);padding-bottom:clamp(30px,5vw,54px);border-bottom:1px solid var(--rule)}
+.hero-grid{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:clamp(24px,4vw,52px)}
+.kicker{
+  display:inline-flex;align-items:center;gap:10px;
+  font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--red);margin-bottom:16px;
+}
+.kicker::after{content:"";width:56px;border-top:1px solid var(--red)}
+.hero h2{
+  font-family:var(--display);
+  font-weight:800;font-variation-settings:"opsz" 130;
+  font-size:clamp(2.5rem,6.2vw,4.7rem);
+  line-height:1.02;letter-spacing:-.015em;
+  text-wrap:balance;
+}
+.hero .deck{
+  font-family:var(--body);font-style:italic;font-weight:400;
+  font-size:clamp(1.1rem,1.9vw,1.42rem);line-height:1.45;
+  color:var(--ink-soft);
+  margin-top:18px;max-width:38ch;
+  border-left:3px solid var(--rule);padding-left:16px;
+}
+.cta-row{display:flex;gap:14px;flex-wrap:wrap;margin-top:28px;margin-bottom:30px}
+.btn{
+  font-family:var(--mono);font-size:12.5px;font-weight:600;
+  letter-spacing:.1em;text-transform:uppercase;text-decoration:none;
+  padding:14px 26px;border:1px solid var(--ink);
+  display:inline-flex;align-items:center;gap:10px;
+  transition:transform .15s ease,box-shadow .15s ease,background .15s ease;
+}
+.btn svg{width:14px;height:14px;flex:none}
+.btn-primary{background:var(--ink);color:var(--paper);box-shadow:4px 4px 0 rgba(29,26,21,.22)}
+.btn-primary:hover{transform:translate(-1px,-1px);box-shadow:6px 6px 0 rgba(29,26,21,.28)}
+.btn-secondary{background:transparent;color:var(--ink)}
+.btn-secondary:hover{background:var(--panel)}
+@media (prefers-reduced-motion:reduce){.btn{transition:none}.btn-primary:hover{transform:none}}
+.standfirst{
+  border-top:1px solid var(--rule-soft);
+  padding-top:18px;
+  column-count:2;column-gap:34px;
+  column-rule:1px solid var(--rule-faint);
+  font-size:16px;color:var(--ink-soft);
+}
+.standfirst p{margin-bottom:1em;break-inside:avoid-column}
+.standfirst p:first-child::first-letter{
+  font-family:var(--display);font-weight:900;
+  font-size:3.3em;line-height:.82;
+  float:left;padding:.06em .09em 0 0;color:var(--ink);
+}
+.byline{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--ink-faint);margin-bottom:10px;
+}
+
+/* the wire-copy dispatch box (hero right column) */
+.wirecopy{
+  border:1px solid var(--ink);
+  box-shadow:6px 6px 0 rgba(29,26,21,.14);
+  background:var(--panel);
+  display:flex;flex-direction:column;
+}
+.wirecopy-head{
+  display:flex;justify-content:space-between;align-items:center;gap:8px;
+  border-bottom:1px solid var(--ink);
+  padding:9px 14px;background:var(--ink);color:var(--paper);
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+}
+.blink-dot{width:7px;height:7px;border-radius:50%;background:#8fd0b4;animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.blink-dot{animation:none}}
+.wirecopy-body{padding:18px 16px 14px;font-family:var(--mono);font-size:12.5px;line-height:2.05}
+.wirecopy-body .row{display:flex;gap:10px;border-bottom:1px dotted var(--rule-faint)}
+.wirecopy-body .row:last-child{border-bottom:none}
+.wirecopy-body .agent{flex:none;width:9.5ch;font-weight:600;letter-spacing:.05em}
+.wirecopy-body .msg{color:var(--ink-soft)}
+.wirecopy-body .ok{color:var(--green)}
+.wirecopy-body .flag{color:var(--red)}
+.wirecopy-foot{
+  border-top:1px solid var(--rule-soft);
+  padding:8px 14px;font-family:var(--mono);font-size:10px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink-faint);
+}
+.stop-press{
+  margin-top:20px;border:1px solid var(--ink);padding:12px 16px;
+  display:flex;gap:12px;align-items:baseline;
+  font-size:14.5px;color:var(--ink-soft);background:var(--paper);
+}
+.stop-press b{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--red);flex:none;
+}
+
+/* ===================== TRUST STAMPS (social-proof slot) ===================== */
+.stamps{border-bottom:1px solid var(--rule);padding-top:26px;padding-bottom:30px}
+.stamps-head{
+  text-align:center;font-family:var(--mono);font-size:10.5px;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--ink-faint);margin-bottom:20px;
+}
+.stamps-row{display:flex;flex-wrap:wrap;justify-content:center;gap:16px 20px}
+.stamp{
+  border:2px solid var(--ink);padding:10px 18px;
+  font-family:var(--mono);font-size:11.5px;font-weight:600;
+  letter-spacing:.12em;text-transform:uppercase;text-align:center;
+  box-shadow:inset 0 0 0 3px var(--paper),inset 0 0 0 4px var(--rule-soft);
+  background:var(--paper);
+}
+.stamp:nth-child(odd){transform:rotate(-.7deg)}
+.stamp:nth-child(even){transform:rotate(.6deg)}
+.stamp .sub{display:block;font-weight:400;font-size:9.5px;letter-spacing:.08em;color:var(--ink-faint);margin-top:3px}
+
+/* ===================== SECTION HEADERS (newspaper rules) ===================== */
+.section-bar{
+  display:flex;align-items:center;gap:16px;
+  padding-top:34px;margin-bottom:26px;
+}
+.section-bar::before,.section-bar::after{content:"";flex:1;border-top:3px double var(--rule)}
+.section-bar h3{
+  font-family:var(--display);font-weight:900;font-variation-settings:"opsz" 100;
+  font-size:clamp(1.3rem,2.6vw,1.9rem);text-transform:uppercase;letter-spacing:.06em;
+  white-space:nowrap;
+}
+.section-sub{
+  text-align:center;font-style:italic;color:var(--ink-faint);
+  margin:-14px 0 28px;font-size:15px;
+}
+
+/* ===================== FEATURES: inside this edition ===================== */
+.features{border-bottom:1px solid var(--rule);padding-bottom:44px}
+.feature-grid{
+  display:grid;grid-template-columns:repeat(4,minmax(0,1fr));
+}
+.feature{
+  padding:6px 22px 10px;border-left:1px solid var(--rule-faint);
+}
+.feature:first-child{border-left:none;padding-left:0}
+.feature .ico{
+  width:34px;height:34px;color:var(--ink);margin-bottom:14px;
+}
+.feature h4{
+  font-family:var(--display);font-weight:700;font-size:1.22rem;line-height:1.15;
+  margin-bottom:8px;
+}
+.feature .col-tag{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--red);display:block;margin-bottom:8px;
+}
+.feature p{font-size:14.5px;color:var(--ink-soft)}
+
+/* ===================== HOW IT WORKS: from the wire ===================== */
+.howto{border-bottom:1px solid var(--rule);padding-bottom:46px}
+.dispatch-list{max-width:820px;margin:0 auto}
+.dispatch{
+  display:grid;grid-template-columns:86px minmax(0,1fr);gap:20px;
+  padding:20px 0;border-top:1px dotted var(--rule-soft);
+}
+.dispatch:first-child{border-top:none}
+.dispatch .no{
+  font-family:var(--display);font-weight:900;font-variation-settings:"opsz" 144;
+  font-size:2.6rem;line-height:1;color:var(--ink);
+  border-right:1px solid var(--rule-faint);padding-right:16px;
+}
+.dispatch .no small{
+  display:block;font-family:var(--mono);font-weight:600;font-size:9px;
+  letter-spacing:.18em;text-transform:uppercase;color:var(--red);margin-top:6px;
+}
+.dispatch h5{
+  font-family:var(--mono);font-weight:600;font-size:13px;letter-spacing:.14em;
+  text-transform:uppercase;margin-bottom:5px;
+}
+.dispatch .dl{font-family:var(--mono);font-size:11px;color:var(--ink-faint);letter-spacing:.05em}
+.dispatch p{font-size:15px;color:var(--ink-soft);margin-top:6px;max-width:58ch}
+.dispatch.result{
+  border-top:3px double var(--rule);background:var(--panel);
+  padding:20px 18px;margin-top:8px;
+}
+.dispatch.result .no{font-size:1.9rem;display:flex;align-items:center}
+
+/* ===================== PUBLIC NOTICE (wildcard) ===================== */
+.notice-wrap{padding-top:8px;padding-bottom:52px;border-bottom:1px solid var(--rule)}
+.notice{
+  max-width:700px;margin:0 auto;
+  border:2px solid var(--ink);
+  outline:1px solid var(--ink);outline-offset:4px;
+  background:var(--paper);
+  padding:clamp(20px,4vw,36px);
+  text-align:center;
+}
+.notice .gov{
+  font-family:var(--mono);font-size:10px;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--ink-faint);
+}
+.notice h3{
+  font-family:var(--display);font-weight:900;font-size:clamp(1.6rem,3.4vw,2.3rem);
+  letter-spacing:.14em;text-transform:uppercase;margin:10px 0 4px;
+}
+.notice .no-ref{
+  font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--ink-soft);
+  border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);
+  display:inline-block;padding:5px 14px;margin:10px 0 22px;
+}
+.notice ol{
+  text-align:left;max-width:52ch;margin:0 auto;list-style:none;counter-reset:clause;
+}
+.notice ol li{
+  counter-increment:clause;position:relative;padding-left:42px;
+  margin-bottom:14px;font-size:15.5px;color:var(--ink-soft);
+}
+.notice ol li::before{
+  content:counter(clause,decimal-leading-zero) ".";
+  position:absolute;left:0;top:1px;
+  font-family:var(--mono);font-weight:600;font-size:13px;color:var(--ink);
+}
+.notice ol li b{color:var(--ink);font-weight:700}
+.notice .issuer{
+  margin-top:22px;padding-top:14px;border-top:1px dotted var(--rule-soft);
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--ink-faint);
+}
+.notice .seal{
+  width:54px;height:54px;margin:16px auto 0;color:var(--red);
+}
+
+/* ===================== MARKETS PAGE (dashboard feature) ===================== */
+.markets{border-bottom:1px solid var(--rule);padding-bottom:50px}
+.markets-grid{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:clamp(22px,3.5vw,44px)}
+.figures{border:1px solid var(--rule-soft);background:var(--panel);padding:20px}
+.figures .fig-head{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--ink-soft);border-bottom:1px solid var(--rule-soft);padding-bottom:8px;margin-bottom:14px;
+  display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;
+}
+.figures .fig-head .syn{color:var(--red)}
+.networth{
+  font-family:var(--mono);font-weight:600;font-variant-numeric:tabular-nums;
+  font-size:clamp(1.9rem,4vw,2.6rem);letter-spacing:-.01em;
+}
+.networth-sub{font-family:var(--mono);font-size:12.5px;margin-top:4px}
+.networth-sub .up{color:var(--green);font-weight:600}
+.spark{margin:18px 0 6px}
+.spark-cap{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint)}
+.alloc{margin-top:18px;border-top:1px dotted var(--rule-soft);padding-top:14px}
+.alloc-row{display:flex;align-items:center;gap:10px;margin-bottom:9px;font-size:13.5px}
+.alloc-row .lbl{flex:none;width:9ch;font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft)}
+.alloc-row .bar{flex:1;height:9px;background:rgba(29,26,21,.1);position:relative}
+.alloc-row .bar i{position:absolute;inset:0 auto 0 0;background:var(--ink)}
+.alloc-row .val{flex:none;font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:11.5px;width:4ch;text-align:right}
+.table-scroll{overflow-x:auto;border:1px solid var(--rule-soft)}
+table.holdings{width:100%;border-collapse:collapse;min-width:520px;background:var(--paper)}
+.holdings caption{
+  caption-side:top;text-align:left;padding:10px 14px;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+  border:1px solid var(--rule-soft);border-bottom:none;background:var(--panel);color:var(--ink-soft);
+}
+.holdings th{
+  font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  text-align:right;padding:9px 14px;border-bottom:2px solid var(--ink);color:var(--ink-soft);
+}
+.holdings th:first-child{text-align:left}
+.holdings td{
+  padding:9px 14px;border-bottom:1px dotted var(--rule-soft);
+  font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:13px;text-align:right;
+}
+.holdings td:first-child{text-align:left;font-family:var(--body);font-size:15px;font-weight:500}
+.holdings td:first-child small{display:block;font-family:var(--mono);font-size:10px;color:var(--ink-faint);letter-spacing:.08em}
+.holdings tr:last-child td{border-bottom:none}
+.holdings .up{color:var(--green)}
+.holdings .dn{color:var(--red)}
+.markets-note{
+  margin-top:16px;font-style:italic;font-size:14px;color:var(--ink-faint);max-width:64ch;
+}
+.markets-note b{font-style:normal;font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft)}
+
+/* ===================== FINAL CTA ===================== */
+.final{
+  border-bottom:4px double var(--rule);
+  background:var(--panel);
+  text-align:center;
+  padding-top:clamp(44px,7vw,74px);padding-bottom:clamp(48px,7vw,80px);
+}
+.final .over{
+  font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--red);margin-bottom:16px;
+}
+.final h3{
+  font-family:var(--display);font-weight:800;font-variation-settings:"opsz" 130;
+  font-size:clamp(2rem,5vw,3.4rem);line-height:1.05;letter-spacing:-.01em;
+  max-width:22ch;margin:0 auto;text-wrap:balance;
+}
+.final p{
+  font-style:italic;color:var(--ink-soft);max-width:52ch;margin:16px auto 0;font-size:16.5px;
+}
+.final .cta-row{justify-content:center;margin-top:32px;margin-bottom:0}
+
+/* ===================== FOOTER ===================== */
+footer{padding-top:26px;padding-bottom:34px}
+.foot-grid{
+  display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-soft);
+}
+.foot-grid a{text-decoration:underline;text-underline-offset:3px}
+.foot-legal{
+  margin-top:14px;padding-top:12px;border-top:1px solid var(--rule-soft);
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;color:var(--ink-faint);
+  line-height:1.8;
+}
+
+/* ===================== reveal on scroll ===================== */
+.reveal{opacity:0;transform:translateY(14px);transition:opacity .7s ease,transform .7s ease}
+.reveal.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){
+  .reveal{opacity:1;transform:none;transition:none}
+}
+
+/* ===================== responsive ===================== */
+@media (max-width:920px){
+  .hero-grid{grid-template-columns:minmax(0,1fr)}
+  .feature-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:22px 0}
+  .feature{padding-left:22px}
+  .feature:nth-child(odd){border-left:none;padding-left:0}
+  .markets-grid{grid-template-columns:minmax(0,1fr)}
+  .spark svg{width:100%;height:auto}
+}
+@media (max-width:560px){
+  body{font-size:16px}
+  .standfirst{column-count:1;column-rule:none}
+  .feature-grid{grid-template-columns:minmax(0,1fr)}
+  .feature{border-left:none;padding-left:0}
+  .dispatch{grid-template-columns:62px minmax(0,1fr);gap:14px}
+  .dispatch .no{font-size:2rem}
+  .mast-ears span:nth-child(2){display:none}
+  .cta-row .btn{width:100%;justify-content:center}
+}
+</style>
+</head>
+<body>
+
+<!-- ================= THE WIRE ================= -->
+<div class="wire" aria-label="Synthetic market wire — illustrative only">
+  <div class="wire-inner">
+    <div class="wire-label">Synthetic&nbsp;wire</div>
+    <div class="wire-scroll">
+      <div class="wire-track">
+        <span aria-hidden="false">
+          <span>NIFTY 50 <span class="num">24,812.40</span> <span class="up">▲0.42%</span></span>
+          <span>RELIANCE <span class="num">2,914.20</span> <span class="up">▲0.81%</span></span>
+          <span>TCS <span class="num">4,102.55</span> <span class="dn">▼0.34%</span></span>
+          <span>HDFCBANK <span class="num">1,688.10</span> <span class="up">▲0.62%</span></span>
+          <span>INFY <span class="num">1,742.90</span> <span class="up">▲1.18%</span></span>
+          <span>TATAMOTORS <span class="num">1,021.35</span> <span class="dn">▼0.57%</span></span>
+          <span>SBIN <span class="num">842.60</span> <span class="up">▲0.29%</span></span>
+          <span>ITC <span class="num">468.75</span> <span class="up">▲0.11%</span></span>
+          <span>LT <span class="num">3,655.00</span> <span class="dn">▼0.22%</span></span>
+          <span>BAJFINANCE <span class="num">7,240.85</span> <span class="up">▲0.94%</span></span>
+          <span>· FIGURES SYNTHETIC · NOT LIVE DATA ·</span>
+        </span>
+        <span aria-hidden="true">
+          <span>NIFTY 50 <span class="num">24,812.40</span> <span class="up">▲0.42%</span></span>
+          <span>RELIANCE <span class="num">2,914.20</span> <span class="up">▲0.81%</span></span>
+          <span>TCS <span class="num">4,102.55</span> <span class="dn">▼0.34%</span></span>
+          <span>HDFCBANK <span class="num">1,688.10</span> <span class="up">▲0.62%</span></span>
+          <span>INFY <span class="num">1,742.90</span> <span class="up">▲1.18%</span></span>
+          <span>TATAMOTORS <span class="num">1,021.35</span> <span class="dn">▼0.57%</span></span>
+          <span>SBIN <span class="num">842.60</span> <span class="up">▲0.29%</span></span>
+          <span>ITC <span class="num">468.75</span> <span class="up">▲0.11%</span></span>
+          <span>LT <span class="num">3,655.00</span> <span class="dn">▼0.22%</span></span>
+          <span>BAJFINANCE <span class="num">7,240.85</span> <span class="up">▲0.94%</span></span>
+          <span>· FIGURES SYNTHETIC · NOT LIVE DATA ·</span>
+        </span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="sheet">
+
+<!-- ================= MASTHEAD ================= -->
+<header class="mast pad">
+  <div class="mast-ears">
+    <span>Mumbai · Saturday, 16 August 2026</span>
+    <span>Portfolio edition · price <span class="num">₹0</span> · descriptive, never advisory</span>
+    <span>Regd. No. DEMO/2026 · Synthetic data</span>
+  </div>
+  <div class="mast-title">
+    <h1>Alpha<span class="rupee">D</span>esk</h1>
+  </div>
+  <div class="dateline">
+    <span>Vol. II · Bombay · Market Edition</span>
+  </div>
+  <nav class="mast-nav" aria-label="Sections">
+    <a href="#lead">Front Page</a>
+    <a href="#edition">This Edition</a>
+    <a href="#wire-column">How It Works</a>
+    <a href="#notice">Public Notice</a>
+    <a href="#markets">Markets</a>
+    <a href="#lab">The Lab</a>
+  </nav>
+</header>
+
+<!-- ================= HERO: FRONT-PAGE LEAD ================= -->
+<main>
+<section class="hero pad" id="lead">
+  <div class="hero-grid">
+    <div>
+      <p class="kicker">The Lead · Portfolio Analyzer</p>
+      <h2>All your money, on the&nbsp;record.</h2>
+      <p class="deck">Link your IND Money account and read your whole portfolio like the front page — net worth, allocation, every holding, a history that compounds daily. Verified figures, never a guess.</p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="#">
+          View the live demo
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 8h11M9 3.5 13.5 8 9 12.5"/></svg>
+        </a>
+        <a class="btn btn-secondary" href="#">
+          Join the waitlist
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 4.5h10M3 8h10M3 11.5h5.5M11 10.5l1.5 1.5L15 9.5"/></svg>
+        </a>
+      </div>
+      <div class="standfirst">
+        <p class="byline">From the markets desk — every figure checked before press</p>
+        <p>AlphaDesk is a portfolio analyzer for Indian retail investors. Sign in — a public URL, waitlist-gated — link your IND Money account read-only, and the ledger sets itself: invested against current, allocation by asset type, sector and market cap, every holding sortable on one page. Where the record is incomplete, the desk says so; where a number prints, it has been computed and checked first.</p>
+        <p>And the paper keeps its archive. Each night at about 23:45 IST, after mutual-fund NAVs publish, a snapshot goes to bed: your net worth at Indian market close, all sources settled — one row a day, compounding into a history and a trend you can actually read. Over it all, an AI overview narrates the verified numbers. It describes what is; it never tells you what to buy.</p>
+      </div>
+    </div>
+
+    <aside aria-label="Sample AI overview dispatch">
+      <div class="wirecopy">
+        <div class="wirecopy-head">
+          <span>Wire/Overview · run <span class="num">#0117</span></span>
+          <span style="display:inline-flex;align-items:center;gap:7px"><span class="blink-dot" aria-hidden="true"></span><span class="num">23:52:11 IST</span></span>
+        </div>
+        <div class="wirecopy-body num" role="img" aria-label="Illustrative AI overview run: metrics are computed in Python, then an allocation critic, concentration-risk agent, SIP-health agent and performance-attribution agent report on the verified numbers, and a synthesizer writes the narrative with every claim citing its figure.">
+          <div class="row"><span class="agent">COMPUTE</span><span class="msg"><span class="ok">▸ metrics verified in Python</span> · no guesses</span></div>
+          <div class="row"><span class="agent">ALLOC</span><span class="msg">▸ financials 47% of the book</span></div>
+          <div class="row"><span class="agent">CONC RISK</span><span class="msg">▸ HHI 0.31 · <span class="flag">top holding 22% of net worth</span></span></div>
+          <div class="row"><span class="agent">SIP DESK</span><span class="msg">▸ 6 of 7 SIPs ran on schedule</span></div>
+          <div class="row"><span class="agent">ATTRIB</span><span class="msg">▸ P&amp;L traced by holding · nulls stay "—"</span></div>
+          <div class="row"><span class="agent">SYNTH</span><span class="msg"><span class="ok">▸ narrative filed</span> · every claim cites its number</span></div>
+        </div>
+        <div class="wirecopy-foot">Illustrative dispatch · figures computed before prose · not advice</div>
+      </div>
+      <div class="stop-press">
+        <b>Stop press</b>
+        <span>If the language model is unavailable, this paper still prints in full — every computed number intact. Only the prose column runs blank.</span>
+      </div>
+    </aside>
+  </div>
+</section>
+
+<!-- ================= TRUST STAMPS ================= -->
+<section class="stamps pad reveal" aria-label="Trust commitments">
+  <p class="stamps-head">Sworn before the reader — the standing rules of this house</p>
+  <div class="stamps-row">
+    <div class="stamp">Read-only broker access<span class="sub">consent screen at link time</span></div>
+    <div class="stamp">Descriptive, never advisory<span class="sub">no forecasts, no tips</span></div>
+    <div class="stamp">Tokens encrypted at rest<span class="sub">Fernet · never sent to the browser</span></div>
+    <div class="stamp">Delete-my-data built in<span class="sub">revokes upstream, then cascades</span></div>
+  </div>
+</section>
+
+<!-- ================= FEATURES: INSIDE THIS EDITION ================= -->
+<section class="features pad" id="edition">
+  <div class="section-bar reveal"><h3>Inside This Edition</h3></div>
+  <p class="section-sub reveal">Four regular columns, set fresh from your ledger.</p>
+  <div class="feature-grid">
+    <article class="feature reveal">
+      <span class="col-tag">Page 1 · The Ledger</span>
+      <svg class="ico" viewBox="0 0 34 34" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+        <rect x="4" y="6" width="26" height="22"/><path d="M4 12h26M11 12v16"/><path d="M15 23l4-4 3 2.5 5-5.5"/>
+      </svg>
+      <h4>Net worth, above the fold</h4>
+      <p>Invested against current, in rupees and in percent, then the composition: allocation by asset type, by sector, by market cap. One page, the whole book.</p>
+    </article>
+    <article class="feature reveal">
+      <span class="col-tag">Page 2 · Holdings</span>
+      <svg class="ico" viewBox="0 0 34 34" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+        <path d="M8 4h13l5 5v21H8z"/><path d="M21 4v5h5"/><path d="M12 14h10M12 18h10M12 22h6"/>
+      </svg>
+      <h4>Every line, honestly set</h4>
+      <p>A sortable table of everything you hold. And honest nulls: an unknown cost basis prints "—" — never a fake −100% conjured from a missing number.</p>
+    </article>
+    <article class="feature reveal">
+      <span class="col-tag">Page 3 · The Close</span>
+      <svg class="ico" viewBox="0 0 34 34" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+        <circle cx="14" cy="14" r="9"/><path d="M20.5 20.5 29 29"/><path d="M10 15.5l3-3 2.5 2 4-4.5"/>
+      </svg>
+      <h4>History, filed nightly</h4>
+      <p>A daily snapshot — net worth at Indian market close, all sources settled, captured about 23:45 IST after MF NAVs publish — builds your trend line. A missed snapshot can never be backfilled, so a gap is reported, not hidden: "History paused — last captured N days ago."</p>
+    </article>
+    <article class="feature reveal">
+      <span class="col-tag">Page 4 · The Overview</span>
+      <svg class="ico" viewBox="0 0 34 34" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+        <path d="M17 3 29 8v8c0 8-5.2 12.6-12 15C10.2 28.6 5 24 5 16V8z"/><path d="M11.5 16.5l4 4 7-8"/>
+      </svg>
+      <h4>Prose that shows its sums</h4>
+      <p>Four AI specialists — allocation critic, concentration risk, SIP health, performance attribution — fan out over metrics computed in Python; a synthesizer writes the narrative. Agents may not invent figures; every claim shows its number. No model? The dashboard still renders completely.</p>
+    </article>
+  </div>
+</section>
+
+<!-- ================= HOW IT WORKS: FROM THE WIRE ================= -->
+<section class="howto pad" id="wire-column">
+  <div class="section-bar reveal"><h3>From the Wire</h3></div>
+  <p class="section-sub reveal">How your portfolio makes the paper — the route, dispatch by dispatch.</p>
+  <div class="dispatch-list">
+    <div class="dispatch reveal">
+      <div class="no">01<small>Sign in</small></div>
+      <div>
+        <h5>The waitlist clears</h5>
+        <p class="dl">PUBLIC URL, WAITLIST-GATED —</p>
+        <p>AlphaDesk lives at a public address behind a waitlist. Put your name down; once approved, you sign in — no broker required to read the demo in the meantime.</p>
+      </div>
+    </div>
+    <div class="dispatch reveal">
+      <div class="no">02<small>Link</small></div>
+      <div>
+        <h5>Consent, then connection</h5>
+        <p class="dl">IND MONEY, READ-ONLY —</p>
+        <p>Before the OAuth redirect, a consent screen names exactly what will be read. Access is read-only; broker tokens are encrypted at rest (Fernet) and never returned to your browser. Prompts to the AI carry aggregates and symbols only.</p>
+      </div>
+    </div>
+    <div class="dispatch reveal">
+      <div class="no">03<small>Read</small></div>
+      <div>
+        <h5>The ledger sets itself</h5>
+        <p class="dl">THE MARKETS PAGE —</p>
+        <p>Net worth, invested against current, allocation by asset type, sector and market cap, and a sortable table of holdings. Where a cost basis is unknown the desk prints "—" — never a fabricated loss.</p>
+      </div>
+    </div>
+    <div class="dispatch reveal">
+      <div class="no">04<small>The close</small></div>
+      <div>
+        <h5>Figures go to bed at 23:45</h5>
+        <p class="dl">IST, AFTER MF NAVs PUBLISH —</p>
+        <p>Each night a snapshot is captured: net worth at Indian market close, all sources settled. One row a day, building the trend. A missed snapshot can never be backfilled — so if the presses stop, the page says so: "History paused — last captured N days ago."</p>
+      </div>
+    </div>
+    <div class="dispatch reveal">
+      <div class="no">05<small>Overview</small></div>
+      <div>
+        <h5>The desk reads its own page</h5>
+        <p class="dl">AI OVERVIEW, VERIFIED FIGURES —</p>
+        <p>Allocation critic, concentration risk, SIP health and performance attribution fan out over numbers computed in Python; a synthesizer writes the prose. No agent may invent a figure, and every claim prints its number beside it.</p>
+      </div>
+    </div>
+    <div class="dispatch result reveal">
+      <div class="no" aria-hidden="true">→</div>
+      <div>
+        <h5>Your history, compounding daily</h5>
+        <p>A standing record of your net worth at close, one row at a time. And when you leave, you leave clean: <b>delete-my-data</b> revokes the broker token upstream first, then cascade-deletes everything you ever stored here.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= PUBLIC NOTICE ================= -->
+<section class="notice-wrap pad" id="notice">
+  <div class="section-bar reveal"><h3>Notices</h3></div>
+  <div class="notice reveal" role="note" aria-label="Public notice: the framing rules of this product">
+    <p class="gov">By order of the editors · AlphaDesk</p>
+    <h3>Public Notice</h3>
+    <p class="no-ref">Notice No. AD/FRAME/2026-27/001 · Dated 16-08-2026</p>
+    <ol>
+      <li>This paper prints <b>descriptive analytics only</b> — an account of what is: <em>"You are 47% financials. HHI 0.31. Your largest holding is 22% of net worth."</em> (Figures illustrative.)</li>
+      <li><b>No forward forecasts</b> shall appear in these pages. The desk reports the record; it does not predict the tape.</li>
+      <li><b>No buy or sell advice on real holdings</b>, ever. The Lab's simulated calls stay in the Lab, on a paper watchlist, and are never printed beside your actual portfolio.</li>
+      <li><b>No cross-source auto-merge.</b> Holdings from different sources are never silently combined — the desk asks first. A silently wrong net worth is the one error a reader cannot catch.</li>
+      <li>Every figure the AI cites is <b>computed first and shown beside the claim</b>. No agent may invent a number; where the record is missing, the desk prints "—".</li>
+    </ol>
+    <svg class="seal" viewBox="0 0 54 54" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+      <circle cx="27" cy="27" r="24"/><circle cx="27" cy="27" r="18"/>
+      <path d="M27 17v20M20 24l7-7 7 7M19 34h16"/>
+    </svg>
+    <p class="issuer">Issued in the public interest · exceptions: none</p>
+  </div>
+</section>
+
+<!-- ================= MARKETS PAGE ================= -->
+<section class="markets pad" id="markets">
+  <div class="section-bar reveal"><h3>Markets</h3></div>
+  <p class="section-sub reveal">The dashboard as subscribers read it — and as the live demo shows it, on sample data. All numbers synthetic.</p>
+  <div class="markets-grid">
+    <div class="figures reveal">
+      <div class="fig-head"><span>Net worth · demo ledger</span><span class="syn">Synthetic</span></div>
+      <p class="networth">₹12,48,300</p>
+      <p class="networth-sub"><span style="color:var(--ink-faint)">invested</span> ₹11,02,150 · <span class="up">+₹1,46,150 ▲13.3%</span></p>
+      <div class="spark">
+        <svg viewBox="0 0 300 84" width="100%" height="84" role="img" aria-label="Synthetic daily net worth trend from nightly close snapshots, rising from about ₹10.9 lakh to ₹12.48 lakh">
+          <polyline fill="rgba(10,104,71,.09)" stroke="none"
+            points="0,62 12,60 24,63 36,58 48,59 60,54 72,56 84,50 96,52 108,47 120,49 132,44 144,46 156,40 168,43 180,37 192,39 204,33 216,35 228,29 240,31 252,26 264,27 276,22 288,24 300,18 300,84 0,84"/>
+          <polyline fill="none" stroke="#0a6847" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"
+            points="0,62 12,60 24,63 36,58 48,59 60,54 72,56 84,50 96,52 108,47 120,49 132,44 144,46 156,40 168,43 180,37 192,39 204,33 216,35 228,29 240,31 252,26 264,27 276,22 288,24 300,18"/>
+          <circle cx="300" cy="18" r="3.5" fill="#0a6847"/>
+        </svg>
+        <p class="spark-cap">Daily close series · captured ~23:45 IST · synthetic</p>
+      </div>
+      <div class="alloc" aria-label="Synthetic allocation by asset type">
+        <div class="alloc-row"><span class="lbl">Equity</span><span class="bar"><i style="width:62%"></i></span><span class="val num">62%</span></div>
+        <div class="alloc-row"><span class="lbl">Mutual Fd</span><span class="bar"><i style="width:24%"></i></span><span class="val num">24%</span></div>
+        <div class="alloc-row"><span class="lbl">EPF</span><span class="bar"><i style="width:9%"></i></span><span class="val num">9%</span></div>
+        <div class="alloc-row"><span class="lbl">Savings</span><span class="bar"><i style="width:5%"></i></span><span class="val num">5%</span></div>
+      </div>
+    </div>
+    <div class="reveal">
+      <div class="table-scroll" tabindex="0" aria-label="Synthetic holdings table, scrolls horizontally">
+        <table class="holdings">
+          <caption>Selected holdings · sortable in-app · unknown cost basis prints "—" · figures synthetic · ₹ en-IN</caption>
+          <thead>
+            <tr><th scope="col">Instrument</th><th scope="col">Qty</th><th scope="col">Value (₹)</th><th scope="col">P&amp;L</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Reliance Industries<small>NSE · RELIANCE</small></td><td>48</td><td>1,39,882</td><td class="up">▲12.4%</td></tr>
+            <tr><td>HDFC Bank<small>NSE · HDFCBANK</small></td><td>120</td><td>2,02,572</td><td class="up">▲18.1%</td></tr>
+            <tr><td>Infosys<small>NSE · INFY</small></td><td>85</td><td>1,48,147</td><td class="dn">▼3.2%</td></tr>
+            <tr><td>Axis Bluechip Fund<small>MF · DIRECT GROWTH</small></td><td>1,241</td><td>1,42,989</td><td>—</td></tr>
+            <tr><td>ITC<small>NSE · ITC</small></td><td>310</td><td>1,45,313</td><td class="up">▲9.7%</td></tr>
+            <tr><td>State Bank of India<small>NSE · SBIN</small></td><td>150</td><td>1,26,390</td><td class="up">▲21.5%</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="markets-note"><b>Desk overview (AI) —</b> <em>"Equity carries the ledger at 62% of a ₹12.48-lakh net worth, ₹1,46,150 above invested. Your largest holding is 16.2% of net worth; HHI 0.21. Six of seven SIPs ran on schedule. One holding reports no cost basis, so no return is claimed for it."</em> Every figure the overview cites is computed in Python first and shown beside the claim — the prose describes your portfolio; it never advises on it. If the model is unavailable, this page still prints in full; only the prose runs blank.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= THE LAB (inside pages, simulation) ================= -->
+<section class="howto pad" id="lab">
+  <div class="section-bar reveal"><h3>The Lab</h3></div>
+  <p class="section-sub reveal">Inside pages · a research desk run entirely in simulation — plainly labelled, and kept off the front page.</p>
+  <div class="hero-grid">
+    <div class="reveal">
+      <p class="byline">A separate room, behind a marked door</p>
+      <p style="color:var(--ink-soft);max-width:60ch;margin-bottom:1em">Beyond the Markets page, AlphaDesk keeps a laboratory: the original multi-agent research desk, preserved as a simulation. A Scanner reads the day's NSE movers, a Research agent works the fundamentals, an Analyst files a report per candidate — thesis, confidence, action — and a Risk desk applies its guardrails before anything moves.</p>
+      <p style="color:var(--ink-soft);max-width:60ch;margin-bottom:1em">Then the presses stop at a human approval gate. Approved names go to a <b>paper watchlist</b> — and no further. Zero real orders have ever been placed here, and zero ever will be: there is no broker on the other end of the wire.</p>
+      <div class="stop-press">
+        <b>Simulation</b>
+        <span>The Lab is a labelled simulation and is never fused with your real portfolio view. Its calls never appear beside your actual holdings, and they are not investment advice.</span>
+      </div>
+    </div>
+    <aside class="reveal" aria-label="Sample Lab simulation dispatch">
+      <div class="wirecopy">
+        <div class="wirecopy-head">
+          <span>Wire/Lab · <span class="num">SIMULATION</span></span>
+          <span style="display:inline-flex;align-items:center;gap:7px"><span class="blink-dot" aria-hidden="true"></span><span class="num">09:15:04 IST</span></span>
+        </div>
+        <div class="wirecopy-body num" role="img" aria-label="Illustrative Lab simulation run: scanner flags movers, research briefs candidates, analyst files reports, the risk desk passes two and flags one, then the run halts for human approval before a paper watchlist. No real orders.">
+          <div class="row"><span class="agent">SCANNER</span><span class="msg">▸ 14 NSE movers flagged at the open</span></div>
+          <div class="row"><span class="agent">RESEARCH</span><span class="msg">▸ 5 candidates briefed · read-only data</span></div>
+          <div class="row"><span class="agent">ANALYST</span><span class="msg">▸ 3 reports filed with confidence</span></div>
+          <div class="row"><span class="agent">RISK DESK</span><span class="msg"><span class="ok">▸ 2 PASS</span> · <span class="flag">1 FLAG @ 0.72</span> · guardrails held</span></div>
+          <div class="row"><span class="agent">APPROVAL</span><span class="msg">▸ HELD — awaiting the human editor</span></div>
+          <div class="row"><span class="agent">WATCHLST</span><span class="msg">▸ paper only · 0 real orders, ever</span></div>
+        </div>
+        <div class="wirecopy-foot">Simulation · synthetic figures · not advice</div>
+      </div>
+    </aside>
+  </div>
+</section>
+
+<!-- ================= FINAL CTA ================= -->
+<section class="final pad">
+  <p class="over reveal">Late City Edition · Now Printing Daily</p>
+  <h3 class="reveal">Read your own front page tonight.</h3>
+  <p class="reveal">Open the live demo — sample data, no sign-in — and see the whole dashboard in print. Or join the waitlist; once you're approved, link IND Money read-only and your history starts compounding at the very next close.</p>
+  <div class="cta-row reveal">
+    <a class="btn btn-primary" href="#">
+      View the live demo
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 8h11M9 3.5 13.5 8 9 12.5"/></svg>
+    </a>
+    <a class="btn btn-secondary" href="#">
+      Join the waitlist
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 4.5h10M3 8h10M3 11.5h5.5M11 10.5l1.5 1.5L15 9.5"/></svg>
+    </a>
+  </div>
+</section>
+</main>
+
+<!-- ================= FOOTER ================= -->
+<footer class="pad">
+  <div class="foot-grid">
+    <span>AlphaDesk · The Market Edition · Vol. II</span>
+    <span>
+      <a href="#">Privacy</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#">Terms</a>
+    </span>
+  </div>
+  <p class="foot-legal">
+    Synthetic demo data — all figures on this page are illustrative · descriptive analytics only · not investment advice.<br>
+    Broker access is read-only via IND Money, granted on a consent screen at link time; tokens are encrypted at rest (Fernet) and never returned to the browser; AI prompts carry aggregates and symbols only; delete-my-data revokes the broker token upstream, then cascade-deletes. The Lab is a labelled simulation on a paper watchlist — no real orders, ever.
+  </p>
+</footer>
+
+</div><!-- /sheet -->
+
+<script>
+(function(){
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var els = document.querySelectorAll('.reveal');
+  if (reduce || !('IntersectionObserver' in window)) {
+    els.forEach(function(el){ el.classList.add('in'); });
+    return;
+  }
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+    });
+  }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
+  els.forEach(function(el){ io.observe(el); });
+})();
+</script>
+</body>
+</html>

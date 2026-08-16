@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import type { OverviewComplete, OverviewHandlers } from "@/lib/api";
 
@@ -17,9 +17,16 @@ import type { OverviewComplete, OverviewHandlers } from "@/lib/api";
 
 // The mock lets each test drive the stream's handlers directly.
 let driver: (handlers: OverviewHandlers) => void = () => {};
+/** Every `force` flag the panel sent, in call order. */
+let forces: (boolean | undefined)[] = [];
 
 vi.mock("@/lib/api", () => ({
-  streamOverview: (handlers: OverviewHandlers) => {
+  streamOverview: (
+    handlers: OverviewHandlers,
+    _signal?: AbortSignal,
+    options?: { force?: boolean },
+  ) => {
+    forces.push(options?.force);
     driver(handlers);
     return Promise.resolve();
   },
@@ -37,6 +44,7 @@ const METRICS: OverviewComplete["metrics"] = [
 
 beforeEach(() => {
   driver = () => {};
+  forces = [];
 });
 
 describe("AiOverview — degraded path", () => {
@@ -102,5 +110,81 @@ describe("AiOverview — narrative path", () => {
     expect(screen.getAllByText("0.17").length).toBeGreaterThanOrEqual(1);
     // Provenance line is present.
     expect(screen.getByText(/computed in Python/i)).toBeTruthy();
+  });
+});
+
+/**
+ * Cached mode — the dashboard's back button.
+ *
+ * The `/portfolio` route layout keeps the last completed run, so walking to
+ * Holdings and returning re-reads it. Re-streaming there would spend five agents
+ * (and the daily budget) restating a paragraph that is already written.
+ */
+describe("AiOverview — cached mode", () => {
+  const COMPLETED: OverviewComplete = {
+    status: "complete",
+    degraded: false,
+    reason: null,
+    scripted: false,
+    metrics: METRICS,
+    agents: [],
+    narrative: [{ segments: [{ text: "A run that already happened." }] }],
+  };
+
+  it("renders a cached run without streaming, and keeps Regenerate", () => {
+    driver = () => {
+      throw new Error("cached mode must not open a stream");
+    };
+
+    render(<AiOverview cached={COMPLETED} onComplete={() => {}} />);
+
+    expect(screen.getByText("A run that already happened.")).toBeTruthy();
+    // Unlike /demo's frozen `initial`, the run is over — not unrepeatable.
+    expect(screen.getByLabelText(/Regenerate the AI overview/i)).toBeTruthy();
+  });
+
+  it("hands a live run back to its caller so the next visit can reuse it", async () => {
+    const kept = vi.fn();
+    driver = (h) => {
+      h.onComplete?.(COMPLETED);
+    };
+
+    render(<AiOverview onComplete={kept} />);
+
+    await waitFor(() => expect(kept).toHaveBeenCalledWith(COMPLETED));
+  });
+});
+
+/**
+ * The daily narrative (issue #14) — Regenerate is the only new spend.
+ *
+ * A mount asks for whatever the backend already wrote today; only the button
+ * asks it to write again. Sending `force` on mount would make the "once a day"
+ * rule cost a run on every page load, which is the bug this pins shut.
+ */
+describe("AiOverview — force", () => {
+  const COMPLETED: OverviewComplete = {
+    status: "complete",
+    degraded: false,
+    reason: null,
+    scripted: false,
+    metrics: METRICS,
+    agents: [],
+    narrative: [{ segments: [{ text: "Today's overview." }] }],
+  };
+
+  it("streams without force on mount and with force from Regenerate", async () => {
+    driver = (h) => {
+      h.onComplete?.(COMPLETED);
+    };
+
+    render(<AiOverview />);
+    await waitFor(() => expect(forces.length).toBeGreaterThanOrEqual(1));
+    expect(forces.every((f) => !f)).toBe(true);
+
+    const before = forces.length;
+    fireEvent.click(screen.getByLabelText(/Regenerate the AI overview/i));
+    await waitFor(() => expect(forces.length).toBeGreaterThan(before));
+    expect(forces[forces.length - 1]).toBe(true);
   });
 });

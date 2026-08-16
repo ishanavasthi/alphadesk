@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import type { ReactNode } from "react";
 import type { PortfolioSummary } from "@/lib/api";
 import { inr, inrSigned, num, pctSigned, toneClass } from "./format";
 import { Card } from "./ui";
@@ -12,7 +14,7 @@ function Stat({
 }: {
   label: string;
   value: string;
-  note: string;
+  note: ReactNode;
   tone?: string;
 }) {
   return (
@@ -43,10 +45,17 @@ export function StatCards({
   summary,
   holdingsCount,
   countIsPartial,
+  holdingsHref,
 }: {
   summary: PortfolioSummary;
   holdingsCount: number;
   countIsPartial: boolean;
+  /**
+   * Where "See all holdings →" points, when there is somewhere to send the
+   * reader. Opt-in because the public `/demo` renders these same cards on one
+   * page and has no holdings route to link into.
+   */
+  holdingsHref?: string;
 }) {
   const liabilities = num(summary.liabilities_total);
   const pnl = num(summary.pnl);
@@ -63,9 +72,19 @@ export function StatCards({
         label="Current value"
         value={inr(num(summary.current_value))}
         note={
-          countIsPartial
-            ? `across ${holdingsCount} holdings loaded so far`
-            : `across ${holdingsCount} holdings`
+          <>
+            {countIsPartial
+              ? `across ${holdingsCount} holdings loaded so far`
+              : `across ${holdingsCount} holdings`}{" "}
+            {holdingsHref ? (
+              <Link
+                href={holdingsHref}
+                className="whitespace-nowrap hover:text-foreground hover:underline"
+              >
+                See all holdings →
+              </Link>
+            ) : null}
+          </>
         }
       />
       <Stat

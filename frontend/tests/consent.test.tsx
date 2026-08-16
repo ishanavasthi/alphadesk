@@ -97,7 +97,7 @@ describe("every Connect entry point routes through the shared consent hook", () 
   const ROOT = path.resolve(__dirname, "..");
   const ENTRY_POINTS = [
     "components/AuthProvider.tsx",
-    "app/portfolio/page.tsx",
+    "components/portfolio/PortfolioProvider.tsx",
     "components/clerk/ClerkLanding.tsx",
   ];
 

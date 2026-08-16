@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import type { ReactNode } from "react";
 import {
   Area,
   ComposedChart,
@@ -36,7 +38,7 @@ function TrendTooltip({
   if (!active || !payload?.length) return null;
   const point = payload[0].payload;
   return (
-    <div className="adp-num rounded-md bg-[#09090b] px-2.5 py-1.5 text-xs text-white">
+    <div className="adp-num rounded-md bg-[var(--adp-tooltip-bg)] px-2.5 py-1.5 text-xs text-[var(--adp-tooltip-ink)]">
       {point.date} · <b>{inr(point.value)}</b>
     </div>
   );
@@ -47,7 +49,8 @@ function TrendTooltip({
  *
  * Recharts renders `dot` for every point or none, so "last point only" has to be
  * a render function that draws a circle at the final index and an empty `<g/>`
- * everywhere else. The white ring is what lifts it off the 7% area fill.
+ * everywhere else. The ground-coloured ring is what lifts it off the 7% area
+ * fill — a token, so it stays the ground in either theme.
  */
 function endpointDot(props: { cx?: number; cy?: number; index?: number; key?: string }, last: number) {
   const { cx, cy, index, key } = props;
@@ -61,7 +64,7 @@ function endpointDot(props: { cx?: number; cy?: number; index?: number; key?: st
       cy={cy}
       r={3.5}
       fill="var(--adp-accent)"
-      stroke="#fff"
+      stroke="var(--adp-dot-ring)"
       strokeWidth={1.5}
     />
   );
@@ -78,13 +81,22 @@ function endpointDot(props: { cx?: number; cy?: number; index?: number; key?: st
  *
  * Styling follows the locked chart rules: 2px accent line, 7% accent area,
  * emphasized endpoint, crosshair + tooltip on hover, y-axis in lakh.
+ *
+ * `headLink` is the Overview card's way out to the full history; `caption` is
+ * where Performance states the change over its selected window. Both are given
+ * by the caller because the window arithmetic belongs to whoever chose the
+ * window — this component still renders exactly the points it is handed.
  */
 export function NetWorthTrend({
   points,
   lastCapturedAt,
+  headLink,
+  caption,
 }: {
   points: TrendPoint[];
   lastCapturedAt: string | null;
+  headLink?: { href: string; label: string };
+  caption?: ReactNode;
 }) {
   const hasHistory = points.length > 1;
   // The **attributed** day, not the raw timestamp: a capture that ran at 01:00
@@ -95,14 +107,24 @@ export function NetWorthTrend({
 
   return (
     <Card className="flex flex-col">
-      <CardHead
-        title="Net-worth trend"
-        desc={
-          hasHistory
-            ? `${points.length} captured snapshots · ${lastDay ? `last ${lastDay}` : "daily"}`
-            : "Daily snapshots · nothing captured yet"
-        }
-      />
+      <div className="flex items-start justify-between gap-3">
+        <CardHead
+          title="Net-worth trend"
+          desc={
+            hasHistory
+              ? `${points.length} captured snapshots · ${lastDay ? `last ${lastDay}` : "daily"}`
+              : "Daily snapshots · nothing captured yet"
+          }
+        />
+        {headLink ? (
+          <Link
+            href={headLink.href}
+            className="shrink-0 text-xs text-muted-foreground hover:text-foreground hover:underline"
+          >
+            {headLink.label}
+          </Link>
+        ) : null}
+      </div>
       {hasHistory ? (
         <div className="h-[220px] w-full">
           <ResponsiveContainer width="100%" height="100%">
@@ -146,7 +168,12 @@ export function NetWorthTrend({
                 strokeLinejoin="round"
                 isAnimationActive={false}
                 dot={(dotProps) => endpointDot(dotProps, points.length - 1)}
-                activeDot={{ r: 3.5, fill: "var(--adp-accent)", stroke: "#fff", strokeWidth: 1.5 }}
+                activeDot={{
+                  r: 3.5,
+                  fill: "var(--adp-accent)",
+                  stroke: "var(--adp-dot-ring)",
+                  strokeWidth: 1.5,
+                }}
               />
             </ComposedChart>
           </ResponsiveContainer>
@@ -163,6 +190,11 @@ export function NetWorthTrend({
           nightly capture.
         </EmptyCallout>
       )}
+      {caption ? (
+        <div className="mt-3 border-t border-[var(--adp-hairline)] pt-3 text-[13px] text-muted-foreground">
+          {caption}
+        </div>
+      ) : null}
     </Card>
   );
 }

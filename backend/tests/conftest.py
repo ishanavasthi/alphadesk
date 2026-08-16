@@ -216,6 +216,7 @@ _ALL_TABLES = (
     "snapshot_holdings",
     "snapshot_raw",
     "watchlist",
+    "portfolio_cache",
 )
 
 

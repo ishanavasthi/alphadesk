@@ -32,6 +32,20 @@ import { Badge, Button, Card } from "@/components/portfolio/ui";
  * narrative artifact this way, so an anonymous visitor never triggers an LLM
  * call. The streaming effect is skipped entirely (not merely ignored), and the
  * Regenerate button — which would need a live stream — is hidden.
+ *
+ * ## Cached mode (`cached` + `onComplete`) — the dashboard's back button
+ *
+ * `cached` is the same "render a finished overview, make no stream" behaviour,
+ * but it **keeps** Regenerate: the run is over, not frozen. The dashboard's
+ * route layout holds the last completed overview and hands it back here, so
+ * walking to Holdings and returning re-reads what is already written instead of
+ * paying five agents to say it again. `onComplete` is how the run gets there.
+ *
+ * That cache only survives the session. The backend keeps the other half: the
+ * narrative is written at most once per IST day, so a reload or a re-login gets
+ * today's saved copy back over the same stream. **Regenerate is the only thing
+ * that spends** — it sends `force`, which re-runs the agents and overwrites the
+ * day's saved narrative.
  */
 
 const AGENTS = [
@@ -56,19 +70,43 @@ function allDone(): Record<string, AgentState> {
   return Object.fromEntries(AGENTS.map((a) => [a, "done" as AgentState]));
 }
 
-export function AiOverview({ initial }: { initial?: OverviewComplete } = {}) {
+export function AiOverview({
+  initial,
+  cached,
+  onComplete,
+}: {
+  initial?: OverviewComplete;
+  /** A completed run to re-render instead of streaming a fresh one. */
+  cached?: OverviewComplete | null;
+  /** Called with every live run that completes, so a caller can keep it. */
+  onComplete?: (data: OverviewComplete) => void;
+} = {}) {
+  // Both modes start from a finished overview; only `initial` also gives up the
+  // Regenerate button, because /demo has no stream to regenerate against.
+  const seed = initial ?? cached ?? null;
   const [phase, setPhase] = useState<Phase>(
-    initial ? (initial.degraded ? "degraded" : "ready") : "loading",
+    seed ? (seed.degraded ? "degraded" : "ready") : "loading",
   );
-  const [narrative, setNarrative] = useState<OverviewParagraph[]>(initial?.narrative ?? []);
-  const [metrics, setMetrics] = useState<OverviewMetric[]>(initial?.metrics ?? []);
-  const [reason, setReason] = useState<string | null>(initial?.reason ?? null);
+  const [narrative, setNarrative] = useState<OverviewParagraph[]>(seed?.narrative ?? []);
+  const [metrics, setMetrics] = useState<OverviewMetric[]>(seed?.metrics ?? []);
+  const [reason, setReason] = useState<string | null>(seed?.reason ?? null);
   const [errorMessage, setErrorMessage] = useState("");
   const [agentStates, setAgentStates] = useState<Record<string, AgentState>>(
-    initial ? allDone() : {},
+    seed ? allDone() : {},
   );
   const [runKey, setRunKey] = useState(0);
   const aborter = useRef<AbortController | null>(null);
+  /**
+   * Whether the cached run still stands in for a stream.
+   *
+   * Consumed once, on mount: pressing Regenerate must reach the model, and a
+   * cache that kept swallowing runs would make the button a lie.
+   */
+  const cachedIsFresh = useRef(Boolean(cached));
+  // Read through a ref so a caller passing an inline handler cannot restart the
+  // stream by re-rendering.
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   const applyComplete = useCallback((data: OverviewComplete) => {
     setMetrics(data.metrics);
@@ -80,12 +118,18 @@ export function AiOverview({ initial }: { initial?: OverviewComplete } = {}) {
       for (const key of Object.keys(next)) next[key] = "done";
       return next;
     });
+    onCompleteRef.current?.(data);
   }, []);
 
   useEffect(() => {
     // Static mode: the overview is already in hand (card U1's /demo serves A1's
     // committed artifact). No stream, so a public visitor never hits the LLM.
     if (initial) return;
+    // Cached mode: this run already happened on a previous visit to the page.
+    if (cachedIsFresh.current) {
+      cachedIsFresh.current = false;
+      return;
+    }
 
     const controller = new AbortController();
     aborter.current?.abort();
@@ -112,6 +156,10 @@ export function AiOverview({ initial }: { initial?: OverviewComplete } = {}) {
         },
       },
       controller.signal,
+      // Mount is `runKey === 0` and asks for whatever the backend already wrote
+      // today; every later run is a Regenerate press, the one thing allowed to
+      // re-run the agents and overwrite the day's saved narrative.
+      { force: runKey > 0 },
     );
 
     return () => controller.abort();
@@ -122,9 +170,9 @@ export function AiOverview({ initial }: { initial?: OverviewComplete } = {}) {
   const shown = metrics.filter((m) => m.available);
 
   return (
-    <Card className="mt-4 grid grid-cols-1 gap-0 overflow-hidden p-0 lg:grid-cols-[2fr_1fr]">
+    <Card className="mt-4 grid grid-cols-1 gap-0 overflow-hidden p-0 lg:min-h-[320px] lg:grid-cols-[2fr_1fr]">
       {/* Left — narrative + agents */}
-      <div className="border-b border-border p-5 lg:border-b-0 lg:border-r">
+      <div className="min-w-0 border-b border-border p-5 lg:border-b-0 lg:border-r">
         <div className="flex items-center gap-2.5">
           <h2 className="text-sm font-semibold leading-tight">AI overview</h2>
           <Badge variant="lab">gpt · portfolio agents</Badge>
@@ -168,33 +216,41 @@ export function AiOverview({ initial }: { initial?: OverviewComplete } = {}) {
         </p>
       </div>
 
-      {/* Right — computed metrics rail + degraded note */}
-      <div className="bg-secondary/40 p-5">
-        <h3 className="mb-2.5 text-sm font-semibold">Computed metrics</h3>
-        {shown.length === 0 ? (
-          <p className="text-xs text-muted-foreground">Metrics load with the panel.</p>
-        ) : (
-          <dl className="text-[13px]">
-            {shown.map((m) => (
-              <div
-                key={m.key}
-                className="flex items-baseline justify-between gap-2 border-b border-border py-[9px] last:border-b-0"
-              >
-                <dt className="text-[12.5px] text-muted-foreground">{m.label}</dt>
-                <dd className="font-semibold tabular-nums">
-                  {m.display}
-                  {m.detail && m.unit !== "text" ? (
-                    <small className="ml-1 font-normal text-[var(--adp-faint)]">{m.detail}</small>
-                  ) : null}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        )}
-        <div className="mt-4 rounded-md border border-dashed border-border bg-card p-2.5 text-xs text-muted-foreground">
-          <b className="font-semibold text-foreground">If the model is unavailable</b>, this panel
-          says &ldquo;AI overview unavailable&rdquo; — every number on this page still renders. The
-          dashboard never depends on the LLM.
+      {/* Right — computed metrics rail + degraded note.
+          On `lg` the rail is taken out of flow (absolute inside this relative
+          cell) so its ~18 rows contribute no height: the narrative column drives
+          the card and the rail scrolls internally. Stacked below `lg` it flows
+          normally, uncapped. */}
+      <div className="relative min-w-0 bg-secondary/40">
+        <div className="p-5 lg:absolute lg:inset-0 lg:overflow-y-auto">
+          <h3 className="mb-2.5 text-sm font-semibold">Computed metrics</h3>
+          {shown.length === 0 ? (
+            <p className="text-xs text-muted-foreground">Metrics load with the panel.</p>
+          ) : (
+            <dl className="text-[13px]">
+              {shown.map((m) => (
+                <div
+                  key={m.key}
+                  className="flex items-baseline justify-between gap-2 border-b border-border py-[9px] last:border-b-0"
+                >
+                  <dt className="min-w-0 break-words text-[12.5px] text-muted-foreground">
+                    {m.label}
+                  </dt>
+                  <dd className="min-w-0 break-words text-right font-semibold tabular-nums">
+                    {m.display}
+                    {m.detail && m.unit !== "text" ? (
+                      <small className="ml-1 font-normal text-[var(--adp-faint)]">{m.detail}</small>
+                    ) : null}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          <div className="mt-4 rounded-md border border-dashed border-border bg-card p-2.5 text-xs text-muted-foreground">
+            <b className="font-semibold text-foreground">If the model is unavailable</b>, this panel
+            says &ldquo;AI overview unavailable&rdquo; — every number on this page still renders. The
+            dashboard never depends on the LLM.
+          </div>
         </div>
       </div>
     </Card>
@@ -203,7 +259,7 @@ export function AiOverview({ initial }: { initial?: OverviewComplete } = {}) {
 
 function Narrative({ paragraphs }: { paragraphs: OverviewParagraph[] }) {
   return (
-    <div className="space-y-2.5 text-[13.5px] leading-[1.75] text-[#27272a]">
+    <div className="space-y-2.5 text-[13.5px] leading-[1.75] text-[var(--adp-prose)]">
       {paragraphs.map((para, i) => (
         <p key={i}>
           {para.segments.map((seg, j) => (
@@ -220,7 +276,7 @@ function Segment({ seg }: { seg: OverviewSegment }) {
   // A metric chip: the figure is the Python-computed display, never model text.
   return (
     <span
-      className="mx-px inline-block rounded-full border border-[var(--adp-accent-ring)] bg-[var(--adp-accent-soft)] px-1.5 py-px text-[12px] font-semibold text-[#1d4ed8] tabular-nums"
+      className="mx-px inline-block rounded-full border border-[var(--adp-accent-ring)] bg-[var(--adp-accent-soft)] px-1.5 py-px text-[12px] font-semibold text-[var(--adp-chip-ink)] tabular-nums"
       title={seg.label}
     >
       {seg.display}

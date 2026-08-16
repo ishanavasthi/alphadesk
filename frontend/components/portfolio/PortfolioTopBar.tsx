@@ -1,7 +1,20 @@
 "use client";
 
+import Link from "next/link";
+import { useState } from "react";
+
+import { AppNav } from "@/components/shell/AppNav";
+import { UnlinkDialog } from "@/components/portfolio/UnlinkDialog";
+import { UserMenu } from "@/components/UserMenu";
 import type { PortfolioSummary } from "@/lib/api";
+import { ThemeToggle } from "./ThemeToggle";
 import { Button, Chip } from "./ui";
+
+/** The product surfaces, in the order they are offered everywhere. */
+const NAV_LINKS = [
+  { href: "/portfolio", label: "Portfolio" },
+  { href: "/lab", label: "Lab" },
+];
 
 const LINK_LABEL: Record<PortfolioSummary["link_health"], { text: string; ok: boolean }> = {
   linked: { text: "IND Money · linked", ok: true },
@@ -72,15 +85,21 @@ export function PortfolioTopBar({
   captureState?: CaptureState;
 }) {
   const link = linkHealth ? LINK_LABEL[linkHealth] : null;
+  const [unlinking, setUnlinking] = useState(false);
   // min-height, not height: the actions wrap to a second row at 375px, and a
   // fixed 56px header would let them spill over the page title.
   return (
     <header className="mb-6 flex min-h-14 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border py-2">
-      <span className="font-semibold tracking-[-0.01em]">
+      {/* The dashboard overview *is* this surface's home, so the wordmark walks
+          back to it from a drill-down rather than leaving the app. */}
+      <Link href="/portfolio" className="font-semibold tracking-[-0.01em]">
         alpha<b className="text-[var(--adp-accent)]">Desk</b>
-      </span>
-      <span className="text-[13px] text-muted-foreground">/ Portfolio</span>
+      </Link>
+      {/* Replaces the static "/ Portfolio" breadcrumb: the same "you are here",
+          but the Lab is one click away instead of a typed URL. */}
+      <AppNav links={NAV_LINKS} className="text-[13px]" />
       <span className="flex-1" />
+      <ThemeToggle />
       <Button
         variant="outline"
         size="sm"
@@ -104,8 +123,31 @@ export function PortfolioTopBar({
       >
         ◫ {CAPTURE_LABEL[captureState]}
       </Button>
-      {link ? <Chip tone={link.ok ? "ok" : "warn"}>{link.text}</Chip> : null}
+      {/* The link chip is also where the link is *ended* (issue #13): the status
+          the reader is already looking at is the obvious place to press to
+          disconnect, and it saves inventing a second control for a rare act. */}
+      {link ? (
+        <button
+          type="button"
+          onClick={() => setUnlinking(true)}
+          title="Disconnect IND Money from AlphaDesk"
+          className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Chip tone={link.ok ? "ok" : "warn"}>{link.text}</Chip>
+        </button>
+      ) : null}
+      <UnlinkDialog
+        open={unlinking}
+        onOpenChange={setUnlinking}
+        // The next summary read answers `not_linked`, which is what puts the
+        // Connect gate back up in place of the dashboard.
+        onUnlinked={onRefresh}
+      />
       {demo ? <Chip>Demo data</Chip> : null}
+      {/* "Who are you" — the same flag-gated Clerk slot the Lab bar carries, so
+          signing out and "Delete my data" are reachable without leaving the
+          dashboard. Renders (and downloads) nothing when the flag is off. */}
+      <UserMenu />
     </header>
   );
 }

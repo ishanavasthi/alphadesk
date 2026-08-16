@@ -26,6 +26,13 @@ was asked for, and the whole-portfolio breakdowns the dashboard shows by default
 come off the single ``/portfolio/summary`` snapshot call. Nothing here sweeps a
 grid.
 
+Issue #15 put a **read-through cache** in front of the three expensive reads
+(`services/portfolio_cache.py`): the same questions asked again inside a short
+window are answered from Postgres instead of the source. ``?fresh=1`` — the
+Refresh button — is a true bypass that re-reads and rewrites the row, error
+responses are never cached, and a deployment with no database behaves exactly as
+it did before.
+
 S1 added the two writes on this router — ``POST /portfolio/capture`` and the
 fire-and-forget capture ``/summary`` starts when today's attributed day has no
 row yet — plus a real ``/history``. Both stay behind the same identity as the
@@ -77,6 +84,7 @@ from portfolio.models import (
     derive_pnl,
     is_us_exposure,
 )
+from services import portfolio_cache
 from services.snapshots import (
     attributed_day,
     capture_if_missing,
@@ -91,6 +99,19 @@ from services.snapshots import (
 #: screenshot of this dashboard — the default talks to the operator's real
 #: linked account.
 SOURCE_ENV = "ALPHADESK_PORTFOLIO_SOURCE"
+
+#: Read-through cache windows (issue #15). Both are short enough that a reader
+#: watching the market sees their own moves, and long enough that opening the
+#: dashboard twice does not spend the source's per-minute budget twice. Holdings
+#: get the longer one because a bucket walk is the expensive read — one per asset
+#: type the snapshot reported. `/allocation` has no TTL here: its key carries the
+#: attributed IST day, so it expires by name at the day boundary instead.
+SUMMARY_TTL_SECONDS = 300
+HOLDINGS_TTL_SECONDS = 900
+
+#: `?fresh=1` — the Refresh button. A true bypass: skip the cache read, make the
+#: source call, and write the result back so everyone else gets the new reading.
+FRESH_QUERY = Query(False, description="Bypass the cache and re-read the source.")
 
 _log = logging.getLogger(__name__)
 
@@ -458,21 +479,39 @@ def _breakdown_by(value: str) -> BreakdownBy:
 # --------------------------------------------------------------------------- #
 @router.get("/summary")
 async def summary(
+    fresh: bool = FRESH_QUERY,
     user_id: str = Depends(portfolio_identity),
     connector: PortfolioConnector = Depends(connector_for_request),
     session: Optional[AsyncSession] = Depends(optional_session),
 ) -> dict[str, Any]:
     """Headline totals, the snapshot's four breakdowns, and link health.
 
-    One source call, plus one cheap DB read for ``last_captured_at``.
+    One source call, plus one cheap DB read for ``last_captured_at`` — or, within
+    the cache window, no source call at all (issue #15).
 
     **Also the third net.** If today's attributed day has no snapshot row, this
     fires a capture in the background — after the response is composed, never
     blocking it, and never twice at once (`single_flight`). The two scheduled
     runs are the plan; this is what covers the week GitHub silently disables the
     workflow, because the moment somebody opens the dashboard is the moment the
-    source can still be asked about today.
+    source can still be asked about today. That net hangs off a **real** read: a
+    cache hit made no source call, so it has learned nothing new about today.
     """
+    key = portfolio_cache.summary_key()
+    if not fresh:
+        cached = await portfolio_cache.get(
+            session, user_id, key, max_age=SUMMARY_TTL_SECONDS
+        )
+        if cached is not None:
+            # The one field that is *not* served from the cache. It comes from
+            # this deployment's own database, costs a single indexed read, and is
+            # what the staleness banner is derived from — a capture that landed
+            # since the payload was cached has to show up immediately, or the page
+            # tells someone their history stopped when it did not.
+            captured_at = await _last_captured_at(session, user_id)
+            cached["last_captured_at"] = captured_at.isoformat() if captured_at else None
+            return cached
+
     try:
         health = await connector.link_health(user_id)
         snapshot = await connector.fetch_snapshot(user_id)
@@ -482,7 +521,9 @@ async def summary(
     captured_at = await _last_captured_at(session, user_id)
     if session is not None and _needs_capture(captured_at):
         schedule_capture_if_missing(user_id, connector)
-    return _snapshot_json(snapshot, health.value, captured_at, user_id)
+    payload = _snapshot_json(snapshot, health.value, captured_at, user_id)
+    await portfolio_cache.put(session, user_id, key, payload, as_of=snapshot.as_of)
+    return payload
 
 
 @router.post("/capture")
@@ -531,8 +572,10 @@ async def capture(
 @router.get("/holdings")
 async def holdings(
     asset_type: str = Query(..., description="One of the 16 queryable asset types."),
+    fresh: bool = FRESH_QUERY,
     user_id: str = Depends(portfolio_identity),
     connector: PortfolioConnector = Depends(connector_for_request),
+    session: Optional[AsyncSession] = Depends(optional_session),
 ) -> dict[str, Any]:
     """Rows for **one** asset type.
 
@@ -540,38 +583,74 @@ async def holdings(
     tool, so the caller asks for the buckets its snapshot actually reported
     rather than walking the enum. An asset type the user holds nothing in
     returns ``[]`` — a valid answer, not an error.
+
+    Cached per asset type (issue #15), which is what makes a second visit to
+    Holdings free: one bucket walk is most of the source's per-minute budget.
     """
     parsed = _asset_type(asset_type)
+    key = portfolio_cache.holdings_key(parsed.value)
+    if not fresh:
+        cached = await portfolio_cache.get(
+            session, user_id, key, max_age=HOLDINGS_TTL_SECONDS
+        )
+        if cached is not None:
+            return cached
     try:
         rows = await connector.fetch_holdings(user_id, parsed)
     except PortfolioSourceError as exc:
         _fail(exc)
-    return {
+    payload = {
         "asset_type": parsed.value,
         "currency": CURRENCY,
         "holdings": [_holding_json(h) for h in rows],
     }
+    await portfolio_cache.put(
+        session,
+        user_id,
+        key,
+        payload,
+        as_of=rows[0].as_of if rows else None,
+    )
+    return payload
 
 
 @router.get("/allocation")
 async def allocation(
     asset_type: str = Query(..., description="One of the 16 queryable asset types."),
     by: str = Query(..., description="assets | sector | market_cap"),
+    fresh: bool = FRESH_QUERY,
     user_id: str = Depends(portfolio_identity),
     connector: PortfolioConnector = Depends(connector_for_request),
+    session: Optional[AsyncSession] = Depends(optional_session),
 ) -> dict[str, Any]:
     """One ``(asset_type, by)`` breakdown, fetched lazily.
 
     **Never sweep the grid.** 16 asset types x 3 breakdowns is 48 calls at a
     cost of 2 each against a 15/min per-tool budget — it trips after seven.
+
+    Cached **for the attributed IST day** (issue #15) rather than on a clock TTL:
+    a drill-down is a composition, which moves when the market moves and not
+    between two page loads, and one that has been read once today should be
+    instant for the rest of it. The day is in the cache key, so the row expires
+    by name — through the same helper capture attribution uses, never a UTC
+    "today".
     """
     parsed = _asset_type(asset_type)
     parsed_by = _breakdown_by(by)
+    key = portfolio_cache.allocation_key(
+        parsed.value, parsed_by.value, attributed_day(datetime.now(timezone.utc))
+    )
+    if not fresh:
+        cached = await portfolio_cache.get(session, user_id, key)
+        if cached is not None:
+            return cached
     try:
         result = await connector.fetch_allocation(user_id, parsed, parsed_by)
     except PortfolioSourceError as exc:
         _fail(exc)
-    return _allocation_json(result)
+    payload = _allocation_json(result)
+    await portfolio_cache.put(session, user_id, key, payload, as_of=result.as_of)
+    return payload
 
 
 @router.get("/history")

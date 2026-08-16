@@ -213,7 +213,8 @@ async def api(test_database_url: str, monkeypatch: pytest.MonkeyPatch):
             await conn.execute(
                 text(
                     "TRUNCATE users, broker_links, oauth_pending, snapshot_days, "
-                    "snapshot_holdings, snapshot_raw RESTART IDENTITY CASCADE"
+                    "snapshot_holdings, snapshot_raw, portfolio_cache "
+                    "RESTART IDENTITY CASCADE"
                 )
             )
         await engine.dispose()

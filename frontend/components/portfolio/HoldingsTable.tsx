@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { PortfolioHolding } from "@/lib/api";
+import { HoldingDetailDialog } from "./HoldingDetailDialog";
 import { inr, inrSigned, num, pctSigned, toneClass, typeLabel, units } from "./format";
 import { Badge } from "./ui";
 
@@ -55,10 +56,27 @@ function Unknown() {
  * A row whose basis is unknown shows `—`; a row whose basis is known and whose
  * value really is zero shows an honest −100%. Those two are different facts and
  * the table refuses to render them the same way.
+ *
+ * Every row is also a button into `HoldingDetailDialog` — the seven columns are
+ * what fits, not what the source returned, and the rest of the position (units,
+ * average cost, identifiers, its share of the portfolio) belongs one click away
+ * rather than nowhere.
+ *
+ * `portfolioValue` is the snapshot's own current value, passed in rather than
+ * read from a context: this table is also what the public `/demo` renders, and
+ * that page must keep working with no provider and no network above it. Omitting
+ * it renders the share as a labeled gap instead of a made-up denominator.
  */
-export function HoldingsTable({ rows }: { rows: PortfolioHolding[] }) {
+export function HoldingsTable({
+  rows,
+  portfolioValue = null,
+}: {
+  rows: PortfolioHolding[];
+  portfolioValue?: number | null;
+}) {
   const [sortKey, setSortKey] = useState<SortKey>("current_value");
   const [dir, setDir] = useState<-1 | 1>(-1);
+  const [selected, setSelected] = useState<PortfolioHolding | null>(null);
 
   const sorted = useMemo(() => {
     return [...rows].sort((a, b) => {
@@ -122,7 +140,19 @@ export function HoldingsTable({ rows }: { rows: PortfolioHolding[] }) {
             const pnl = num(row.pnl);
             const pnlPct = num(row.pnl_pct);
             return (
-              <tr key={`${row.source}:${row.external_id}`} className="hover:bg-background">
+              <tr
+                key={`${row.source}:${row.external_id}`}
+                role="button"
+                tabIndex={0}
+                aria-label={`Details for ${row.name || row.symbol || row.external_id}`}
+                onClick={() => setSelected(row)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  setSelected(row);
+                }}
+                className="cursor-pointer hover:bg-background focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--adp-accent)]"
+              >
                 <td className="border-b border-[var(--adp-hairline)] p-2.5 text-[13px]">
                   <span className="font-medium">{row.name || row.symbol || row.external_id}</span>
                   {row.us_exposure ? (
@@ -165,6 +195,11 @@ export function HoldingsTable({ rows }: { rows: PortfolioHolding[] }) {
           })}
         </tbody>
       </table>
+      <HoldingDetailDialog
+        holding={selected}
+        portfolioValue={portfolioValue}
+        onClose={() => setSelected(null)}
+      />
     </div>
   );
 }

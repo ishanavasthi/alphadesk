@@ -10,6 +10,23 @@ const Dialog = DialogPrimitive.Root;
 const DialogTrigger = DialogPrimitive.Trigger;
 const DialogPortal = DialogPrimitive.Portal;
 
+/**
+ * Where a dialog portals to (issue #22).
+ *
+ * Radix defaults to `document.body`, which on the dashboard means the content
+ * escapes the `[data-adp]` wrapper and falls back to the terminal palette. So
+ * we look for that wrapper and portal into it when it exists — the rule is
+ * surface-aware by construction: on `/portfolio` overlay and content land
+ * inside the scoped tokens and follow `data-adp-theme` flips even while open;
+ * on the Lab and marketing pages there is no `#adp-root`, `undefined` means
+ * body, and nothing changes. Resolved per render (dialogs mount on
+ * interaction) and never on the server.
+ */
+function portalContainer(): HTMLElement | undefined {
+  if (typeof document === "undefined") return undefined;
+  return document.getElementById("adp-root") ?? undefined;
+}
+
 const DialogOverlay = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Overlay>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>
@@ -29,7 +46,7 @@ const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
 >(({ className, children, ...props }, ref) => (
-  <DialogPortal>
+  <DialogPortal container={portalContainer()}>
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}

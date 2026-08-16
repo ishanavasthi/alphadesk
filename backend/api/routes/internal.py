@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routes.portfolio import connector_factory as connector_factory_dep
 from portfolio.connectors import PortfolioConnector
+from services import portfolio_cache
 from services.snapshots import (
     RAW_RETENTION_DAYS,
     capture_all,
@@ -171,15 +172,27 @@ async def prune(
     ),
     session: Optional[AsyncSession] = Depends(optional_session),
 ) -> dict[str, Any]:
-    """Drop raw payloads past their retention window.
+    """Drop raw payloads past their retention window, and stale cache rows.
 
-    Only `snapshot_raw`. The daily totals and normalized holdings are kept
-    forever — they are small, they are the actual history, and unlike the raw
-    payloads they can never be re-acquired.
+    Only `snapshot_raw` and `portfolio_cache`. The daily totals and normalized
+    holdings are kept forever — they are small, they are the actual history, and
+    unlike the raw payloads they can never be re-acquired.
+
+    The cache (issue #15) is swept on its own two-day window rather than on
+    ``days``: it is derived data whose rows are worthless the moment they are
+    outside their read window, and deleting one costs at most a single source
+    call the next time somebody asks.
     """
-    deleted = await prune_raw(_require_database(session), days=days)
-    log.info("prune: deleted %d snapshot_raw rows older than %d days", deleted, days)
-    return {"deleted": deleted, "days": days}
+    database = _require_database(session)
+    deleted = await prune_raw(database, days=days)
+    cache_deleted = await portfolio_cache.prune(database)
+    log.info(
+        "prune: deleted %d snapshot_raw rows older than %d days, %d cache rows",
+        deleted,
+        days,
+        cache_deleted,
+    )
+    return {"deleted": deleted, "days": days, "cache_deleted": cache_deleted}
 
 
 __all__ = ["CRON_SECRET_ENV", "CRON_SECRET_HEADER", "router"]

@@ -18,6 +18,14 @@ lives on a page that has already decided the source is reachable.
 
 The graph is invoked with tracing off (`portfolio_runnable_config`), so holdings
 reasoning never reaches LangSmith.
+
+**The narrative is written at most once per IST day** (issue #14). The first
+overview of the day runs the agents and saves its completed payload in the
+`portfolio_cache` table under ``overview:<attributed IST day>``; every later
+visit that day — a refresh, a re-login, a walk back from the Lab — replays that
+saved payload and spends nothing. Only the Regenerate button (``?force=1``)
+re-runs the agents, and it overwrites the day's saved copy. A degraded outcome is
+returned but never saved, so a bad minute cannot lock the day.
 """
 
 from __future__ import annotations
@@ -26,9 +34,10 @@ import asyncio
 import json
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,7 +55,8 @@ from graph.portfolio_graph import overview_stream
 from portfolio.connectors import PortfolioConnector
 from portfolio.errors import PortfolioSourceError
 from portfolio.models import AssetType, PortfolioSnapshot
-from services.snapshots import history_points, optional_session
+from services import portfolio_cache
+from services.snapshots import attributed_day, history_points, optional_session
 
 _log = logging.getLogger(__name__)
 
@@ -63,9 +73,24 @@ _SSE_HEADERS = {
     "X-Accel-Buffering": "no",
 }
 
+#: `?force=1` — the Regenerate button, and the only thing that spends. Everything
+#: else that opens the dashboard today replays the day's saved narrative.
+FORCE_QUERY = Query(False, description="Re-run the agents and overwrite today's saved overview.")
+
 
 def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+def _overview_key(day) -> str:
+    """The saved-overview key for one attributed IST day.
+
+    The day comes from `services.snapshots.attributed_day`, the one helper that
+    owns calendar-day attribution here — a key built from UTC "today" would roll
+    the narrative over at 05:30 IST, mid-evening for nobody and mid-morning for
+    the reader.
+    """
+    return f"overview:{day.isoformat()}"
 
 
 def _llm_configured() -> bool:
@@ -134,6 +159,7 @@ async def _history(session: Optional[AsyncSession], user_id: str) -> list[Histor
 
 @router.post("/overview")
 async def overview(
+    force: bool = FORCE_QUERY,
     user_id: str = Depends(portfolio_identity),
     connector: PortfolioConnector = Depends(connector_for_request),
     session: Optional[AsyncSession] = Depends(optional_session),
@@ -143,7 +169,30 @@ async def overview(
     Source failures are raised **now** (before the stream opens) as the same
     typed HTTP errors `/portfolio/*` returns. Once metrics exist, the response is
     a stream that always completes — degraded when the model cannot run.
+
+    Unless ``force`` is set, a narrative already written today is replayed
+    instead: the whole payload comes back as it was saved, so the metric chips in
+    the prose still match the rail beside them. Without a database nothing is
+    ever saved and every visit streams live, exactly as before issue #14.
     """
+    day = attributed_day(datetime.now(timezone.utc))
+    saved_key = _overview_key(day)
+
+    # --- 0. Today's narrative already exists ⇒ replay it, spend nothing -------
+    if not force:
+        saved = await portfolio_cache.get(session, user_id, saved_key)
+        if saved is not None:
+            payload = dict(saved)
+            payload["saved"] = True
+
+            async def saved_stream():
+                yield _sse("start", {"status": "running", "agents": [name for name, _, _ in _agent_names()]})
+                yield _sse("complete", payload)
+
+            return StreamingResponse(
+                saved_stream(), media_type="text/event-stream", headers=_SSE_HEADERS
+            )
+
     # --- 1. Verified data → metrics (raises typed HTTP on a source failure) ---
     try:
         snapshot = await connector.fetch_snapshot(user_id)
@@ -205,17 +254,20 @@ async def overview(
             yield _sse("complete", _complete(metrics_payload, degraded=True, reason="error"))
             return
 
-        yield _sse(
-            "complete",
-            _complete(
-                metrics_payload,
-                degraded=False,
-                reason=None,
-                narrative=narrative,
-                scripted=scripted,
-                agents=agents_seen,
-            ),
+        payload = _complete(
+            metrics_payload,
+            degraded=False,
+            reason=None,
+            narrative=narrative,
+            scripted=scripted,
+            agents=agents_seen,
         )
+        # Only a clean run is saved. A degraded one returned above never reaches
+        # here, so a minute without the model cannot claim the rest of the day.
+        # The request-scoped session outlives the stream (FastAPI closes yield
+        # dependencies after the response is sent), so this write is in time.
+        await portfolio_cache.put(session, user_id, saved_key, payload)
+        yield _sse("complete", payload)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
