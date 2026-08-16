@@ -66,9 +66,9 @@ export function ResultsDashboard({ query, onReset }: { query: string; onReset: (
       {
         onStart: (e) => {
           setRunId(e.run_id);
-          // Reflect the run in the URL so a refresh reopens it at /a/<run_id>.
+          // Reflect the run in the URL so a refresh reopens it at /lab/a/<run_id>.
           if (typeof window !== "undefined") {
-            window.history.replaceState(null, "", `/a/${e.run_id}`);
+            window.history.replaceState(null, "", `/lab/a/${e.run_id}`);
           }
         },
         onUpdate: (e: AgentUpdate) => {

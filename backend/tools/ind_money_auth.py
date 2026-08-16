@@ -69,6 +69,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import contextvars
 import logging
 import os
 import secrets
@@ -103,6 +104,30 @@ SOURCE = "ind_money"
 #: dev runs as, and the ``user_id`` the operator's pre-F3 rows carry until
 #: `services.adoption` moves them onto their Clerk id.
 LOCAL_USER_ID = "local"
+
+#: The user a Lab run (`POST /analyze`, card F4) is executing as. The research
+#: pipeline's LangGraph tools ask the MCP for *market* data with no user in
+#: their signature, so the caller's identity is carried here instead of being
+#: threaded through every tool. ``analyze()`` binds it for the life of one run;
+#: `ambient_user_id()` reads it, so those tool calls mint from the caller's own
+#: ``AuthStore`` rather than any process-wide or "whoever linked first" grant.
+#: A ContextVar (not a module global) so concurrent runs never see each other's
+#: identity — each asyncio task inherits a snapshot of the context it was
+#: spawned in.
+_run_user: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "alphadesk_run_user", default=None
+)
+
+
+def bind_run_user(user_id: str) -> contextvars.Token:
+    """Bind the current Lab run's identity; pass the token to :func:`unbind_run_user`."""
+    return _run_user.set(user_id)
+
+
+def unbind_run_user(token: contextvars.Token) -> None:
+    """Undo a :func:`bind_run_user`, restoring the previous binding."""
+    _run_user.reset(token)
+
 
 #: Both scopes the server advertises in ``scopes_supported`` (C2 §Q5).
 #: ``market:read`` is what the research pipeline needs and ``portfolio:read``
@@ -872,21 +897,35 @@ async def logout(user_id: Optional[str] = None) -> Dict[str, object]:
 
 
 async def ambient_user_id() -> str:
-    """Whose credentials the **legacy v1 research pipeline** runs on.
+    """Whose credentials a userless MCP call runs on.
 
-    `tools/ind_money.py` and `POST /analyze` predate identity: they call the MCP
-    for *market* data with no user in scope. Rather than reintroduce a process
-    singleton for them, they resolve one identity explicitly:
+    `tools/ind_money.py`'s market-data tools take no user in their signature —
+    they ask the MCP for *quotes and movers*, not for anybody's holdings — so
+    when a Lab run drives them the caller's identity has to reach them some other
+    way. That way is :data:`_run_user`, bound by ``analyze()`` for the life of
+    one run (card F4): a run bound to a user resolves to that user, so its MCP
+    calls mint from the caller's own ``AuthStore``.
+
+    With no run bound (a direct tool call, a REPL), it falls back to:
 
     - single-tenant dev  -> ``"local"``, the operator's own machine;
     - otherwise          -> the operator's Clerk id if `ALPHADESK_OPERATOR_EMAIL`
       names a user that has signed in (the same identity adoption moved the
       pre-F3 data onto), else ``"local"``.
 
-    It is **never** "whoever linked first". A user who is not the operator can
-    never become the ambient identity, which is the property that matters: the
-    research pipeline must not silently spend a stranger's grant.
+    It is **never** "whoever linked first". A non-operator can only ever become
+    the resolved identity by being the bound caller of their *own* run — never
+    by default — which is the property that matters: a run must not silently
+    spend a stranger's grant.
+
+    **`POST /analyze` no longer relies on the fallback.** As of F4 the endpoint
+    verifies a real per-user identity, gates on that user's link, and binds it
+    here before the graph runs. The fallback survives only for genuinely
+    userless callers of `tools/ind_money.py`.
     """
+    bound = _run_user.get()
+    if bound:
+        return bound
     if single_tenant_mode():
         return LOCAL_USER_ID
     from services.adoption import operator_user_id
@@ -1265,6 +1304,7 @@ __all__ = [
     "ambient_user_id",
     "auth_status",
     "begin_login",
+    "bind_run_user",
     "complete_login",
     "database_configured",
     "discover",
@@ -1276,4 +1316,5 @@ __all__ = [
     "reset_discovery",
     "revoke_token",
     "single_tenant_mode",
+    "unbind_run_user",
 ]

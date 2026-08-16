@@ -31,9 +31,10 @@ export default function RootLayout({
               looking at it?". Its hook is `useIndMoney` for that reason. */}
           <AuthProvider>
             {/* The terminal chrome belongs to the Bloomberg-styled research desk
-                (`/`, `/a/[id]`). The D1 portfolio surface renders its own shadcn
-                top bar, so the two must not stack. Interim: card U1 takes
-                ownership of one app shell and deletes this component. */}
+                — the Lab (`/lab`, `/lab/a/[id]`). The D1 portfolio surface
+                renders its own shadcn top bar, so the two must not stack.
+                Interim: card U1 takes ownership of one app shell and deletes
+                this component. */}
             <TerminalChrome />
             {children}
           </AuthProvider>

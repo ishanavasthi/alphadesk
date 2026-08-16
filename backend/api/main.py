@@ -37,8 +37,14 @@ from pydantic import BaseModel, Field
 # before the graph and agents read them.
 load_dotenv()
 
+from sqlalchemy import delete as sa_delete  # noqa: E402
+from sqlalchemy import select  # noqa: E402
+from sqlalchemy.dialects.postgresql import insert as pg_insert  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
+
 from api.routes.internal import router as internal_router  # noqa: E402
 from api.routes.portfolio import router as portfolio_router  # noqa: E402
+from db.models import Watchlist, utcnow  # noqa: E402
 from graph.graph import alphaDesk_graph, resume_after_approval  # noqa: E402
 from graph.state import PortfolioState  # noqa: E402
 from api.deps import (  # noqa: E402
@@ -53,9 +59,12 @@ from tools.ind_money_auth import (  # noqa: E402
     OAuthStateError,
     auth_status,
     begin_login,
+    bind_run_user,
     complete_login,
+    ensure_user_row,
     logout,
     single_tenant_mode,
+    unbind_run_user,
 )
 
 # Where IND Money redirects after login. Must be reachable in the browser and
@@ -102,34 +111,164 @@ app.include_router(internal_router)
 
 
 # --------------------------------------------------------------------------- #
-# In-memory run registry (swap for a store/DB in production)
+# In-memory Lab state — per user, ephemeral by decision (card F4)
 # --------------------------------------------------------------------------- #
-# run_id -> {"run_uuid": UUID, "query": str, "status": str, "action_id": str|None, ...}
+# A Lab run is a labelled *simulation*, so it gets no persistence layer: the
+# registry below lives in memory and is lost on a backend restart (a paused
+# approval lost that way is an accepted trade — the UI says so). What it does get
+# is **per-user keying** — every record carries the `user_id` it belongs to, and
+# every read is scoped to the caller, so one user can never see or act on
+# another's run. The **one** durable exception is the paper watchlist, which
+# persists to the `watchlist` table (see `_persist_watchlist` / `read_watchlist`).
+#
+# run_id -> {"run_uuid": UUID, "user_id": str, "query": str, "status": str, ...}
 _RUNS: Dict[str, Dict[str, Any]] = {}
-# action_id -> run_id (the pending approval batch a /approve call targets)
+# action_id -> run_id (the pending approval batch a /approve call targets).
 _ACTIONS: Dict[str, str] = {}
-# symbol -> {symbol, run_id, query, added_at}; the cumulative paper watchlist
-# across runs (in-memory; swap for a store in production).
-_PAPER_WATCHLIST: Dict[str, Dict[str, Any]] = {}
-# run_id -> full analysis payload, so a run survives a browser refresh and can be
-# reopened at /a/<run_id> (in-memory; swap for a store to survive backend restart).
+# run_id -> full analysis payload (carries `user_id`), so a run survives a
+# browser refresh and can be reopened at /lab/a/<run_id> until the process bounces.
 _ANALYSES: Dict[str, Dict[str, Any]] = {}
+# Fallback paper watchlist for a deployment with no DB: user_id -> symbol -> record.
+# When `DATABASE_URL` is set the `watchlist` table is the source of truth and this
+# is untouched. Single-tenant local dev with no Postgres keeps working through it.
+_PAPER_WATCHLIST: Dict[str, Dict[str, Dict[str, Any]]] = {}
+
+#: Columns of a persisted watchlist row, in the order the API returns them.
+_WATCHLIST_FIELDS = (
+    "symbol",
+    "company",
+    "thesis",
+    "confidence",
+    "action",
+    "risk_verdict",
+    "query",
+    "run_id",
+    "added_at",
+)
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _record_watchlist(run_id: str, symbols: list) -> None:
+def _owned_run(run_id: str, user_id: str, registry: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """A run/analysis record the caller owns, or 404 — **never 403**.
+
+    A caller who is not the owner is told the run does not exist, not that it
+    exists and is forbidden: a 403 leaks that the id is real (V2_PLAN §7).
+    """
+    record = registry.get(run_id)
+    if record is None or record.get("user_id") != user_id:
+        raise HTTPException(status_code=404, detail="Unknown run")
+    return record
+
+
+def _decision_records(final: PortfolioState, run_id: str, user_id: str) -> list:
+    """Denormalized watchlist rows for the symbols a run staged.
+
+    Each row freezes the decision as it stood at approval — company, thesis,
+    confidence, action, risk verdict — so it stays readable after the (in-memory)
+    run is gone. `run_id` rides along as an opaque, non-FK reference.
+    """
+    recs = {r.symbol: r for r in final.analyst_recommendations}
+    risks = {a.symbol: a for a in final.risk_assessments}
+    names = {s.symbol: s.name for s in final.scan_results if s.name}
     query = _RUNS.get(run_id, {}).get("query")
-    for sym in symbols or []:
-        if sym not in _PAPER_WATCHLIST:
-            _PAPER_WATCHLIST[sym] = {
+    rows = []
+    for sym in final.paper_watchlist or []:
+        rec = recs.get(sym)
+        risk = risks.get(sym)
+        rows.append(
+            {
+                "user_id": user_id,
                 "symbol": sym,
-                "run_id": run_id,
+                "company": names.get(sym),
+                "thesis": (rec.thesis or rec.bull_thesis) if rec else None,
+                "confidence": rec.confidence if rec else None,
+                "action": rec.action if rec else None,
+                "risk_verdict": risk.decision if risk else None,
                 "query": query,
-                "added_at": _now_iso(),
+                "run_id": run_id,
             }
+        )
+    return rows
+
+
+async def _persist_watchlist(
+    session: Optional[AsyncSession], user_id: str, rows: list
+) -> None:
+    """Add ``rows`` to ``user_id``'s watchlist. First decision per symbol wins.
+
+    With a DB, upserts into the `watchlist` table (`ON CONFLICT DO NOTHING` on the
+    `(user_id, symbol)` PK, so a stock already held keeps its original decision).
+    With no DB, writes the same records into the in-memory per-user fallback.
+    """
+    if not rows:
+        return
+    if session is None:
+        book = _PAPER_WATCHLIST.setdefault(user_id, {})
+        for row in rows:
+            book.setdefault(
+                row["symbol"], {**row, "added_at": _now_iso()}
+            )
+        return
+
+    # The FK onto `users` must resolve — a JWT caller was inserted by
+    # `register_identity`, but a single-tenant `"local"` caller may not have a
+    # row yet.
+    await ensure_user_row(session, user_id)
+    for row in rows:
+        # `added_at` is filled here, not by the model default: a Core insert
+        # against the table never sees `default_factory`, and the column is NOT
+        # NULL — omitting it is an IntegrityError, not a silent wrong time.
+        values = {"added_at": utcnow(), **row}
+        await session.execute(
+            pg_insert(Watchlist.__table__)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=["user_id", "symbol"])
+        )
+    await session.commit()
+
+
+async def read_watchlist(
+    session: Optional[AsyncSession], user_id: str
+) -> list:
+    """``user_id``'s watchlist, newest first, as JSON-ready dicts."""
+    if session is None:
+        items = list(_PAPER_WATCHLIST.get(user_id, {}).values())
+    else:
+        result = await session.execute(
+            select(Watchlist).where(Watchlist.user_id == user_id)
+        )
+        items = []
+        for row in result.scalars().all():
+            item = {f: getattr(row, f) for f in _WATCHLIST_FIELDS}
+            item["added_at"] = row.added_at.isoformat() if row.added_at else None
+            items.append(item)
+    for item in items:
+        rid = item.get("run_id")
+        analysis = _ANALYSES.get(rid) if rid else None
+        # "View original run" resolves only while the run is still in memory and
+        # owned by this caller; otherwise the frontend shows "no longer available".
+        item["run_available"] = bool(analysis and analysis.get("user_id") == user_id)
+    items.sort(key=lambda x: x.get("added_at") or "", reverse=True)
+    return items
+
+
+async def _remove_watchlist(
+    session: Optional[AsyncSession], user_id: str, symbol: str
+) -> bool:
+    """Drop one symbol from ``user_id``'s watchlist; True if a row was removed."""
+    if session is None:
+        removed = _PAPER_WATCHLIST.get(user_id, {}).pop(symbol, None) is not None
+        return removed
+    result = await session.execute(
+        sa_delete(Watchlist).where(
+            Watchlist.user_id == user_id, Watchlist.symbol == symbol
+        )
+    )
+    await session.commit()
+    return bool(result.rowcount or 0)
 
 _SSE_HEADERS = {
     "Cache-Control": "no-cache",
@@ -313,6 +452,34 @@ async def _link_identity(
     return await register_identity(session, claims)
 
 
+async def _lab_identity(
+    authorization: Optional[str] = Header(default=None),
+    session: Optional[AsyncSession] = Depends(optional_session),
+) -> str:
+    """Whose Lab run/state this is. **JWT only** — no ambient path (card F4).
+
+    Every Lab endpoint (`/analyze`, `/approve`, `/analyses`, `/analysis/{id}`,
+    `/watchlist`, `/status/{id}`) runs under a real per-user identity. This is
+    the ambient path F3 left open being closed: `POST /analyze` used to run on
+    `ambient_user_id()` — the operator, ungated — so an anonymous request burned
+    Groq and read the operator's IND Money grant. Now a caller with no verified
+    identity has no Lab, and gets a 401.
+
+    The one exception is single-tenant dev (`ALPHADESK_SINGLE_TENANT=1`, the
+    operator's own machine), which has no Clerk instance to mint a token from and
+    runs as ``"local"`` — the same identity its broker link and pre-F3 data are
+    keyed under. There is **no** interim admin-secret path here (unlike
+    `/portfolio/*`): an admin-header Lab run would be exactly the unowned,
+    ambient run this card removes.
+    """
+    if not authorization and single_tenant_mode():
+        return LOCAL_USER_ID
+    claims = await asyncio.to_thread(verify_token, bearer_token(authorization))
+    if session is None:
+        return str(claims["sub"])
+    return await register_identity(session, claims)
+
+
 async def _status_identity(
     authorization: Optional[str] = Header(default=None),
     x_alphadesk_admin_secret: Optional[str] = Header(default=None),
@@ -424,34 +591,43 @@ async def auth_callback_endpoint(
 
 
 @app.post("/analyze")
-async def analyze(body: AnalyzeRequest) -> StreamingResponse:
-    """Run the research graph, streaming agent updates as Server-Sent Events.
+async def analyze(
+    body: AnalyzeRequest,
+    user_id: str = Depends(_lab_identity),
+) -> StreamingResponse:
+    """Run the research graph **as the caller**, streaming updates as SSE.
 
     The stream ends with a ``complete`` event carrying the analyst
     recommendations and risk assessments. If anything passed risk, the run pauses
     at the human-in-the-loop gate and the event includes an ``action_id`` to pass
     to /approve.
 
-    Refuses with 409 when IND Money is not connected: every agent downstream of
-    the Scanner is fed by the MCP, so an unauthenticated run can only produce an
-    empty "0 candidates" pipeline that looks like a real (but useless) result.
+    Two gates, both per user (card F4 — this is the last ambient path F3 left
+    open, now closed):
 
-    **NOT per-user yet — card F4 owns this.** `/analyze` and the rest of the Lab
-    endpoints on this module are still ungated and still run on the *ambient*
-    identity (`ind_money_auth.ambient_user_id()`: the operator in production,
-    `"local"` in single-tenant dev — never "whoever linked first"). F3 stopped
-    short of them on purpose: threading a `user_id` through the graph, the
-    in-memory run registry and the paper watchlist is F4's whole job, and half
-    of it here would have been a second identity path to keep in sync. Ledgered
-    as REQUIRED in F4 and in the L1 ambient-removal checklist.
+    - **Identity is required.** `_lab_identity` 401s a request with no verified
+      Clerk token (single-tenant dev links as ``"local"``). There is no ambient
+      fallback and no admin-secret path: a run is always somebody's.
+    - **That somebody must be linked.** `auth_status(user_id)` is checked, not the
+      process's ambient link. An unlinked caller gets a **409** telling them to
+      link their account — every agent downstream of the Scanner is fed by the
+      MCP, so an unlinked run can only produce an empty "0 candidates" pipeline
+      that looks like a real (but useless) result, *and* running one would spend
+      whichever grant the ambient path resolved to.
+
+    The verified `user_id` is stamped onto `PortfolioState` and bound for the life
+    of the run (`bind_run_user`), so the pipeline's IND Money MCP calls mint from
+    *this* user's `AuthStore` — never a process-wide or "whoever linked first"
+    grant.
     """
-    status_now = await auth_status()
+    status_now = await auth_status(user_id)
     if not status_now.get("authenticated"):
         raise HTTPException(
             status_code=409,
             detail=(
-                "IND Money is not connected. Connect IND Money first - the "
-                "scanner has no market data without it."
+                "Link your IND Money account to run the Lab. The scanner reads "
+                "NSE market data through your IND Money connection and has none "
+                "without it."
             ),
         )
 
@@ -459,6 +635,7 @@ async def analyze(body: AnalyzeRequest) -> StreamingResponse:
     run_id = str(run_uuid)
     _RUNS[run_id] = {
         "run_uuid": run_uuid,
+        "user_id": user_id,
         "query": body.query,
         "status": "running",
         "action_id": None,
@@ -466,9 +643,13 @@ async def analyze(body: AnalyzeRequest) -> StreamingResponse:
 
     async def event_stream():
         config = _trace_config(run_id, run_uuid)
+        # Bind the caller's identity for the run so every userless MCP tool call
+        # the graph makes mints from this user's AuthStore. A ContextVar, so
+        # concurrent runs never cross; reset in `finally` so it never leaks.
+        token = bind_run_user(user_id)
         yield _sse("start", {"run_id": run_id, "status": "running"})
         try:
-            initial = PortfolioState(user_query=body.query)
+            initial = PortfolioState(user_query=body.query, user_id=user_id)
             async for chunk in alphaDesk_graph.astream(initial, config, stream_mode="updates"):
                 for node, payload in chunk.items():
                     if node.startswith("__"):  # skip interrupt/control markers
@@ -493,6 +674,7 @@ async def analyze(body: AnalyzeRequest) -> StreamingResponse:
 
             _ANALYSES[run_id] = {
                 "run_id": run_id,
+                "user_id": user_id,
                 "query": body.query,
                 "status": status,
                 "awaiting_approval": awaiting,
@@ -520,28 +702,48 @@ async def analyze(body: AnalyzeRequest) -> StreamingResponse:
             _RUNS[run_id]["status"] = "error"
             _RUNS[run_id]["error"] = str(exc)
             yield _sse("error", {"run_id": run_id, "error": str(exc)})
+        finally:
+            unbind_run_user(token)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
 
 @app.post("/approve")
-async def approve(body: ApproveRequest) -> Dict[str, Any]:
-    """Resume a paused run after the human decision.
+async def approve(
+    body: ApproveRequest,
+    user_id: str = Depends(_lab_identity),
+    session: Optional[AsyncSession] = Depends(optional_session),
+) -> Dict[str, Any]:
+    """Resume a paused run after the human decision — **only the caller's own**.
 
     approved=True  -> Execution stages PASS stocks into the paper watchlist and
                       finalizes them into approved_actions (placing real orders
-                      only if a BrokerAdapter is configured).
+                      only if a BrokerAdapter is configured). The approved stocks
+                      are persisted to the caller's `watchlist` table as
+                      denormalized decision records.
     approved=False -> the staged batch is abandoned; nothing is added to the
                       paper watchlist. rejection_reason is recorded.
+
+    Resolving the action to a run the caller does not own answers **404**, never
+    403: an id that maps to someone else's run is, to this caller, simply unknown.
     """
     run_id = _ACTIONS.get(body.action_id) or (body.action_id if body.action_id in _RUNS else None)
     if run_id is None:
         raise HTTPException(status_code=404, detail="Unknown action_id")
+    _owned_run(run_id, user_id, _RUNS)
 
     if body.approved:
-        final = await resume_after_approval(thread_id=run_id, approved=True)
+        # The graph's Execution node mints from the caller's AuthStore for the
+        # resume, exactly as the run did — bind the same identity.
+        token = bind_run_user(user_id)
+        try:
+            final = await resume_after_approval(thread_id=run_id, approved=True)
+        finally:
+            unbind_run_user(token)
         _RUNS[run_id]["status"] = "completed"
-        _record_watchlist(run_id, final.paper_watchlist)
+        await _persist_watchlist(
+            session, user_id, _decision_records(final, run_id, user_id)
+        )
         a = _ANALYSES.get(run_id)
         if a:
             a.update(
@@ -569,8 +771,10 @@ async def approve(body: ApproveRequest) -> Dict[str, Any]:
 
 
 @app.get("/analyses")
-async def list_analyses() -> Dict[str, Any]:
-    """List stored analyses (most recent first)."""
+async def list_analyses(
+    user_id: str = Depends(_lab_identity),
+) -> Dict[str, Any]:
+    """List **the caller's** stored analyses (most recent first)."""
     items = sorted(
         (
             {
@@ -581,6 +785,7 @@ async def list_analyses() -> Dict[str, Any]:
                 "count": len(a.get("analyst_recommendations", [])),
             }
             for a in _ANALYSES.values()
+            if a.get("user_id") == user_id
         ),
         key=lambda x: x.get("created_at") or "",
         reverse=True,
@@ -589,36 +794,49 @@ async def list_analyses() -> Dict[str, Any]:
 
 
 @app.get("/analysis/{run_id}")
-async def get_analysis(run_id: str) -> Dict[str, Any]:
-    """Return the full stored analysis for a run, for the /a/<run_id> view."""
-    analysis = _ANALYSES.get(run_id)
-    if analysis is None:
-        raise HTTPException(status_code=404, detail="Unknown analysis")
-    return analysis
+async def get_analysis(
+    run_id: str,
+    user_id: str = Depends(_lab_identity),
+) -> Dict[str, Any]:
+    """The caller's full stored analysis for a run, for the /lab/a/<run_id> view.
+
+    404 both when the run never existed and when it belongs to someone else — a
+    caller cannot tell a stranger's run from a missing one. A watchlist row's
+    opaque `run_id` that no longer resolves (the process bounced) also 404s here,
+    which is the "this run is no longer available" the frontend renders.
+    """
+    return _owned_run(run_id, user_id, _ANALYSES)
 
 
 @app.get("/watchlist")
-async def get_watchlist() -> Dict[str, Any]:
-    """Return the cumulative paper watchlist (stocks approved across runs)."""
-    items = sorted(
-        _PAPER_WATCHLIST.values(), key=lambda x: x.get("added_at", ""), reverse=True
-    )
+async def get_watchlist(
+    user_id: str = Depends(_lab_identity),
+    session: Optional[AsyncSession] = Depends(optional_session),
+) -> Dict[str, Any]:
+    """The caller's cumulative paper watchlist (persisted; survives a restart)."""
+    items = await read_watchlist(session, user_id)
     return {"count": len(items), "items": items}
 
 
 @app.delete("/watchlist/{symbol}")
-async def remove_from_watchlist(symbol: str) -> Dict[str, Any]:
-    """Remove a symbol from the paper watchlist."""
-    removed = _PAPER_WATCHLIST.pop(symbol, None) is not None
-    return {"count": len(_PAPER_WATCHLIST), "symbol": symbol, "removed": removed}
+async def remove_from_watchlist(
+    symbol: str,
+    user_id: str = Depends(_lab_identity),
+    session: Optional[AsyncSession] = Depends(optional_session),
+) -> Dict[str, Any]:
+    """Remove a symbol from **the caller's** paper watchlist."""
+    removed = await _remove_watchlist(session, user_id, symbol)
+    items = await read_watchlist(session, user_id)
+    return {"count": len(items), "symbol": symbol, "removed": removed}
 
 
 @app.get("/status/{run_id}")
-async def status(run_id: str) -> Dict[str, Any]:
-    """Return the current state and status of a graph run."""
-    record = _RUNS.get(run_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="Unknown run_id")
+async def status(
+    run_id: str,
+    user_id: str = Depends(_lab_identity),
+) -> Dict[str, Any]:
+    """Return the current state and status of **the caller's** graph run."""
+    record = _owned_run(run_id, user_id, _RUNS)
 
     snapshot = await alphaDesk_graph.aget_state(_thread_config(run_id))
     next_nodes = list(getattr(snapshot, "next", ()) or ())

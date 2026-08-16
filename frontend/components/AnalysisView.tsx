@@ -51,7 +51,7 @@ export function AnalysisView({ payload }: { payload: AnalysisPayload }) {
           </div>
         </div>
         <Button variant="outline" size="sm" asChild>
-          <Link href="/">
+          <Link href="/lab">
             <ArrowLeft />
             New query
           </Link>

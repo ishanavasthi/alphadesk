@@ -182,6 +182,16 @@ class PortfolioState(BaseModel):
     user_query: str = Field(
         ..., description="Natural-language research request that kicked off the run."
     )
+    user_id: str = Field(
+        default="local",
+        description=(
+            "Whose Lab run this is (card F4). Set at run creation from the "
+            "caller's verified Clerk identity — 'local' only in single-tenant "
+            "dev. The pipeline's IND Money MCP calls mint from this user's "
+            "AuthStore, so a run never spends another user's broker grant, and "
+            "the in-memory run registry / paper watchlist are keyed by it."
+        ),
+    )
     scan_results: List[ScanResult] = Field(
         default_factory=list, description="Candidates surfaced by the Scanner agent."
     )

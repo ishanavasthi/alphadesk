@@ -17,11 +17,12 @@
     snapshot_raw       the source payloads those rows were mapped from, kept
                        for forensics and pruned at 90 days.
 
-**Cascade semantics.** `broker_links.user_id`, `oauth_pending.user_id` and
-`snapshot_days.user_id` are declared `ON DELETE CASCADE` *at the FK level*, as
-are `snapshot_holdings.snapshot_id` and `snapshot_raw.snapshot_id`. Deleting a
-`users` row therefore wipes every dependent row — including the user's entire
-net-worth history — inside Postgres. A later "delete my data" card relies on
+**Cascade semantics.** `broker_links.user_id`, `oauth_pending.user_id`,
+`snapshot_days.user_id` and `watchlist.user_id` are declared `ON DELETE CASCADE`
+*at the FK level*, as are `snapshot_holdings.snapshot_id` and
+`snapshot_raw.snapshot_id`. Deleting a `users` row therefore wipes every
+dependent row — including the user's entire net-worth history and paper
+watchlist — inside Postgres. A later "delete my data" card relies on
 that being a schema guarantee rather than an ORM-relationship convention: a raw
 `DELETE FROM users` from psql or a migration is just as safe as an ORM
 `session.delete(user)`.
@@ -35,7 +36,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import Column, Date, DateTime, Numeric, UniqueConstraint
+from sqlalchemy import Column, Date, DateTime, Numeric, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -132,6 +133,51 @@ class OAuthPending(SQLModel, table=True):
     client_secret_enc: str | None = Field(default=None)
     token_url: str | None = Field(default=None, max_length=2048)
     created_at: datetime = Field(default_factory=utcnow, sa_column=_ts_column())
+
+
+# --------------------------------------------------------------------------- #
+# Paper watchlist (card F4)
+# --------------------------------------------------------------------------- #
+class Watchlist(SQLModel, table=True):
+    """One stock a user approved into their paper watchlist (card F4).
+
+    The Lab itself is an ephemeral, labelled simulation — its runs live only in
+    memory and are lost on restart. The paper watchlist is the **one** thing
+    that outlives a run, so it is the one thing that persists here.
+
+    **Denormalized on purpose.** Each row is a self-contained decision record —
+    the thesis, confidence, action and risk verdict as they stood at approval —
+    rather than a foreign key into the run that produced it. A Lab run is gone
+    after a restart, so a normalized "join back to the run" would leave every
+    watchlist row unreadable the first time the process bounces. `run_id` is
+    kept as an **opaque, non-FK** reference: "view the original run" resolves it
+    if the run is still in memory and degrades to "this run is no longer
+    available" when it is not — never a broken join, never a silent recompute.
+
+    `PK (user_id, symbol)` — a stock a user already holds is not added twice;
+    the first decision to reach the watchlist is the one that stays.
+    """
+
+    __tablename__ = "watchlist"
+
+    user_id: str = Field(
+        foreign_key="users.id",
+        ondelete="CASCADE",
+        primary_key=True,
+        max_length=255,
+    )
+    symbol: str = Field(primary_key=True, max_length=64)
+    company: str | None = Field(default=None, max_length=255)
+    thesis: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    confidence: float | None = Field(default=None)
+    action: str | None = Field(default=None, max_length=32)
+    risk_verdict: str | None = Field(default=None, max_length=32)
+    query: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    #: The Lab run this decision came from. **Opaque and non-FK** — the runs
+    #: table does not exist (Lab runs are in-memory), so this may reference a run
+    #: that no longer resolves. Never joined, never a foreign key.
+    run_id: str | None = Field(default=None, max_length=255)
+    added_at: datetime = Field(default_factory=utcnow, sa_column=_ts_column())
 
 
 # --------------------------------------------------------------------------- #
@@ -284,5 +330,6 @@ __all__ = [
     "SnapshotHolding",
     "SnapshotRaw",
     "User",
+    "Watchlist",
     "utcnow",
 ]

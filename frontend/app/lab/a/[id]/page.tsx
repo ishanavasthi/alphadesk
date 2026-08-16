@@ -37,7 +37,7 @@ export default function AnalysisPage() {
           This analysis isn&apos;t available. It may still be running, or the backend
           restarted (runs are kept in memory).
         </p>
-        <Link href="/" className="font-mono text-xs uppercase tracking-[0.1em] text-primary hover:underline">
+        <Link href="/lab" className="font-mono text-xs uppercase tracking-[0.1em] text-primary hover:underline">
           ← Start a new query
         </Link>
       </div>

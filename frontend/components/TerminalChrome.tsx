@@ -13,8 +13,8 @@ import { TopBar } from "@/components/TopBar";
  * delete this file**, restoring `<TopBar/>` (or its successor) directly in
  * `app/layout.tsx`.
  *
- * Nothing about `/` or `/a/[id]` changes: they render exactly the header they
- * always did.
+ * Nothing about the Lab (`/lab`, `/lab/a/[id]`) changes: it renders exactly the
+ * header it always did.
  */
 export function TerminalChrome() {
   const pathname = usePathname();

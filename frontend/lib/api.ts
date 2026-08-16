@@ -290,8 +290,17 @@ export async function logoutAuth(): Promise<void> {
 
 export interface WatchlistItem {
   symbol: string;
-  run_id?: string;
+  /** The decision, frozen at approval (card F4 — the watchlist persists these). */
+  company?: string | null;
+  thesis?: string | null;
+  confidence?: number | null;
+  action?: AnalystAction | null;
+  risk_verdict?: RiskDecision | null;
   query?: string | null;
+  /** Opaque reference to the originating Lab run; may no longer resolve. */
+  run_id?: string | null;
+  /** True while the originating run is still openable at /lab/a/<run_id>. */
+  run_available?: boolean;
   added_at?: string;
 }
 
