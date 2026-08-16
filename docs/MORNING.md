@@ -1,3 +1,48 @@
+# ⭐ ALL BUILD CARDS COMPLETE — read this first
+
+Every card in `V2_PLAN.md` (C0→L1, 14 cards) is built, reviewed, fixed, and
+merged overnight. The backend is deployed to the HF Space; the frontend is
+live **and deliberately kept in its safe pre-launch state** (see "Go-live"
+below). What remains is entirely yours — no more code.
+
+## Go-live sequence (do these IN ORDER when you're ready to invite people)
+
+1. **IND Money re-login** (for YOUR own portfolio + to prove F3 end-to-end).
+   Ask me — or any Claude session — for a login URL; your link is revoked at
+   the source again. Once linked, your pre-F3 snapshot history auto-adopts to
+   your Clerk account on first sign-in (F3), because I set
+   `ALPHADESK_OPERATOR_EMAIL=hiavasthi@gmail.com`. **Confirm that's the email
+   you'll sign in to Clerk with** — if not, tell me before you sign in.
+2. **Enable Clerk Waitlist mode** — Clerk dashboard (app `leading-sheepdog-6215`)
+   → Configure → Restrictions → Sign-up mode → **Waitlist**. Not exposed via
+   API, so it's a manual toggle. Without it, flipping the flag = open sign-up.
+3. **Set the Clerk keys on Vercel** — the `alphadesk` Vercel project currently
+   has ONLY `NEXT_PUBLIC_API_URL`. Add `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and
+   `CLERK_SECRET_KEY` (Production) — the real values are in your local
+   `frontend/.env.local`. Also confirm the Space has `OPENAI_API_KEY` (I set
+   it) and set a **provider-side OpenAI budget cap** in the OpenAI dashboard.
+4. **Flip the site live** — in Vercel, change the `NEXT_PUBLIC_AUTH_ENABLED`
+   production env var from **`false`** (what I set — see the decision below)
+   to **`true`**, then redeploy. The site goes behind Clerk Waitlist.
+5. **Approve your first users** from the Clerk dashboard.
+
+## ⚠️ Decision I made on your behalf (Vercel — review this)
+
+L1 flipped `NEXT_PUBLIC_AUTH_ENABLED` on via a committed
+`frontend/.env.production`. The moment L1 merged, Vercel auto-built the
+frontend **flag-on** — but Vercel has no Clerk keys, so the live site briefly
+became the broken "host_invalid" Clerk page (the F2 landmine). That breaks the
+plan's core rule (main stays deployable; the flag exists so the live site never
+breaks). **I set a Vercel Production env override `NEXT_PUBLIC_AUTH_ENABLED=false`
+and redeployed**, so the live site is back to its safe pre-launch state (public
+landing + `/demo`, no auth wall, no broken page — verified 200 on
+alphadesk.ishanavasthi.in). This is exactly what `.env.production`'s own comment
+anticipates ("Vercel dashboard variables override this file, so the operator can
+still gate a specific deploy"). **To go live, step 4 above reverses it.** If you'd
+rather the code default were flag-off, say so and I'll change `.env.production`.
+
+---
+
 # Morning review — overnight build log for the operator
 
 Running list of everything that needs your eyes or your hands. Newest at the
