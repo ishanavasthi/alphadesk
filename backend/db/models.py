@@ -16,6 +16,8 @@
     snapshot_holdings  the normalized `Holding` rows behind one snapshot day.
     snapshot_raw       the source payloads those rows were mapped from, kept
                        for forensics and pruned at 90 days.
+    portfolio_cache    read-through cache of the `/portfolio/*` response bodies.
+                       Derived data only — droppable at any moment. Issue #15.
 
 **Cascade semantics.** `broker_links.user_id`, `oauth_pending.user_id`,
 `snapshot_days.user_id` and `watchlist.user_id` are declared `ON DELETE CASCADE`
@@ -181,6 +183,46 @@ class Watchlist(SQLModel, table=True):
 
 
 # --------------------------------------------------------------------------- #
+# Portfolio read-through cache (issue #15)
+# --------------------------------------------------------------------------- #
+class PortfolioCache(SQLModel, table=True):
+    """One cached `/portfolio/*` response body, per user, per cache key.
+
+    A pure **derived** table: every row can be thrown away and re-read from the
+    source, which is what makes it safe to prune on age and to invalidate
+    wholesale on unlink. Nothing here is history — `snapshot_days` is.
+
+    `payload` is the exact JSON the route would have returned, so a hit is a
+    serialization-free passthrough rather than a second rendering of a model that
+    might have drifted. Two timestamps, because they answer different questions:
+    `as_of` is what the data claims about itself (the source's own reading time,
+    NULL where the source states none) and `fetched_at` is when we read it —
+    the one TTLs and pruning are measured against.
+
+    `UNIQUE (user_id, cache_key)` makes a write an upsert: a key holds the newest
+    reading, never a pile of them.
+    """
+
+    __tablename__ = "portfolio_cache"
+    __table_args__ = (
+        UniqueConstraint("user_id", "cache_key", name="uq_portfolio_cache_user_key"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: str = Field(
+        foreign_key="users.id",
+        ondelete="CASCADE",
+        index=True,
+        max_length=255,
+    )
+    #: What was cached — ``summary``, ``holdings:MF``, ``allocation:MF:sector:2026-08-16``.
+    cache_key: str = Field(max_length=255)
+    payload: dict = Field(sa_column=Column(JSONB, nullable=False))
+    as_of: datetime | None = Field(default=None, sa_column=_ts_column(nullable=True))
+    fetched_at: datetime = Field(default_factory=utcnow, sa_column=_ts_column())
+
+
+# --------------------------------------------------------------------------- #
 # Daily snapshots (card S1)
 # --------------------------------------------------------------------------- #
 #: Money columns. 18 digits with 2 decimals holds any plausible net worth
@@ -325,6 +367,7 @@ class SnapshotRaw(SQLModel, table=True):
 __all__ = [
     "BrokerLink",
     "OAuthPending",
+    "PortfolioCache",
     "SQLModel",
     "SnapshotDay",
     "SnapshotHolding",
