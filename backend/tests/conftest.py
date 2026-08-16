@@ -51,6 +51,33 @@ def encryption_key(monkeypatch: pytest.MonkeyPatch) -> str:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_token_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: "os.PathLike[str]"
+) -> None:
+    """No test may read or write `backend/.ind_money_token.json`.
+
+    `_persist_file()` mirrors credentials to that path whenever
+    `_is_local_dev()` holds — `ALPHADESK_SINGLE_TENANT=1` and user `local`.
+    Both are true inside the suite on an operator's machine, because
+    `api.main` calls `load_dotenv()` at import and a real `backend/.env` sets
+    the flag. Three tests remembered to redirect `_CACHE_FILE` to a `tmp_path`;
+    any test that reached a persist without doing so overwrote the operator's
+    live credential with the OAuth stub's fixtures, and the next real login was
+    rejected with `Client ID 'cli-1' not found`.
+
+    Isolation belongs here rather than in each test for the same reason
+    `_auth_html` escapes centrally: a rule enforced per-call site is a rule
+    that will eventually be forgotten. `tests/test_token_cache_isolation.py`
+    fails if this fixture is removed.
+    """
+    from tools import ind_money_auth
+
+    monkeypatch.setattr(
+        ind_money_auth, "_CACHE_FILE", tmp_path / ".ind_money_token.json"
+    )
+
+
+@pytest.fixture(autouse=True)
 def _reset_langsmith_env_cache():
     """Clear langsmith's `get_env_var` LRU cache around every test.
 

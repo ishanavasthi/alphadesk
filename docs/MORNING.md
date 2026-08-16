@@ -128,6 +128,18 @@ None blocking; all documented. Pick any up in a fresh session.
   those tests from the ambient DB. → **To run the full suite locally, run with
   `backend/.env` moved aside (or `DATABASE_URL` genuinely absent) and a
   throwaway `TEST_DATABASE_URL` Postgres.**
+- **Token-cache test isolation — FIXED (2026-08-16).** The suite used to
+  overwrite the operator's real `backend/.ind_money_token.json`. Same root cause
+  family as the rate-limit item above: `api.main` calls `load_dotenv()` at
+  import, so tests inherited `ALPHADESK_SINGLE_TENANT=1` from a local `.env`,
+  which made `_is_local_dev()` true and let `_persist_file()` write the live
+  file. It landed the OAuth stub's fixtures (`acc-1`/`cli-1`/`sec-1`) on top of
+  a working credential, and the next real login was rejected with
+  `Client ID 'cli-1' not found` — a dead broker link with no obvious cause.
+  An autouse fixture in `tests/conftest.py` now redirects `_CACHE_FILE` to
+  `tmp_path` for every test; `tests/test_token_cache_isolation.py` fails if it
+  is removed. Verified by running the full suite with a decoy token file in
+  place (untouched) and again with the fixture disabled (clobbered).
 - **`graph/graph.py::run_graph`** defaults `PortfolioState` to `user_id="local"`
   and has zero non-test callers — latent footgun if ever wired to an endpoint.
   Make `user_id` required when someone touches it.
