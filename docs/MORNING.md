@@ -122,3 +122,34 @@ See `docs/STATUS.md` (always current) and the per-card `docs/SPECS/` +
   `DATABASE_URL` (Neon on the Space, local Postgres in dev) and
   `alembic upgrade head` for migration **0005**. With no DB it degrades to
   in-memory per-user, same as before, so local dev without Postgres still runs.
+
+## A1 morning items (AI overview is built)
+
+- **Set a provider-side hard budget cap on the OpenAI dashboard.** A1 ships two
+  app-side daily ceilings (`OVERVIEW_DAILY_GLOBAL_MAX` default 500,
+  `OVERVIEW_DAILY_USER_MAX` default 20) that fail toward the degraded state, but
+  those are a courtesy, not a hard stop. Set a real monthly usage limit on the
+  OpenAI account so a runaway loop cannot bill beyond a number you choose. Tune
+  the two env ceilings on the Space if you want them tighter/looser.
+- **Clear the stray `OPENAI_COMPATIBLE_MODEL` from `backend/.env` (and never set
+  it on the Space).** It is a v1 leftover. A1 deliberately made the explicit
+  `provider=` argument win and tightened the default so a *lone*
+  `OPENAI_COMPATIBLE_MODEL` no longer reroutes anything (compat mode now requires
+  `OPENAI_BASE_URL`) — so it is currently **inert**, not dangerous. But per plan
+  §9 both `OPENAI_BASE_URL` and `OPENAI_COMPATIBLE_MODEL` must stay **unset** in
+  prod: setting `OPENAI_BASE_URL` would route every Lab agent through one compat
+  endpoint and collapse their Groq tiering. Recommended: remove the line locally
+  so the dev env matches prod.
+- **`OPENAI_API_KEY` must be a Space secret** for the overview narrative to
+  generate; without it the dashboard still renders every computed number and the
+  panel shows "AI overview unavailable" (verified). Optional
+  `OPENAI_OVERVIEW_MODEL` overrides the default `gpt-4o-mini`.
+- **The `/demo` overview artifact is static** (`backend/tests/fixtures/demo/
+  overview.json`) and needs no key. Regenerate it with
+  `cd backend && python -m agents.portfolio.demo` if the demo fixtures or the
+  scripted prose ever change.
+- **One real OpenAI call was spent** proving the happy path (the gated live
+  test); the full multi-agent graph is proved with mocked LLMs. A real
+  end-to-end narrative against your live linked account is the only thing a mock
+  could not do — run `/portfolio` signed in (or single-tenant dev) with the key
+  set to see it.

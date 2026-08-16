@@ -43,6 +43,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
 from api.routes.internal import router as internal_router  # noqa: E402
+from api.routes.overview import router as overview_router  # noqa: E402
 from api.routes.portfolio import router as portfolio_router  # noqa: E402
 from db.models import Watchlist, utcnow  # noqa: E402
 from graph.graph import alphaDesk_graph, resume_after_approval  # noqa: E402
@@ -102,6 +103,12 @@ app.add_middleware(
 # router is gated by the same admin secret as /auth/login — see
 # `api/routes/portfolio.py`, which reuses `_require_admin` below.
 app.include_router(portfolio_router)
+
+# The AI overview panel (card A1): POST /portfolio/overview streams the narrative
+# the multi-agent graph writes over Python-computed metrics. Same identity and
+# source-error contract as the rest of /portfolio/*; degrades to metrics-only
+# when the model is unavailable.
+app.include_router(overview_router)
 
 # Machine-to-machine routes for the nightly snapshot job (card S1). Guarded by
 # CRON_SECRET, **not** by the admin gate above — a scheduled runner is not an

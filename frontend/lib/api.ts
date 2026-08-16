@@ -560,6 +560,148 @@ export function capturePortfolioSnapshot(signal?: AbortSignal): Promise<CaptureR
   return portfolioFetch<CaptureResult>("/portfolio/capture", signal, { method: "POST" });
 }
 
+// --------------------------------------------------------------------------- #
+// AI overview (card A1)
+// --------------------------------------------------------------------------- #
+
+/** One computed metric — the number is always Python-computed, never the model's. */
+export interface OverviewMetric {
+  key: string;
+  label: string;
+  unit: "inr" | "pct" | "ratio" | "count" | "text";
+  available: boolean;
+  /** The canonical rendering the narrative chips also use, e.g. "₹10,07,655". */
+  display: string;
+  value: string | null;
+  text: string | null;
+  detail: string | null;
+  signed: boolean;
+}
+
+/** A narrative segment: literal prose, or a chip referencing a computed metric. */
+export type OverviewSegment =
+  | { text: string }
+  | { metric: string; display: string; label: string; detail: string | null; available: boolean };
+
+export interface OverviewParagraph {
+  segments: OverviewSegment[];
+}
+
+export interface OverviewComplete {
+  status: "complete" | "degraded";
+  degraded: boolean;
+  /** Why the narrative is absent: "llm_unavailable" | "spend_cap" | "error" | null. */
+  reason: string | null;
+  narrative: OverviewParagraph[];
+  scripted: boolean;
+  metrics: OverviewMetric[];
+  agents: { node: string; status: string }[];
+}
+
+export interface OverviewHandlers {
+  onStart?: (data: { status: string; agents: string[] }) => void;
+  onUpdate?: (data: { node: string; status: string }) => void;
+  onComplete?: (data: OverviewComplete) => void;
+  onError?: (message: string, status?: number) => void;
+}
+
+/**
+ * POST /portfolio/overview — stream the AI narrative over Python-computed metrics.
+ *
+ * Same gate as the rest of `/portfolio/*` (Clerk JWT, or the interim admin
+ * secret until L1). The stream always ends in a `complete` event carrying every
+ * metric; when the model is unavailable that event is flagged `degraded` and the
+ * narrative is empty — the panel then renders "AI overview unavailable" while
+ * every number still shows. A source failure (unlinked, throttled) is a normal
+ * HTTP error **before** the stream opens, surfaced through `onError`.
+ */
+export async function streamOverview(
+  handlers: OverviewHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!ADMIN_SECRET && !AUTH_ENABLED) {
+    handlers.onError?.("No admin secret is configured in this build.", 0);
+    return;
+  }
+
+  let response: Response;
+  try {
+    response = await apiFetch(`${API_BASE}/portfolio/overview`, {
+      method: "POST",
+      headers: ADMIN_SECRET ? { "x-alphadesk-admin-secret": ADMIN_SECRET } : undefined,
+      cache: "no-store",
+      signal,
+    });
+  } catch (err) {
+    if ((err as Error).name === "AbortError") return;
+    handlers.onError?.(`Cannot reach AlphaDesk API at ${API_BASE}.`);
+    return;
+  }
+
+  if (!response.ok || !response.body) {
+    type Detail = { code?: string; message?: string };
+    let message = `Request failed (${response.status}).`;
+    try {
+      const detail = ((await response.json()) as { detail?: Detail | string }).detail;
+      if (typeof detail === "string") message = detail || message;
+      else if (detail?.message) message = detail.message;
+    } catch {
+      /* non-JSON error page */
+    }
+    handlers.onError?.(message, response.status);
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const dispatch = (event: string, data: string) => {
+    let payload: unknown = {};
+    try {
+      payload = JSON.parse(data);
+    } catch {
+      return;
+    }
+    switch (event) {
+      case "start":
+        handlers.onStart?.(payload as { status: string; agents: string[] });
+        break;
+      case "update":
+        handlers.onUpdate?.(payload as { node: string; status: string });
+        break;
+      case "complete":
+        handlers.onComplete?.(payload as OverviewComplete);
+        break;
+      case "error":
+        handlers.onError?.((payload as { error?: string }).error || "Overview failed.");
+        break;
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sep: number;
+      while ((sep = buffer.indexOf("\n\n")) !== -1) {
+        const block = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        let event = "message";
+        const dataLines: string[] = [];
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+        }
+        if (dataLines.length) dispatch(event, dataLines.join("\n"));
+      }
+    }
+  } catch (err) {
+    if ((err as Error).name !== "AbortError") handlers.onError?.((err as Error).message);
+  }
+}
+
 /** POST /approve — approve or reject the staged batch for a run. */
 export async function approve(
   actionId: string,

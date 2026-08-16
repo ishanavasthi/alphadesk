@@ -50,6 +50,31 @@ def encryption_key(monkeypatch: pytest.MonkeyPatch) -> str:
     return TEST_ENCRYPTION_KEY
 
 
+@pytest.fixture(autouse=True)
+def _reset_langsmith_env_cache():
+    """Clear langsmith's `get_env_var` LRU cache around every test.
+
+    `langsmith.utils.get_env_var` is `functools.lru_cache`d, so the very first
+    read of the tracing env vars is frozen for the rest of the process. Before
+    card A1 nothing actually *ran* a LangGraph in the suite, so the cache was
+    only ever populated inside `test_portfolio_config`'s own env fixture and the
+    fragility was invisible. A1 runs the portfolio graph in tests: the graph
+    reads the tracing state (with tracing off), which would otherwise freeze
+    "disabled" and make `test_portfolio_config`'s control case ("the env var
+    really would enable tracing") fail depending on file order. Clearing the
+    cache before and after each test makes every test read the env it actually
+    set, restoring order-independence.
+    """
+    try:
+        from langsmith.utils import get_env_var
+    except Exception:  # noqa: BLE001 - langsmith always present, but never fatal
+        yield
+        return
+    get_env_var.cache_clear()
+    yield
+    get_env_var.cache_clear()
+
+
 #: Hosts the suite is willing to run `DROP DATABASE` against without being told
 #: to explicitly. Everything else is assumed to be someone's real server.
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]", ""})
