@@ -1,0 +1,392 @@
+{
+  "source": "stub",
+  "generated_by": "scripted",
+  "note": "Synthetic demo overview. Metrics are computed from backend/tests/fixtures/demo/; the narrative is the deterministic scripted prose (no LLM). Regenerate with `python -m agents.portfolio.demo`.",
+  "degraded": false,
+  "narrative": [
+    {
+      "segments": [
+        {
+          "text": "This portfolio spans "
+        },
+        {
+          "metric": "holdings_count",
+          "display": "9",
+          "label": "Holdings",
+          "detail": null,
+          "available": true
+        },
+        {
+          "text": " holdings, with "
+        },
+        {
+          "metric": "equity_share",
+          "display": "39.0%",
+          "label": "Equity share",
+          "detail": "Indian + US equity",
+          "available": true
+        },
+        {
+          "text": " of current value in Indian and US equity and "
+        },
+        {
+          "metric": "us_exposure_share",
+          "display": "10.9%",
+          "label": "US exposure",
+          "detail": "foreign-denominated, source-converted to INR",
+          "available": true
+        },
+        {
+          "text": " carrying US exposure."
+        }
+      ]
+    },
+    {
+      "segments": [
+        {
+          "text": "Concentration is measured by a Herfindahl index of "
+        },
+        {
+          "metric": "herfindahl_index",
+          "display": "0.17",
+          "label": "Herfindahl index (holdings)",
+          "detail": "moderate",
+          "available": true
+        },
+        {
+          "text": " across holdings, the largest single position at "
+        },
+        {
+          "metric": "top_holding_weight",
+          "display": "23.5%",
+          "label": "Top holding weight",
+          "detail": "Demo Fixed Deposit 18M",
+          "available": true
+        },
+        {
+          "text": " of value and the top three at "
+        },
+        {
+          "metric": "top3_weight",
+          "display": "64.6%",
+          "label": "Top-3 weight",
+          "detail": null,
+          "available": true
+        },
+        {
+          "text": ". The heaviest sector is "
+        },
+        {
+          "metric": "heaviest_sector_name",
+          "display": "Demo Sector Delta",
+          "label": "Heaviest sector name",
+          "detail": null,
+          "available": true
+        },
+        {
+          "text": " at "
+        },
+        {
+          "metric": "heaviest_sector_weight",
+          "display": "39.3%",
+          "label": "Heaviest sector",
+          "detail": "Demo Sector Delta",
+          "available": true
+        },
+        {
+          "text": " of the sector book."
+        }
+      ]
+    },
+    {
+      "segments": [
+        {
+          "text": "Overall return where a cost basis is known is "
+        },
+        {
+          "metric": "pnl",
+          "display": "+₹88,905",
+          "label": "Overall return",
+          "detail": null,
+          "available": true
+        },
+        {
+          "text": " ("
+        },
+        {
+          "metric": "pnl_pct",
+          "display": "+8.4%",
+          "label": "Return on invested",
+          "detail": null,
+          "available": true
+        },
+        {
+          "text": " on invested). "
+        },
+        {
+          "metric": "rows_without_cost_basis",
+          "display": "2",
+          "label": "Rows without cost basis",
+          "detail": "of 9",
+          "available": true
+        },
+        {
+          "text": " rows report no cost basis and are excluded from performance figures. "
+        },
+        {
+          "metric": "sip_count",
+          "display": "3",
+          "label": "SIPs on file",
+          "detail": "2 active",
+          "available": true
+        },
+        {
+          "text": " systematic plans are on file, contributing "
+        },
+        {
+          "metric": "sip_monthly_total",
+          "display": "₹17,500",
+          "label": "Active monthly SIP",
+          "detail": "across active SIPs",
+          "available": true
+        },
+        {
+          "text": " a month."
+        }
+      ]
+    }
+  ],
+  "metrics": [
+    {
+      "key": "net_worth",
+      "label": "Net worth",
+      "unit": "inr",
+      "available": true,
+      "display": "₹10,07,655",
+      "value": "1007655.0",
+      "text": null,
+      "detail": "net of liabilities",
+      "signed": false
+    },
+    {
+      "key": "current_value",
+      "label": "Current value",
+      "unit": "inr",
+      "available": true,
+      "display": "₹11,52,655",
+      "value": "1152655.0",
+      "text": null,
+      "detail": null,
+      "signed": false
+    },
+    {
+      "key": "invested_total",
+      "label": "Invested",
+      "unit": "inr",
+      "available": true,
+      "display": "₹10,63,750",
+      "value": "1063750.0",
+      "text": null,
+      "detail": "where cost basis is known",
+      "signed": false
+    },
+    {
+      "key": "pnl",
+      "label": "Overall return",
+      "unit": "inr",
+      "available": true,
+      "display": "+₹88,905",
+      "value": "88905.0",
+      "text": null,
+      "detail": null,
+      "signed": true
+    },
+    {
+      "key": "pnl_pct",
+      "label": "Return on invested",
+      "unit": "pct",
+      "available": true,
+      "display": "+8.4%",
+      "value": "8.357696827262044653349001175",
+      "text": null,
+      "detail": null,
+      "signed": true
+    },
+    {
+      "key": "holdings_count",
+      "label": "Holdings",
+      "unit": "count",
+      "available": true,
+      "display": "9",
+      "value": "9",
+      "text": null,
+      "detail": null,
+      "signed": false
+    },
+    {
+      "key": "rows_without_cost_basis",
+      "label": "Rows without cost basis",
+      "unit": "count",
+      "available": true,
+      "display": "2",
+      "value": "2",
+      "text": null,
+      "detail": "of 9",
+      "signed": false
+    },
+    {
+      "key": "herfindahl_index",
+      "label": "Herfindahl index (holdings)",
+      "unit": "ratio",
+      "available": true,
+      "display": "0.17",
+      "value": "0.1694300585676330243737269300",
+      "text": null,
+      "detail": "moderate",
+      "signed": false
+    },
+    {
+      "key": "top_holding_weight",
+      "label": "Top holding weight",
+      "unit": "pct",
+      "available": true,
+      "display": "23.5%",
+      "value": "23.50551909588371349592884409",
+      "text": null,
+      "detail": "Demo Fixed Deposit 18M",
+      "signed": false
+    },
+    {
+      "key": "top_holding_name",
+      "label": "Largest position",
+      "unit": "text",
+      "available": true,
+      "display": "Demo Fixed Deposit 18M",
+      "value": null,
+      "text": "Demo Fixed Deposit 18M",
+      "detail": null,
+      "signed": false
+    },
+    {
+      "key": "top3_weight",
+      "label": "Top-3 weight",
+      "unit": "pct",
+      "available": true,
+      "display": "64.6%",
+      "value": "64.61925760168487560879294458",
+      "text": null,
+      "detail": null,
+      "signed": false
+    },
+    {
+      "key": "equity_share",
+      "label": "Equity share",
+      "unit": "pct",
+      "available": true,
+      "display": "39.0%",
+      "value": "39.01817976758006515392723755",
+      "text": null,
+      "detail": "Indian + US equity",
+      "signed": false
+    },
+    {
+      "key": "us_exposure_share",
+      "label": "US exposure",
+      "unit": "pct",
+      "available": true,
+      "display": "10.9%",
+      "value": "10.91740373312049138727546404",
+      "text": null,
+      "detail": "foreign-denominated, source-converted to INR",
+      "signed": false
+    },
+    {
+      "key": "heaviest_sector_weight",
+      "label": "Heaviest sector",
+      "unit": "pct",
+      "available": true,
+      "display": "39.3%",
+      "value": "39.25178963544658938308243778",
+      "text": null,
+      "detail": "Demo Sector Delta",
+      "signed": false
+    },
+    {
+      "key": "heaviest_sector_name",
+      "label": "Heaviest sector name",
+      "unit": "text",
+      "available": true,
+      "display": "Demo Sector Delta",
+      "value": null,
+      "text": "Demo Sector Delta",
+      "detail": null,
+      "signed": false
+    },
+    {
+      "key": "sector_hhi",
+      "label": "Sector concentration (HHI)",
+      "unit": "ratio",
+      "available": true,
+      "display": "0.30",
+      "value": "0.2958112794842274604071937288",
+      "text": null,
+      "detail": "concentrated",
+      "signed": false
+    },
+    {
+      "key": "sector_count",
+      "label": "Sectors held",
+      "unit": "count",
+      "available": true,
+      "display": "4",
+      "value": "4",
+      "text": null,
+      "detail": null,
+      "signed": false
+    },
+    {
+      "key": "sip_count",
+      "label": "SIPs on file",
+      "unit": "count",
+      "available": true,
+      "display": "3",
+      "value": "3",
+      "text": null,
+      "detail": "2 active",
+      "signed": false
+    },
+    {
+      "key": "sip_monthly_total",
+      "label": "Active monthly SIP",
+      "unit": "inr",
+      "available": true,
+      "display": "₹17,500",
+      "value": "17500.0",
+      "text": null,
+      "detail": "across active SIPs",
+      "signed": false
+    },
+    {
+      "key": "wow_networth_delta",
+      "label": "1-week Δ net worth",
+      "unit": "inr",
+      "available": false,
+      "display": "—",
+      "value": null,
+      "text": null,
+      "detail": "needs a week of snapshots",
+      "signed": true
+    },
+    {
+      "key": "wow_networth_delta_pct",
+      "label": "1-week Δ net worth %",
+      "unit": "pct",
+      "available": false,
+      "display": "—",
+      "value": null,
+      "text": null,
+      "detail": null,
+      "signed": true
+    }
+  ]
+}
