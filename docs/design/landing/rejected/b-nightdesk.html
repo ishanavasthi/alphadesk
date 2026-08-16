@@ -1,0 +1,919 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlphaDesk — Night Desk</title>
+<meta name="description" content="AlphaDesk: a portfolio analyzer for Indian retail investors. Net worth, allocation, holdings and history — narrated by AI that can only cite verified computed numbers. Descriptive analytics, never advice.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230a0e0b'/%3E%3Crect x='4' y='4' width='8' height='8' fill='%23ffb454'/%3E%3C/svg%3E">
+<style>
+/* ============================================================
+   NIGHT DESK — "Phosphor Shift"
+   Bloomberg terminal × Swiss International poster
+   ============================================================ */
+:root{
+  --ground:#0a0e0b;
+  --panel:#101511;
+  --panel-2:#0d120e;
+  --amber:#ffb454;
+  --green:#45e08a;
+  --red:#ff5a52;
+  --line:rgba(255,180,84,.12);
+  --line-strong:rgba(255,180,84,.28);
+  --ink:#e8ecdf;          /* headline ivory-green */
+  --dim:#a9b6ab;          /* body — 8.9:1 on ground */
+  --faint:#7d8a80;        /* micro labels — 5.2:1 on ground */
+  --sans:"Archivo","Helvetica Neue",Helvetica,Arial,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --maxw:1200px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{
+  background:var(--ground);
+  color:var(--dim);
+  font-family:var(--sans);
+  font-size:16px;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+::selection{background:var(--amber);color:var(--ground)}
+a{color:var(--amber);text-decoration:none}
+a:hover{text-decoration:underline;text-underline-offset:3px}
+:focus-visible{outline:2px solid var(--amber);outline-offset:3px;border-radius:1px}
+.num{font-variant-numeric:tabular-nums}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+
+/* ---- eyebrow micro-labels ---- */
+.eyebrow{
+  font-family:var(--mono);font-size:11px;font-weight:500;
+  letter-spacing:.28em;text-transform:uppercase;color:var(--amber);
+  display:flex;align-items:center;gap:12px;
+}
+.eyebrow::before{content:"";width:28px;height:1px;background:var(--amber);flex:none}
+
+/* ---- corner-ticked panels ---- */
+.tick{position:relative;border:1px solid var(--line);background:var(--panel)}
+.tick::before{
+  content:"";position:absolute;inset:-1px;pointer-events:none;
+  background:
+    linear-gradient(var(--amber),var(--amber)) top left    /9px 1px,
+    linear-gradient(var(--amber),var(--amber)) top left    /1px 9px,
+    linear-gradient(var(--amber),var(--amber)) top right   /9px 1px,
+    linear-gradient(var(--amber),var(--amber)) top right   /1px 9px,
+    linear-gradient(var(--amber),var(--amber)) bottom left /9px 1px,
+    linear-gradient(var(--amber),var(--amber)) bottom left /1px 9px,
+    linear-gradient(var(--amber),var(--amber)) bottom right/9px 1px,
+    linear-gradient(var(--amber),var(--amber)) bottom right/1px 9px;
+  background-repeat:no-repeat;
+}
+
+/* ---- buttons ---- */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:10px;
+  font-family:var(--mono);font-size:13px;font-weight:600;
+  letter-spacing:.12em;text-transform:uppercase;
+  padding:15px 26px;border:1px solid transparent;cursor:pointer;
+  transition:transform .15s ease, box-shadow .15s ease, background .15s ease;
+  white-space:nowrap;
+}
+.btn:hover{text-decoration:none}
+.btn-primary{background:var(--amber);color:#140d02;border-color:var(--amber)}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 0 0 1px var(--amber),0 6px 28px rgba(255,180,84,.28)}
+.btn-ghost{background:transparent;color:var(--amber);border-color:var(--line-strong)}
+.btn-ghost:hover{border-color:var(--amber);background:rgba(255,180,84,.06)}
+.btn .cue{font-size:15px;line-height:1}
+
+/* ============================================================
+   TOP BAR
+   ============================================================ */
+header.top{
+  border-bottom:1px solid var(--line);
+  position:sticky;top:0;z-index:50;
+  background:rgba(10,14,11,.88);backdrop-filter:blur(8px);
+}
+.top-in{
+  max-width:var(--maxw);margin:0 auto;padding:0 24px;height:60px;
+  display:flex;align-items:center;gap:28px;
+}
+.wordmark{
+  font-family:var(--sans);font-weight:900;font-stretch:110%;
+  font-size:17px;letter-spacing:.06em;color:var(--ink);
+  display:flex;align-items:center;gap:10px;
+}
+.wordmark:hover{text-decoration:none}
+.wordmark .sq{width:10px;height:10px;background:var(--amber);flex:none}
+.top-tag{font-family:var(--mono);font-size:10px;letter-spacing:.22em;color:var(--faint);text-transform:uppercase;border-left:1px solid var(--line);padding-left:16px}
+nav.top-nav{margin-left:auto;display:flex;gap:26px;align-items:center}
+nav.top-nav a{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+nav.top-nav a:hover{color:var(--amber);text-decoration:none}
+nav.top-nav a.btn-primary,nav.top-nav a.btn-primary:hover{color:#140d02}
+.top .btn{padding:9px 16px;font-size:11px}
+@media (max-width:820px){
+  nav.top-nav a:not(.btn){display:none}
+  .top-tag{display:none}
+}
+@media (max-width:480px){
+  .top-in{gap:12px}
+  .top .btn{padding:8px 10px;font-size:10px;letter-spacing:.06em}
+  .wordmark{font-size:15px}
+}
+
+/* ============================================================
+   HERO
+   ============================================================ */
+.hero{
+  position:relative;
+  border-bottom:1px solid var(--line);
+  background:
+    linear-gradient(rgba(255,180,84,.045) 1px,transparent 1px) 0 0/100% 120px,
+    linear-gradient(90deg,rgba(255,180,84,.045) 1px,transparent 1px) 0 0/120px 100%,
+    radial-gradient(900px 500px at 78% 10%,rgba(69,224,138,.05),transparent 60%),
+    var(--ground);
+}
+.hero-in{
+  max-width:var(--maxw);margin:0 auto;padding:84px 24px 88px;
+  display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);
+  gap:56px;align-items:center;
+}
+.hero h1{
+  font-family:var(--sans);
+  font-weight:900;font-stretch:118%;
+  font-size:clamp(42px,7.2vw,104px);
+  line-height:.92;letter-spacing:-.015em;
+  text-transform:uppercase;color:var(--ink);
+  margin:26px 0 28px;
+}
+.hero h1 .amber{color:var(--amber)}
+.hero h1 .idx{
+  display:inline-block;vertical-align:super;
+  font-family:var(--mono);font-weight:400;font-stretch:100%;
+  font-size:.18em;letter-spacing:.2em;color:var(--faint);
+}
+.hero-sub{max-width:52ch;font-size:17px;color:var(--dim)}
+.hero-sub strong{color:var(--ink);font-weight:600}
+.hero-ctas{display:flex;gap:14px;flex-wrap:wrap;margin-top:34px}
+.hero-foot{
+  margin-top:30px;display:flex;gap:22px;flex-wrap:wrap;
+  font-family:var(--mono);font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--faint);
+}
+.hero-foot span{display:flex;align-items:center;gap:8px}
+.hero-foot i{width:6px;height:6px;background:var(--green);display:inline-block;flex:none}
+
+/* ---- the terminal ---- */
+.term{
+  font-family:var(--mono);font-size:13px;line-height:1.75;
+  background:var(--panel-2);
+  box-shadow:0 30px 80px rgba(0,0,0,.55),0 0 60px rgba(255,180,84,.05);
+}
+.term-bar{
+  display:flex;align-items:center;gap:8px;
+  padding:10px 14px;border-bottom:1px solid var(--line);
+  background:var(--panel);
+}
+.term-bar .qs{width:9px;height:9px;flex:none}
+.term-bar .qs.a{background:var(--amber)}
+.term-bar .qs.g{background:var(--green)}
+.term-bar .qs.r{background:var(--red)}
+.term-title{
+  margin-left:10px;font-size:11px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--faint);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.term-live{
+  margin-left:auto;font-size:10px;letter-spacing:.2em;color:var(--green);
+  display:flex;align-items:center;gap:7px;flex:none;
+}
+.term-live i{width:6px;height:6px;background:var(--green);border-radius:50%;animation:blink 1.4s steps(1) infinite}
+.term-body{
+  position:relative;padding:18px 18px 22px;min-height:342px;
+  overflow-x:auto;font-size:12.5px;
+}
+/* scanlines + grain, terminal only */
+.term-body::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(0deg,rgba(255,255,255,.022) 0 1px,transparent 1px 3px);
+  mix-blend-mode:overlay;
+}
+.term-scan{
+  position:absolute;left:0;right:0;top:0;height:64px;pointer-events:none;
+  background:linear-gradient(180deg,transparent,rgba(69,224,138,.05),transparent);
+  animation:scan 7s linear infinite;
+}
+@keyframes scan{from{transform:translateY(-70px)}to{transform:translateY(420px)}}
+.term-line{white-space:pre;color:var(--dim);min-height:1.75em}
+.term-line .p{color:var(--faint)}
+.term-line .cmd{color:var(--ink)}
+.term-line .tag{color:var(--amber)}
+.term-line .ok{color:var(--green);font-weight:600}
+.term-line .flag{color:var(--amber);font-weight:600}
+.term-line .rej{color:var(--red);font-weight:600}
+.term-line .mut{color:var(--faint)}
+.term-hold{
+  margin-top:10px;padding:10px 12px;border:1px dashed var(--line-strong);
+  color:var(--amber);font-weight:600;letter-spacing:.06em;white-space:pre;
+  animation:holdblink 1.2s steps(1) infinite;
+  display:none;
+}
+.term-hold.on{display:block}
+.term-cursor{display:inline-block;width:8px;height:15px;background:var(--amber);vertical-align:-2px;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+@keyframes holdblink{50%{border-color:var(--amber);background:rgba(255,180,84,.07)}}
+@media (max-width:960px){
+  .hero-in{grid-template-columns:minmax(0,1fr);padding:56px 24px 64px;gap:44px}
+  .term{min-width:0}
+  .term-body{min-height:0}
+}
+@media (max-width:560px){
+  .term-hold{white-space:normal}
+}
+
+/* ============================================================
+   TICKER TAPE
+   ============================================================ */
+.tape{
+  border-bottom:1px solid var(--line);
+  display:flex;align-items:stretch;overflow:hidden;
+  background:var(--panel-2);
+}
+.tape-label{
+  flex:none;display:flex;align-items:center;padding:10px 16px;
+  font-family:var(--mono);font-size:10px;letter-spacing:.24em;
+  text-transform:uppercase;color:var(--ground);background:var(--amber);
+  font-weight:600;
+}
+.tape-track{flex:1;overflow:hidden;display:flex;align-items:center}
+.tape-run{
+  display:flex;gap:0;white-space:nowrap;
+  animation:tape 46s linear infinite;
+}
+.tape:hover .tape-run{animation-play-state:paused}
+@keyframes tape{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.tape-run>span{
+  font-family:var(--mono);font-size:12px;padding:10px 22px;
+  color:var(--dim);border-right:1px solid var(--line);
+}
+.tape-run b{color:var(--ink);font-weight:600;letter-spacing:.06em}
+.tape-run .up{color:var(--green)}
+.tape-run .dn{color:var(--red)}
+
+/* ============================================================
+   SECTIONS — shared
+   ============================================================ */
+section{padding:96px 0;border-bottom:1px solid var(--line)}
+.sec-head{margin-bottom:56px;max-width:760px}
+.sec-head h2{
+  font-family:var(--sans);font-weight:900;font-stretch:115%;
+  font-size:clamp(30px,4.4vw,52px);line-height:1;
+  letter-spacing:-.01em;text-transform:uppercase;color:var(--ink);
+  margin:20px 0 18px;
+}
+.sec-head h2 .amber{color:var(--amber)}
+.sec-head p{font-size:16px;max-width:56ch}
+
+/* reveal-on-scroll */
+.rv{opacity:0;transform:translateY(18px);transition:opacity .6s ease,transform .6s ease}
+.rv.in{opacity:1;transform:none}
+
+/* ============================================================
+   TRUST STRIP (social-proof slot → honest badges)
+   ============================================================ */
+.trust{padding:0;border-bottom:1px solid var(--line)}
+.trust-in{
+  max-width:var(--maxw);margin:0 auto;padding:0 24px;
+  display:grid;grid-template-columns:repeat(4,1fr);
+}
+.trust-item{
+  display:flex;align-items:center;gap:14px;padding:26px 22px;
+  border-left:1px solid var(--line);
+}
+.trust-item:first-child{border-left:none}
+.trust-item svg{flex:none;color:var(--amber)}
+.trust-item .t1{
+  font-family:var(--mono);font-size:12px;font-weight:600;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--ink);
+}
+.trust-item .t2{font-size:12.5px;color:var(--faint);line-height:1.45}
+@media (max-width:960px){
+  .trust-in{grid-template-columns:1fr 1fr}
+  .trust-item:nth-child(3){border-left:none}
+  .trust-item{border-top:1px solid var(--line)}
+  .trust-item:nth-child(-n+2){border-top:none}
+}
+@media (max-width:520px){
+  .trust-in{grid-template-columns:1fr}
+  .trust-item{border-left:none;border-top:1px solid var(--line)}
+  .trust-item:first-child{border-top:none}
+}
+
+/* ============================================================
+   FEATURES — dashboard bento
+   ============================================================ */
+.bento{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}
+.card{padding:26px 26px 28px;display:flex;flex-direction:column;gap:12px}
+.card .no{
+  font-family:var(--mono);font-size:11px;letter-spacing:.24em;color:var(--faint);
+  display:flex;justify-content:space-between;align-items:center;
+}
+.card .no svg{color:var(--amber)}
+.card h3{
+  font-family:var(--sans);font-weight:800;font-stretch:112%;
+  font-size:19px;letter-spacing:.02em;text-transform:uppercase;color:var(--ink);
+}
+.card p{font-size:14px;color:var(--dim)}
+.card .chip{
+  align-self:flex-start;margin-top:auto;
+  font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+  padding:4px 9px;border:1px solid var(--line-strong);color:var(--amber);
+}
+.c-4{grid-column:span 4}
+.c-6{grid-column:span 6}
+.c-8{grid-column:span 8}
+.card-gate{background:linear-gradient(160deg,rgba(255,180,84,.09),rgba(255,180,84,.02)),var(--panel)}
+.card-gate h3{color:var(--amber)}
+/* the audited-claim pull quote */
+.quote{
+  font-family:var(--mono);font-size:13px;line-height:1.7;color:var(--ink);
+  border-left:2px solid var(--amber);padding:10px 0 10px 16px;margin:4px 0;
+}
+.quote .qn{color:var(--amber);font-weight:600}
+.quote-cap{font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--faint)}
+/* mini portfolio readout inside the dashboard card */
+.mini{
+  font-family:var(--mono);border-top:1px solid var(--line);margin-top:6px;padding-top:14px;
+  display:grid;grid-template-columns:1fr 1fr;gap:10px 18px;
+}
+.mini .k{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--faint)}
+.mini .v{font-size:16px;color:var(--ink);font-weight:600}
+.mini .v.up{color:var(--green)}
+.spark{grid-column:1/-1;display:flex;align-items:flex-end;gap:3px;height:34px;margin-top:2px}
+.spark i{flex:1;background:rgba(69,224,138,.35);min-height:3px}
+.spark i.hot{background:var(--green)}
+@media (max-width:960px){.c-4,.c-6,.c-8{grid-column:span 6}}
+@media (max-width:680px){.c-4,.c-6,.c-8{grid-column:span 12}}
+
+/* ============================================================
+   HOW IT WORKS — from sign-in to audit
+   ============================================================ */
+.steps{display:grid;grid-template-columns:repeat(5,1fr);gap:0;border:1px solid var(--line)}
+.step{
+  padding:28px 22px 30px;border-left:1px solid var(--line);
+  background:var(--panel-2);position:relative;
+}
+.step:first-child{border-left:none}
+.step .sn{
+  font-family:var(--sans);font-weight:900;font-stretch:118%;
+  font-size:42px;line-height:1;color:transparent;
+  -webkit-text-stroke:1px var(--line-strong);
+}
+.step.hot .sn{color:var(--amber);-webkit-text-stroke:0}
+.step h3{
+  font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--ink);margin:16px 0 8px;
+}
+.step p{font-size:13px;color:var(--dim);line-height:1.55}
+.step .arrow{
+  position:absolute;top:32px;right:-7px;z-index:2;color:var(--amber);
+}
+.step:last-child .arrow{display:none}
+.step.hot{background:linear-gradient(180deg,rgba(255,180,84,.08),transparent 70%),var(--panel-2)}
+.steps-out{
+  margin-top:16px;display:flex;align-items:center;gap:14px;
+  font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--faint);
+}
+.steps-out b{color:var(--green);font-weight:600}
+@media (max-width:960px){
+  .steps{grid-template-columns:1fr}
+  .step{border-left:none;border-top:1px solid var(--line)}
+  .step:first-child{border-top:none}
+  .step .arrow{top:auto;right:24px;bottom:-7px;transform:rotate(90deg)}
+}
+
+/* ============================================================
+   THE LAB — simulation, poster numerals
+   ============================================================ */
+.rails{background:linear-gradient(180deg,var(--panel-2),var(--ground))}
+.lab-badge{
+  display:inline-flex;align-items:center;gap:10px;
+  font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--amber);
+  border:1px dashed var(--line-strong);padding:7px 14px;margin-bottom:22px;
+}
+.lab-pipe{
+  font-family:var(--mono);font-size:12px;letter-spacing:.06em;color:var(--faint);
+  border:1px solid var(--line);background:var(--panel-2);
+  padding:14px 18px;margin:0 0 40px;overflow-x:auto;white-space:nowrap;
+}
+.lab-pipe b{color:var(--ink);font-weight:600}
+.lab-pipe .gate{color:var(--amber);font-weight:600}
+.rail-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.rail{
+  padding:30px 26px 32px;display:flex;flex-direction:column;
+  background:var(--panel-2);
+}
+.rail .rn{
+  font-family:var(--sans);font-weight:900;font-stretch:120%;
+  font-size:clamp(72px,7.5vw,118px);line-height:.9;letter-spacing:-.03em;
+  color:var(--ink);
+}
+.rail .rl{
+  font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--amber);margin:18px 0 10px;
+}
+.rail p{font-size:13.5px;color:var(--dim)}
+.rail-zero .rn{
+  color:var(--amber);
+  font-size:clamp(96px,10vw,160px);
+  text-shadow:0 0 46px rgba(255,180,84,.35);
+}
+.rail-zero{background:linear-gradient(160deg,rgba(255,180,84,.1),rgba(255,180,84,.02)),var(--panel-2)}
+.rail-zero .rl{color:var(--ink)}
+@media (max-width:960px){.rail-grid{grid-template-columns:1fr 1fr}}
+@media (max-width:520px){.rail-grid{grid-template-columns:1fr}}
+
+/* ============================================================
+   FINAL CTA
+   ============================================================ */
+.cta-final{text-align:left;position:relative;overflow:hidden}
+.cta-final .wrap{position:relative}
+.cta-big{
+  font-family:var(--sans);font-weight:900;font-stretch:118%;
+  font-size:clamp(40px,6.4vw,88px);line-height:.94;letter-spacing:-.015em;
+  text-transform:uppercase;color:var(--ink);margin:22px 0 26px;
+}
+.cta-big .amber{color:var(--amber)}
+.cta-final p{max-width:56ch;font-size:16px}
+.cta-ctas{display:flex;gap:14px;flex-wrap:wrap;margin-top:34px}
+.cta-ghostline{
+  position:absolute;right:-40px;bottom:-70px;pointer-events:none;user-select:none;
+  font-family:var(--sans);font-weight:900;font-stretch:120%;
+  font-size:clamp(160px,26vw,360px);line-height:1;color:transparent;
+  -webkit-text-stroke:1px rgba(255,180,84,.1);
+}
+
+/* ============================================================
+   FOOTER
+   ============================================================ */
+footer{padding:44px 0 52px;font-family:var(--mono)}
+.foot-in{
+  max-width:var(--maxw);margin:0 auto;padding:0 24px;
+  display:flex;flex-wrap:wrap;gap:18px 36px;align-items:center;justify-content:space-between;
+}
+.foot-mark{font-family:var(--sans);font-weight:900;font-stretch:112%;letter-spacing:.06em;color:var(--ink);font-size:14px;display:flex;gap:9px;align-items:center}
+.foot-mark .sq{width:8px;height:8px;background:var(--amber)}
+.foot-legal{font-size:11.5px;letter-spacing:.06em;color:var(--faint);line-height:1.8}
+.foot-links{display:flex;gap:22px;font-size:11px;letter-spacing:.14em;text-transform:uppercase}
+.foot-links a{color:var(--dim)}
+.foot-links a:hover{color:var(--amber)}
+
+/* ============================================================
+   REDUCED MOTION — final states, instantly
+   ============================================================ */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .rv{opacity:1;transform:none}
+  .term-scan{display:none}
+  .term-cursor{animation:none;opacity:1}
+}
+</style>
+</head>
+<body>
+
+<!-- ================= TOP BAR ================= -->
+<header class="top">
+  <div class="top-in">
+    <a class="wordmark" href="#"><span class="sq" aria-hidden="true"></span>ALPHADESK</a>
+    <span class="top-tag">NSE · Snapshot 23:45 IST</span>
+    <nav class="top-nav" aria-label="Primary">
+      <a href="#dashboard">Dashboard</a>
+      <a href="#how">How it works</a>
+      <a href="#lab">The Lab</a>
+      <a class="btn btn-primary" href="#">View the live demo</a>
+    </nav>
+  </div>
+</header>
+
+<!-- ================= HERO ================= -->
+<section class="hero" style="padding:0;border-bottom:1px solid var(--line)">
+  <div class="hero-in">
+    <div>
+      <p class="eyebrow">Portfolio analyzer · Indian retail investors</p>
+      <h1>
+        Know<br>
+        what you<br>
+        <span class="amber">hold.</span><span class="idx">NSE</span>
+      </h1>
+      <p class="hero-sub">
+        AlphaDesk links your IND Money account — <strong>read-only</strong> —
+        and turns it into one clear picture: net worth, allocation, holdings
+        and daily history, narrated by AI that can only cite numbers the desk
+        has already computed and verified. Descriptive analytics.
+        <strong>Never advice.</strong>
+      </p>
+      <div class="hero-ctas">
+        <a class="btn btn-primary" href="#">View the live demo <span class="cue" aria-hidden="true">→</span></a>
+        <a class="btn btn-ghost" href="#">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 20c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/><circle cx="12" cy="8" r="4"/></svg>
+          Join the waitlist
+        </a>
+      </div>
+      <div class="hero-foot">
+        <span><i aria-hidden="true"></i>Read-only broker link</span>
+        <span><i aria-hidden="true"></i>Verified numbers only</span>
+        <span><i aria-hidden="true"></i>Never advisory</span>
+      </div>
+    </div>
+
+    <!-- The terminal: the 23:45 snapshot + AI-overview fan-out, typed live -->
+    <div class="term tick" role="img" aria-label="Simulated AlphaDesk terminal typing out the nightly 23:45 IST snapshot — net worth captured at Indian market close after mutual fund NAVs publish — then the AI overview fan-out: allocation critic, concentration risk, SIP health and performance attribution agents narrating metrics computed in Python, ending on a line reading 'zero figures invented — every number traces to a computed metric'.">
+      <div class="term-bar">
+        <span class="qs a" aria-hidden="true"></span>
+        <span class="qs g" aria-hidden="true"></span>
+        <span class="qs r" aria-hidden="true"></span>
+        <span class="term-title">alphadesk — snapshot + overview · synthetic data</span>
+        <span class="term-live"><i aria-hidden="true"></i>LIVE</span>
+      </div>
+      <div class="term-body" aria-hidden="true">
+        <div class="term-scan"></div>
+        <div id="termLines"></div>
+        <div class="term-hold" id="termHold">⏸ 0 FIGURES INVENTED — EVERY NUMBER TRACES TO A METRIC</div>
+        <span class="term-cursor" id="termCursor"></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= READOUT TAPE ================= -->
+<div class="tape" aria-hidden="true">
+  <span class="tape-label">Synthetic readout</span>
+  <div class="tape-track">
+    <div class="tape-run" id="tapeRun">
+      <span><b>NET WORTH</b> <span class="num">₹48,23,190</span> <span class="up">▲ 4.7% 26W</span></span>
+      <span><b>INVESTED</b> <span class="num">₹41,90,300</span></span>
+      <span><b>EQUITY</b> <span class="num">62%</span></span>
+      <span><b>MUTUAL FUNDS</b> <span class="num">23%</span></span>
+      <span><b>GOLD + CASH</b> <span class="num">15%</span></span>
+      <span><b>HHI</b> <span class="num">0.31</span></span>
+      <span><b>TOP HOLDING</b> <span class="num">22%</span> <span class="dn">of net worth</span></span>
+      <span><b>FINANCIALS</b> <span class="num">47%</span></span>
+      <span><b>SIPS ON TRACK</b> <span class="num">6/7</span> <span class="up">✓</span></span>
+      <span><b>USD/INR</b> <span class="num">87.42</span></span>
+      <span><b>SNAPSHOT</b> <span class="num">23:45 IST</span> <span class="up">captured</span></span>
+    </div>
+  </div>
+</div>
+
+<!-- ================= TRUST STRIP (social-proof slot) ================= -->
+<div class="trust">
+  <div class="trust-in">
+    <div class="trust-item">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/></svg>
+      <div><div class="t1">Read-only broker access</div><div class="t2">The IND Money link can look, never touch. No orders, ever.</div></div>
+    </div>
+    <div class="trust-item">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 19V5M4 19h16"/><path d="M8 16v-5M12 16V8M16 16v-3"/></svg>
+      <div><div class="t1">Descriptive, never advisory</div><div class="t2">What is — never what to buy. No forecasts, no tips.</div></div>
+    </div>
+    <div class="trust-item">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5" y="11" width="14" height="9"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      <div><div class="t1">Tokens encrypted at rest</div><div class="t2">Broker tokens are encrypted and never sent to your browser.</div></div>
+    </div>
+    <div class="trust-item">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/><path d="M10 11v5M14 11v5"/></svg>
+      <div><div class="t1">Delete-my-data built in</div><div class="t2">Revokes broker access upstream first, then removes every row.</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= FEATURES — THE DASHBOARD ================= -->
+<section id="dashboard">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <p class="eyebrow">The dashboard</p>
+      <h2>One honest<br><span class="amber">number.</span></h2>
+      <p>Your net worth, assembled from a read-only broker link — and every
+      figure either computed, sourced, or shown as an honest blank. Nothing
+      in between.</p>
+    </div>
+    <div class="bento">
+      <div class="card tick rv c-4">
+        <div class="no"><span>01 / NET WORTH</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="14"/><path d="M3 9h18M9 9v9"/></svg>
+        </div>
+        <h3>Invested vs current</h3>
+        <p>Net worth with invested against current value, P&amp;L in ₹ and %.
+        When a source doesn't report cost basis, you see "—" with the reason —
+        never a fabricated −100%.</p>
+        <span class="chip">Honest nulls</span>
+      </div>
+      <div class="card tick rv c-4">
+        <div class="no"><span>02 / ALLOCATION</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l6.5 6.2"/></svg>
+        </div>
+        <h3>Where it all sits</h3>
+        <p>Allocation by asset type, sector and market cap, plus a sortable
+        holdings table. Grouped by instrument — the desk never auto-merges
+        across sources without asking you first.</p>
+        <span class="chip">No silent merges</span>
+      </div>
+      <div class="card tick rv c-4">
+        <div class="no"><span>03 / SNAPSHOTS</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3.5 2"/></svg>
+        </div>
+        <h3>History, nightly</h3>
+        <p>Captured ~23:45 IST, after mutual-fund NAVs publish — net worth at
+        Indian market close, all sources settled. A missed night can never be
+        backfilled, so staleness is shown, not hidden: "History paused — last
+        captured 3 days ago."</p>
+        <span class="chip">23:45 IST · daily</span>
+      </div>
+      <div class="card tick rv c-6 card-gate">
+        <div class="no"><span>04 / AI OVERVIEW</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3.5"/></svg>
+        </div>
+        <h3>Narrated, not invented</h3>
+        <p>The numbers are computed in Python first. Four agents — allocation
+        critic, concentration risk, SIP health, performance attribution —
+        narrate those verified metrics and may not invent figures. Every
+        claim shows the number it came from:</p>
+        <div class="quote num">You are <span class="qn">47%</span> financials.
+        HHI <span class="qn">0.31</span>. Your largest holding is
+        <span class="qn">22%</span> of net worth.</div>
+        <span class="quote-cap">Illustrative narrative · synthetic figures</span>
+        <span class="chip">Every claim cited</span>
+      </div>
+      <div class="card tick rv c-6">
+        <div class="no"><span>05 / PRIVACY BY SHAPE</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg>
+        </div>
+        <h3>Built to not betray you</h3>
+        <p>Consent happens at link time — a screen names exactly what will be
+        read, before the redirect. AI prompts carry aggregates and symbols
+        only: never account numbers, broker IDs or your identity. And a
+        silently wrong net worth is the one error you can't catch — so the
+        desk refuses to guess rather than quietly merge.</p>
+        <span class="chip">Aggregates + symbols only</span>
+      </div>
+      <div class="card tick rv c-8">
+        <div class="no"><span>+ / AT A GLANCE</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 17l5-5 4 3 6-7 3 3"/><path d="M3 21h18"/></svg>
+        </div>
+        <h3>The trend, day by day</h3>
+        <p>The 26-week trend builds from nightly snapshots — one row per day,
+        idempotent, with the daily USD/INR rate stored alongside for US-stock
+        exposure. Figures below are synthetic.</p>
+        <div class="mini num" aria-label="Synthetic portfolio figures">
+          <div><div class="k">Net worth · synthetic</div><div class="v">₹48,23,190</div></div>
+          <div><div class="k">26-week change</div><div class="v up">+₹2,14,560</div></div>
+          <div><div class="k">Top holding weight</div><div class="v">22%</div></div>
+          <div><div class="k">Concentration · HHI</div><div class="v">0.31</div></div>
+          <div class="spark" aria-hidden="true">
+            <i style="height:30%"></i><i style="height:36%"></i><i style="height:33%"></i><i style="height:41%"></i><i style="height:38%"></i><i style="height:46%"></i><i style="height:44%"></i><i style="height:52%"></i><i style="height:49%"></i><i style="height:58%"></i><i style="height:55%"></i><i style="height:63%"></i><i style="height:60%"></i><i style="height:57%"></i><i style="height:66%"></i><i style="height:62%"></i><i style="height:71%"></i><i style="height:68%"></i><i style="height:75%"></i><i style="height:72%"></i><i style="height:80%"></i><i style="height:77%"></i><i style="height:85%"></i><i style="height:82%"></i><i style="height:90%"></i><i class="hot" style="height:100%"></i>
+          </div>
+        </div>
+      </div>
+      <div class="card tick rv c-4">
+        <div class="no"><span>+ / DEMO MODE</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><polygon points="7,5 19,12 7,19"/></svg>
+        </div>
+        <h3>Try before you link</h3>
+        <p>The public demo renders the full dashboard from sample data with a
+        pre-generated narrative — no sign-in, no broker link, and no AI call
+        made while you watch. What you see is exactly what a linked account
+        gets.</p>
+        <span class="chip">Sample data · no sign-in</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= HOW IT WORKS ================= -->
+<section id="how">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <p class="eyebrow">How it works</p>
+      <h2>Link once.<br>Audit <span class="amber">forever.</span></h2>
+      <p>From sign-in to a narrated portfolio in five steps — each one
+      consented, computed, and checkable.</p>
+    </div>
+    <div class="steps rv">
+      <div class="step">
+        <div class="sn num">01</div>
+        <h3>Join</h3>
+        <p>Sign in on the public URL. Access is waitlist-gated while the desk
+        stays small.</p>
+        <svg class="arrow" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 7h9M8 3.5L11.5 7 8 10.5"/></svg>
+      </div>
+      <div class="step">
+        <div class="sn num">02</div>
+        <h3>Link</h3>
+        <p>Connect IND Money, read-only. A consent screen names exactly what
+        will be read — before the redirect.</p>
+        <svg class="arrow" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 7h9M8 3.5L11.5 7 8 10.5"/></svg>
+      </div>
+      <div class="step">
+        <div class="sn num">03</div>
+        <h3>See</h3>
+        <p>Net worth, allocation and holdings render from one normalized
+        model. Unknowns show "—", never a fake number.</p>
+        <svg class="arrow" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 7h9M8 3.5L11.5 7 8 10.5"/></svg>
+      </div>
+      <div class="step">
+        <div class="sn num">04</div>
+        <h3>Accrue</h3>
+        <p>Every night at ~23:45 IST a snapshot lands — market close, NAVs
+        settled. Your history starts on day one.</p>
+        <svg class="arrow" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 7h9M8 3.5L11.5 7 8 10.5"/></svg>
+      </div>
+      <div class="step hot">
+        <div class="sn num">05</div>
+        <h3>Audit</h3>
+        <p>The AI overview narrates what changed — and every figure it cites
+        appears beside the claim, traced to a computed metric.</p>
+      </div>
+    </div>
+    <div class="steps-out rv">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M7 2v7M3.5 6L7 9.5 10.5 6"/></svg>
+      LLM down? The dashboard still renders <b>every number</b> — only the narrative waits
+    </div>
+  </div>
+</section>
+
+<!-- ================= THE LAB — SIMULATION ================= -->
+<section id="lab" class="rails">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <p class="eyebrow">The Lab</p>
+      <h2>The research desk,<br>behind <span class="amber">glass.</span></h2>
+      <p>AlphaDesk's original multi-agent research desk lives on as a
+      clearly-labelled simulation. Impressive machinery — and it never
+      touches your real portfolio view.</p>
+    </div>
+    <div class="rv">
+      <span class="lab-badge">⚗ Lab · simulation — not investment advice</span>
+      <div class="lab-pipe num"><b>scanner</b> → <b>research</b> → <b>analyst</b> → <b>risk guardrails</b> → <span class="gate">⏸ human approval</span> → <b>paper watchlist</b></div>
+    </div>
+    <div class="rail-grid">
+      <div class="rail tick rv">
+        <div class="rn num">0.70</div>
+        <div class="rl">Minimum confidence</div>
+        <p>Below 0.70, a simulated pick is rejected before it's shown. Scores
+        in 0.70–0.75 survive — wearing a caution flag.</p>
+      </div>
+      <div class="rail tick rv">
+        <div class="rn num">3</div>
+        <div class="rl">Max per sector</div>
+        <p>Three picks per known sector, hard cap. The fourth is auto-rejected
+        no matter how good the story reads.</p>
+      </div>
+      <div class="rail tick rv">
+        <div class="rn num">1</div>
+        <div class="rl">Human approval gate</div>
+        <p>Every Lab run pauses before execution. Nothing reaches the paper
+        watchlist without your explicit sign-off — there is no auto-approve.</p>
+      </div>
+      <div class="rail tick rv rail-zero">
+        <div class="rn num">0</div>
+        <div class="rl">Real orders. Ever.</div>
+        <p>The broker layer is a stub by design. Every Lab position is paper,
+        every trade is hypothetical — and the Lab's output is never rendered
+        beside your real holdings.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= FINAL CTA ================= -->
+<section class="cta-final">
+  <div class="cta-ghostline num" aria-hidden="true">23:45</div>
+  <div class="wrap">
+    <div class="rv">
+      <p class="eyebrow">Sit down at the desk</p>
+      <div class="cta-big">See it<br><span class="amber">whole.</span></div>
+      <p>Walk the full dashboard on sample data first — no sign-in, no broker
+      link, nothing generated while you wait. When it earns your trust, join
+      the waitlist and link your own. The desk will have your history ready
+      by 23:45.</p>
+      <div class="cta-ctas">
+        <a class="btn btn-primary" href="#">View the live demo <span class="cue" aria-hidden="true">→</span></a>
+        <a class="btn btn-ghost" href="#">Join the waitlist</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= FOOTER ================= -->
+<footer>
+  <div class="foot-in">
+    <div>
+      <div class="foot-mark"><span class="sq" aria-hidden="true"></span>ALPHADESK</div>
+      <div class="foot-legal">Synthetic demo data · descriptive analytics only · not investment advice</div>
+    </div>
+    <div class="foot-links">
+      <a href="#">Privacy</a>
+      <a href="#">Terms</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ----------------------------------------------------------
+     THE TERMINAL — the 23:45 snapshot, then the overview
+     fan-out. Ends on the blinking audit line: 0 figures
+     invented — every number traces to a computed metric.
+     ---------------------------------------------------------- */
+  var LINES = [
+    {h:'<span class="p">desk@alphadesk</span><span class="mut">:~$</span> <span class="cmd">alphadesk snapshot --ist 23:45</span>', pause:600},
+    {h:'<span class="tag">[snap&nbsp;]</span> MF NAVs published — all sources settled', pause:440},
+    {h:'<span class="tag">[snap&nbsp;]</span> net worth captured <span class="mut">……</span> <span class="num">₹48,23,190</span> <span class="mut">(synthetic)</span>', pause:480},
+    {h:'<span class="tag">[snap&nbsp;]</span> stored <span class="num">2026-08-16</span> · one row per day · <span class="ok">✓ done</span>', pause:700},
+    {h:'<span class="p">desk@alphadesk</span><span class="mut">:~$</span> <span class="cmd">alphadesk overview</span>', pause:560},
+    {h:'<span class="tag">[calc&nbsp;]</span> <span class="num">14</span> metrics computed in python — verified', pause:460},
+    {h:'<span class="tag">[agent]</span> allocation_critic <span class="ok">✓</span>&nbsp;&nbsp;concentration_risk <span class="ok">✓</span>', pause:440},
+    {h:'<span class="tag">[agent]</span> sip_health <span class="ok">✓</span>&nbsp;&nbsp;performance_attribution <span class="ok">✓</span>', pause:440},
+    {h:'<span class="tag">[synth]</span> narrative drafted — each claim carries its figure', pause:700}
+  ];
+
+  var box    = document.getElementById("termLines");
+  var hold   = document.getElementById("termHold");
+  var cursor = document.getElementById("termCursor");
+
+  function finishInstantly(){
+    box.innerHTML = LINES.map(function(l){
+      return '<div class="term-line">' + l.h + "</div>";
+    }).join("");
+    hold.classList.add("on");
+    cursor.style.display = "none";
+  }
+
+  if (reduced) {
+    finishInstantly();
+  } else {
+    // Type each line character-by-character against its plain text,
+    // then swap in the colorized HTML — keeps markup out of the typing loop.
+    var li = 0;
+    var tmp = document.createElement("div");
+
+    function typeLine(){
+      if (li >= LINES.length){
+        hold.classList.add("on");
+        cursor.style.display = "none";
+        return;
+      }
+      var line = LINES[li];
+      tmp.innerHTML = line.h;
+      var text = tmp.textContent;
+      var el = document.createElement("div");
+      el.className = "term-line";
+      box.appendChild(el);
+      var ci = 0;
+      (function tick(){
+        if (ci <= text.length){
+          el.textContent = text.slice(0, ci);
+          ci += 2;                                   // 2 chars per frame — brisk, terminal-fast
+          setTimeout(tick, 14);
+        } else {
+          el.innerHTML = line.h;                      // swap in colors
+          li++;
+          setTimeout(typeLine, line.pause);
+        }
+      })();
+    }
+    setTimeout(typeLine, 700);
+  }
+
+  /* ----------------------------------------------------------
+     READOUT TAPE — duplicate content once for a seamless loop
+     ---------------------------------------------------------- */
+  var run = document.getElementById("tapeRun");
+  run.innerHTML += run.innerHTML;                     // second copy; parent is aria-hidden
+
+  /* ----------------------------------------------------------
+     REVEAL ON SCROLL
+     ---------------------------------------------------------- */
+  var rvs = document.querySelectorAll(".rv");
+  if (reduced || !("IntersectionObserver" in window)) {
+    rvs.forEach(function(el){ el.classList.add("in"); });
+  } else {
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting){ e.target.classList.add("in"); io.unobserve(e.target); }
+      });
+    }, {threshold:.12, rootMargin:"0px 0px -40px 0px"});
+    rvs.forEach(function(el){ io.observe(el); });
+  }
+})();
+</script>
+</body>
+</html>
