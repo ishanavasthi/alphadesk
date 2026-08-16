@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AlphaDesk — Bahi Khata of Your Net Worth</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&family=Courier+Prime:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+  /* ============ Munim's Desk palette ============ */
+  :root{
+    --cloth:      #9e2b25;  /* ledger-cloth red — cover & frame only */
+    --cloth-deep: #7e211c;
+    --paper:      #f8f1df;  /* aged paper */
+    --paper-dim:  #f2e9d2;
+    --rule-blue:  #a9bdd6;  /* ruled lines — decorative only */
+    --margin-red: #c96f66;  /* margin rule — decorative only */
+    --ink:        #262117;
+    --ink-soft:   #4c4434;
+    --stamp:      #b3362c;  /* passes 4.5:1 on paper — ok for text */
+    --gold:       #d9b45b;
+    --gold-deep:  #b8923c;
+    --rule-h:     34px;     /* ruling pitch */
+    --serif: "Libre Caslon Text", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --mono:  "Courier Prime", "Courier New", Courier, monospace;
+  }
+
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html{ scroll-behavior:smooth; }
+  @media (prefers-reduced-motion: reduce){ html{ scroll-behavior:auto; } }
+
+  body{
+    font-family: var(--serif);
+    color: var(--ink);
+    background: var(--cloth);
+    /* cloth weave on the surround */
+    background-image:
+      repeating-linear-gradient(0deg,  rgba(0,0,0,.06) 0 1px, transparent 1px 3px),
+      repeating-linear-gradient(90deg, rgba(0,0,0,.05) 0 1px, transparent 1px 3px);
+    font-size: 17px;
+    line-height: var(--rule-h);
+    overflow-x: hidden;
+  }
+
+  a{ color: var(--ink); }
+  a:focus-visible, button:focus-visible{
+    outline: 2px solid var(--stamp);
+    outline-offset: 3px;
+  }
+  ::selection{ background: var(--gold); color: var(--ink); }
+
+  .num{ font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* ============ The book ============ */
+  .book{
+    max-width: 1020px;
+    margin: 0 auto;
+    box-shadow: 0 24px 60px rgba(0,0,0,.45);
+  }
+
+  /* ---------- Cover band (the closed ledger) ---------- */
+  .cover{
+    background: linear-gradient(175deg, var(--cloth) 0%, var(--cloth-deep) 100%);
+    background-color: var(--cloth);
+    color: var(--gold);
+    text-align: center;
+    padding: 64px 24px 56px;
+    position: relative;
+    border-bottom: 6px solid var(--gold-deep);
+  }
+  .cover::before, .cover::after{ /* blind-tooled frame lines */
+    content:"";
+    position:absolute; inset: 14px;
+    border: 1px solid rgba(217,180,91,.55);
+    pointer-events:none;
+  }
+  .cover::after{ inset: 20px; border-color: rgba(217,180,91,.3); }
+  .cover .plate{
+    display:inline-block;
+    border: 2px solid var(--gold);
+    padding: 26px 34px 30px;
+    position: relative;
+    max-width: 620px;
+  }
+  .cover .plate::before{
+    content:"";
+    position:absolute; inset:5px;
+    border:1px solid rgba(217,180,91,.6);
+    pointer-events:none;
+  }
+  .cover .est{
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .35em;
+    text-transform: uppercase;
+    color: var(--gold);
+    opacity: .9;
+    line-height: 1.6;
+  }
+  .cover h1{
+    font-size: clamp(40px, 7vw, 64px);
+    font-weight: 700;
+    letter-spacing: .06em;
+    line-height: 1.1;
+    margin: 14px 0 10px;
+    color: var(--gold);
+    text-shadow: 0 1px 0 rgba(0,0,0,.55);
+  }
+  .cover .devanagari{
+    font-size: clamp(18px, 3vw, 24px);
+    font-style: italic;
+    line-height: 1.6;
+    color: var(--gold);
+  }
+  .cover .flourish{
+    display:flex; align-items:center; justify-content:center;
+    gap: 12px; margin-top: 18px; color: var(--gold);
+  }
+  .cover .flourish .line{ width: 64px; height: 1px; background: rgba(217,180,91,.7); }
+
+  /* ---------- The opened page ---------- */
+  .page{
+    background-color: var(--paper);
+    /* horizontal ruling */
+    background-image:
+      repeating-linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent calc(var(--rule-h) - 1px),
+        var(--rule-blue) calc(var(--rule-h) - 1px),
+        var(--rule-blue) var(--rule-h)
+      );
+    position: relative;
+  }
+  /* single vertical margin rule */
+  .page::before{
+    content:"";
+    position:absolute; top:0; bottom:0; left: 96px;
+    width: 0;
+    border-left: 1px solid var(--margin-red);
+    border-right: 1px solid var(--margin-red);
+    padding-left: 2px;
+    pointer-events:none;
+  }
+  .leaf{
+    position: relative;
+    padding: 68px 56px 34px 140px; /* content sits right of the margin */
+  }
+  .leaf + .leaf{ border-top: 1px dashed var(--margin-red); }
+
+  .folio{
+    position:absolute;
+    left: 0; top: 72px;
+    width: 96px;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--stamp);
+    line-height: 1.5;
+    padding: 0 8px;
+  }
+  .folio b{ display:block; font-size: 20px; font-weight: 700; letter-spacing: 0; }
+
+  .carried{
+    text-align: right;
+    font-family: var(--mono);
+    font-style: italic;
+    font-size: 13px;
+    color: var(--ink-soft);
+    margin-top: calc(var(--rule-h) * 1.5);
+    line-height: var(--rule-h);
+  }
+
+  .kicker{
+    font-family: var(--mono);
+    font-size: 12.5px;
+    letter-spacing: .28em;
+    text-transform: uppercase;
+    color: var(--stamp);
+    line-height: var(--rule-h);
+  }
+  h2{
+    font-size: clamp(26px, 4vw, 34px);
+    font-weight: 700;
+    line-height: calc(var(--rule-h) * 1.35);
+    margin: 0 0 var(--rule-h);
+  }
+
+  /* ---------- Hero leaf ---------- */
+  .hero{ padding-top: 72px; }
+  .hero-grid{
+    display:grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(220px, 1fr);
+    gap: 32px;
+    align-items: start;
+  }
+  .hero h2{
+    font-size: clamp(34px, 5.2vw, 52px);
+    line-height: 1.28;
+    margin-bottom: calc(var(--rule-h) * .75);
+  }
+  .hero h2 em{ font-style: italic; }
+  .hero .sub, .lab .sub{
+    font-size: 18px;
+    line-height: var(--rule-h);
+    color: var(--ink-soft);
+    max-width: 46ch;
+    margin-bottom: var(--rule-h);
+  }
+  .hero .sub strong, .lab .sub strong{ color: var(--ink); }
+
+  .cta-row{
+    display:flex; flex-wrap:wrap; gap: 14px; align-items:center;
+    margin-bottom: calc(var(--rule-h) * .6);
+  }
+  .btn{
+    display:inline-block;
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    text-decoration: none;
+    padding: 13px 26px 12px;
+    border-radius: 2px;
+    line-height: 1.4;
+    transition: transform .15s ease, box-shadow .15s ease;
+  }
+  .btn-primary{
+    background: var(--stamp);
+    color: var(--paper);
+    border: 1px solid var(--cloth-deep);
+    box-shadow: 2px 3px 0 rgba(38,33,23,.35);
+  }
+  .btn-primary:hover{ transform: translate(-1px,-1px); box-shadow: 3px 4px 0 rgba(38,33,23,.4); }
+  .btn-secondary{
+    background: transparent;
+    color: var(--ink);
+    border: 1.5px solid var(--ink);
+    box-shadow: 2px 3px 0 rgba(38,33,23,.18);
+  }
+  .btn-secondary:hover{ transform: translate(-1px,-1px); box-shadow: 3px 4px 0 rgba(38,33,23,.25); }
+  @media (prefers-reduced-motion: reduce){
+    .btn, .btn:hover{ transition:none; transform:none; }
+  }
+  .cta-note{
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    line-height: 1.6;
+  }
+
+  /* the rubber stamp */
+  .stamp-well{
+    display:flex;
+    justify-content:center;
+    align-items:flex-start;
+    padding-top: calc(var(--rule-h) * 1.4);
+  }
+  .stamp{
+    font-family: var(--mono);
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--stamp);
+    border: 4px double var(--stamp);
+    border-radius: 6px;
+    padding: 14px 18px;
+    text-align:center;
+    font-size: 17px;
+    letter-spacing: .12em;
+    line-height: 1.5;
+    transform: rotate(-8deg);
+    position: relative;
+    max-width: 250px;
+    /* ink-pad texture: speckle mask eats into the impression */
+    -webkit-mask-image: radial-gradient(rgba(0,0,0,.92) 58%, rgba(0,0,0,.55) 72%, rgba(0,0,0,.85) 100%),
+      repeating-radial-gradient(circle at 30% 40%, transparent 0 1px, rgba(0,0,0,.85) 1px 4px);
+    mask-image: radial-gradient(rgba(0,0,0,.92) 58%, rgba(0,0,0,.55) 72%, rgba(0,0,0,.85) 100%),
+      repeating-radial-gradient(circle at 30% 40%, transparent 0 1px, rgba(0,0,0,.85) 1px 4px);
+    -webkit-mask-composite: source-in;
+    mask-composite: intersect;
+    opacity: 0;
+  }
+  .stamp small{
+    display:block;
+    font-size: 11px;
+    letter-spacing: .22em;
+    border-top: 1.5px solid var(--stamp);
+    margin-top: 8px; padding-top: 6px;
+  }
+  .stamp.inked{ animation: thump .55s cubic-bezier(.2, 1.6, .35, 1) forwards; }
+  @keyframes thump{
+    0%   { opacity: 0; transform: scale(2.6) rotate(-14deg); }
+    55%  { opacity: 1; transform: scale(.94) rotate(-7deg); }
+    75%  { transform: scale(1.04) rotate(-8.5deg); }
+    100% { opacity: 1; transform: scale(1) rotate(-8deg); }
+  }
+  @media (prefers-reduced-motion: reduce){
+    .stamp{ opacity: 1; }
+    .stamp.inked{ animation: none; }
+  }
+
+  /* trust badges (the social-proof slot) */
+  .badges{
+    display:flex; flex-wrap:wrap;
+    gap: 10px 12px;
+    margin-top: calc(var(--rule-h) * .5);
+  }
+  .badge{
+    display:inline-flex; align-items:center; gap: 8px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--ink);
+    border: 1.5px solid var(--ink-soft);
+    border-radius: 3px;
+    padding: 7px 12px;
+    background: var(--paper-dim);
+    line-height: 1.4;
+  }
+  .badge svg{ flex: 0 0 auto; color: var(--stamp); }
+
+  /* fine print beneath the badges — custody of the books */
+  .fineprint{
+    list-style: none;
+    margin-top: calc(var(--rule-h) * .5);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    line-height: 1.7;
+    max-width: 58ch;
+  }
+  .fineprint li{ position: relative; padding-left: 18px; }
+  .fineprint li::before{
+    content: "§";
+    position: absolute; left: 0;
+    color: var(--stamp);
+  }
+
+  /* ---------- Folio 1: the desk (features) ---------- */
+  .accounts{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 44px;
+    border-top: 2px solid var(--ink);
+  }
+  .account{
+    display:flex; gap: 16px;
+    padding: calc(var(--rule-h) * .75) 0;
+    border-bottom: 1px solid var(--rule-blue);
+  }
+  .account .glyph{
+    flex: 0 0 auto;
+    width: 44px; height: 44px;
+    border: 1.5px solid var(--ink);
+    border-radius: 50%;
+    display:grid; place-items:center;
+    color: var(--ink);
+    background: var(--paper);
+    margin-top: 4px;
+  }
+  .account h3{
+    font-size: 18px;
+    font-weight: 700;
+    line-height: var(--rule-h);
+  }
+  .account h3 .no{
+    font-family: var(--mono);
+    font-weight: 400;
+    font-size: 12px;
+    color: var(--stamp);
+    letter-spacing: .1em;
+    margin-right: 6px;
+  }
+  .account p{
+    font-size: 15px;
+    line-height: calc(var(--rule-h) * .82);
+    color: var(--ink-soft);
+  }
+
+  /* the balance figure */
+  .balance{
+    margin-top: calc(var(--rule-h) * 1.5);
+    border: 2px solid var(--ink);
+    background: var(--paper-dim);
+    padding: 24px 28px 20px;
+    max-width: 560px;
+    position: relative;
+  }
+  .balance::before{
+    content:"";
+    position:absolute; inset: 4px;
+    border: 1px solid var(--rule-blue);
+    pointer-events:none;
+  }
+  .balance .label{
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+  .balance .figure{
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    font-size: clamp(34px, 6vw, 46px);
+    line-height: 1.3;
+    color: var(--ink);
+    letter-spacing: .01em;
+  }
+  .balance .words{
+    font-style: italic;
+    font-size: 16px;
+    color: var(--ink-soft);
+    border-top: 1px solid var(--margin-red);
+    margin-top: 8px;
+    padding-top: 8px;
+    line-height: 1.7;
+  }
+  .balance .tag{
+    position:absolute;
+    top: -12px; right: 14px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    background: var(--stamp);
+    color: var(--paper);
+    padding: 3px 10px;
+    border-radius: 2px;
+  }
+
+  /* ---------- Folio 2: the method (ledger table) ---------- */
+  .ledger-wrap{ overflow-x: auto; }
+  table.ledger{
+    width: 100%;
+    min-width: 640px;
+    border-collapse: collapse;
+    font-size: 15px;
+  }
+  .ledger caption{
+    caption-side: bottom;
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-soft);
+    padding-top: 12px;
+    line-height: 1.6;
+  }
+  .ledger th{
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    text-align: left;
+    color: var(--ink);
+    border-top: 2px solid var(--ink);
+    border-bottom: 2px solid var(--ink);
+    padding: 10px 12px;
+    white-space: nowrap;
+  }
+  .ledger th.amt, .ledger td.amt{
+    text-align: right;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    border-left: 1px solid var(--margin-red);
+  }
+  .ledger td{
+    padding: 12px;
+    border-bottom: 1px solid var(--rule-blue);
+    vertical-align: top;
+    line-height: 1.65;
+  }
+  .ledger td.date{
+    font-family: var(--mono);
+    font-size: 13px;
+    white-space: nowrap;
+    color: var(--ink-soft);
+  }
+  .ledger td .who{
+    font-weight: 700;
+    display:block;
+  }
+  .ledger td .what{
+    color: var(--ink-soft);
+    font-size: 14.5px;
+  }
+  .ledger td.amt .tick{ color: var(--stamp); font-weight: 700; }
+  .ledger tr.total td{
+    border-top: 2px solid var(--ink);
+    border-bottom: 4px double var(--ink);
+    font-weight: 700;
+    background: var(--paper-dim);
+  }
+  .ledger tr.total td .who{ font-family: var(--mono); text-transform: uppercase; font-size: 13px; letter-spacing: .12em; }
+
+  /* margin notes — the guardrails */
+  .notes-head{
+    margin-top: calc(var(--rule-h) * 1.5);
+  }
+  .notes{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px 28px;
+    margin-top: calc(var(--rule-h) * .5);
+  }
+  .note{
+    position: relative;
+    font-style: italic;
+    font-size: 16px;
+    line-height: 1.7;
+    color: var(--ink);
+    padding: 10px 14px 10px 22px;
+    border-left: 3px solid var(--stamp);
+    background: linear-gradient(90deg, rgba(201,111,102,.10), transparent 70%);
+    transform: rotate(-.4deg);
+  }
+  .note:nth-child(2n){ transform: rotate(.35deg); }
+  .note .nb{
+    font-family: var(--mono);
+    font-style: normal;
+    font-size: 11px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--stamp);
+    display:block;
+    margin-bottom: 2px;
+  }
+  .note .num{ font-weight: 700; }
+
+  /* ---------- Final CTA leaf ---------- */
+  .closing{ text-align: left; }
+  .closing h2{ max-width: 22ch; }
+  .closing .sign{
+    margin-top: calc(var(--rule-h) * 1);
+    font-style: italic;
+    color: var(--ink-soft);
+    font-size: 15px;
+    line-height: 1.7;
+    max-width: 52ch;
+  }
+  .sig-line{
+    margin-top: calc(var(--rule-h) * 1.2);
+    display:flex; align-items:flex-end; gap: 40px; flex-wrap: wrap;
+  }
+  .sig-line .slot{
+    flex: 1 1 200px;
+    max-width: 260px;
+    border-bottom: 1.5px solid var(--ink);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    padding-bottom: 34px;
+    position: relative;
+  }
+  .sig-line .slot em{
+    position:absolute;
+    left: 4px; bottom: 4px;
+    font-family: var(--serif);
+    font-size: 21px;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--ink);
+  }
+
+  /* ---------- Footer ---------- */
+  footer{
+    background: var(--cloth-deep);
+    color: var(--paper);
+    padding: 30px 24px 34px;
+    text-align: center;
+    border-top: 6px solid var(--gold-deep);
+  }
+  footer .legal{
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: .04em;
+    line-height: 1.8;
+  }
+  footer nav{ margin-top: 10px; }
+  footer a{
+    color: var(--gold);
+    font-family: var(--mono);
+    font-size: 13px;
+    margin: 0 10px;
+  }
+  footer .mark{
+    margin-top: 14px;
+    font-size: 13px;
+    font-style: italic;
+    color: rgba(248,241,223,.75);
+    line-height: 1.6;
+  }
+
+  /* ---------- Gentle reveals (near-still) ---------- */
+  .reveal{ opacity: 0; transform: translateY(8px); transition: opacity .7s ease, transform .7s ease; }
+  .reveal.shown{ opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce){
+    .reveal{ opacity: 1; transform: none; transition: none; }
+  }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width: 860px){
+    .accounts{ grid-template-columns: 1fr; }
+    .hero-grid{ grid-template-columns: 1fr; }
+    .stamp-well{ justify-content:flex-start; padding-top: calc(var(--rule-h) * .5); }
+    .notes{ grid-template-columns: 1fr; }
+  }
+  @media (max-width: 640px){
+    body{ font-size: 16px; }
+    .page::before{ display:none; }        /* margin rule drops on mobile */
+    .folio{
+      position: static;
+      width: auto;
+      text-align: left;
+      padding: 0;
+      margin-bottom: 8px;
+    }
+    .folio b{ display:inline; font-size: 12px; margin-right: 6px; }
+    .leaf{ padding: 44px 20px 28px; }
+    .cover{ padding: 44px 16px 40px; }
+    .cover .plate{ padding: 20px 18px 24px; }
+    .balance{ padding: 20px 18px 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="book">
+
+  <!-- ============ COVER ============ -->
+  <header class="cover">
+    <div class="plate">
+      <p class="est">Regd. No. — · one entry daily, 23:45 IST · Bombay</p>
+      <h1>AlphaDesk</h1>
+      <p class="devanagari">· बही खाता of your net worth ·</p>
+      <div class="flourish" aria-hidden="true">
+        <span class="line"></span>
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.3">
+          <circle cx="9" cy="9" r="7.4"/><circle cx="9" cy="9" r="2.6"/>
+          <path d="M9 1.6v3M9 13.4v3M1.6 9h3M13.4 9h3"/>
+        </svg>
+        <span class="line"></span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ============ HERO LEAF ============ -->
+  <main class="page">
+    <section class="leaf hero" aria-labelledby="hero-h">
+      <p class="folio"><b>1</b>Folio One<br>The Opening</p>
+      <div class="hero-grid">
+        <div>
+          <p class="kicker">A portfolio analyzer · Indian retail investors</p>
+          <h2 id="hero-h">Your whole net worth,<br><em>entered daily, in ink.</em></h2>
+          <p class="sub">
+            Link your IND Money account — read-only — and AlphaDesk keeps the book a munim
+            once kept: net worth, allocation, holdings, and history, entered as one line a
+            day at Indian market close. An AI overview narrates the figures, but
+            <strong>every number is computed and verified before a single word is written
+            about it.</strong>
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="#" aria-disabled="true">View the live demo</a>
+            <a class="btn btn-secondary" href="#" aria-disabled="true">Join the waitlist</a>
+          </div>
+          <p class="cta-note">The demo is public — the full dashboard on sample data, no sign-in. Accounts are waitlist-gated.</p>
+
+          <!-- social-proof slot: trust badges -->
+          <ul class="badges" style="list-style:none;">
+            <li class="badge">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2.5" y="6" width="9" height="6" rx="1"/><path d="M4.5 6V4.5a2.5 2.5 0 015 0V6"/></svg>
+              Read-only broker access
+            </li>
+            <li class="badge">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2.5 11.5h9M4 11.5V7M7 11.5V4M10 11.5V8.5"/></svg>
+              Descriptive, never advisory
+            </li>
+            <li class="badge">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M7 1.6l4.5 1.9v3.1c0 3-1.9 5-4.5 6.1C4.4 11.6 2.5 9.6 2.5 6.6V3.5L7 1.6z"/><path d="M5.2 7l1.3 1.3L9 5.8"/></svg>
+              Tokens encrypted at rest
+            </li>
+            <li class="badge">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2.8 4h8.4M5.6 4V2.6h2.8V4M4 4l.6 8h4.8L10 4M5.9 6.2v4M8.1 6.2v4"/></svg>
+              Delete-my-data built in
+            </li>
+          </ul>
+          <ul class="fineprint">
+            <li>Broker tokens are encrypted at rest (Fernet) and never returned to the frontend.</li>
+            <li>AI prompts carry aggregates and symbols only — never account numbers or ids.</li>
+            <li>The consent screen at link time names exactly what will be read.</li>
+            <li>Delete-my-data revokes the broker token upstream, then cascade-deletes every row.</li>
+          </ul>
+        </div>
+
+        <div>
+          <div class="balance" style="margin-top: calc(var(--rule-h) * .4);">
+            <span class="tag">Synthetic figure</span>
+            <p class="label">Net worth as entered · 15 Aug · 23:45 IST</p>
+            <p class="figure">₹12,40,000</p>
+            <p class="words">Rupees twelve lakh forty thousand only — an illustrative figure, entered for demonstration and audited by no one.</p>
+          </div>
+        </div>
+      </div>
+      <p class="carried">balance carried forward &nbsp;→&nbsp; folio 2</p>
+    </section>
+
+    <!-- ============ FOLIO 2 · THE BOOK (features) ============ -->
+    <section class="leaf reveal" aria-labelledby="desk-h">
+      <p class="folio"><b>2</b>Folio Two<br>The Book</p>
+      <p class="kicker">Heads of account</p>
+      <h2 id="desk-h">One book. Every paisa under its head.</h2>
+
+      <div class="accounts">
+        <div class="account">
+          <span class="glyph" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="3" width="14" height="16" rx="1.5"/><path d="M7.5 7.5h7M7.5 11h7M7.5 14.5h4"/></svg>
+          </span>
+          <div>
+            <h3><span class="no">A/C 01</span>Net worth</h3>
+            <p>Invested against current, in rupees and in percent — the balance every other page of this book carries forward.</p>
+          </div>
+        </div>
+        <div class="account">
+          <span class="glyph" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 3v16M6 19h10M11 5L5 8m6-3l6 3M3 12l2-4 2 4a2.4 2.4 0 01-4 0zm12 0l2-4 2 4a2.4 2.4 0 01-4 0z"/></svg>
+          </span>
+          <div>
+            <h3><span class="no">A/C 02</span>Allocation</h3>
+            <p>Weighed by asset type, by sector, by market cap — which columns of the book your money actually sits in.</p>
+          </div>
+        </div>
+        <div class="account">
+          <span class="glyph" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="9.5" cy="9.5" r="5.5"/><path d="M13.7 13.7L19 19"/></svg>
+          </span>
+          <div>
+            <h3><span class="no">A/C 03</span>Holdings</h3>
+            <p>Every position in one sortable table. Where cost basis is unknown, the ledger shows "—" — never a fabricated −100%. An honest blank beats a confident wrong number.</p>
+          </div>
+        </div>
+        <div class="account">
+          <span class="glyph" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.5 3.5l4 4L8 18l-5 1 1-5L14.5 3.5z"/><path d="M12.5 5.5l4 4"/></svg>
+          </span>
+          <div>
+            <h3><span class="no">A/C 04</span>The daily entry</h3>
+            <p>Captured about 23:45 IST, after mutual-fund NAVs publish: your net worth at Indian market close, all sources settled. One line a day, in ink.</p>
+          </div>
+        </div>
+        <div class="account">
+          <span class="glyph" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 4.5C9 3 6 2.8 3.5 3.6V18c2.5-.8 5.5-.6 7.5.9 2-1.5 5-1.7 7.5-.9V3.6C16 2.8 13 3 11 4.5z"/><path d="M11 4.5V18.9"/></svg>
+          </span>
+          <div>
+            <h3><span class="no">A/C 05</span>The running history</h3>
+            <p>Daily lines become the trend — here, "carried forward" is literal. If capture pauses, the page says so: <em>"History paused — last captured N days ago."</em> A missed day can never be backfilled.</p>
+          </div>
+        </div>
+        <div class="account">
+          <span class="glyph" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 14c3-1 4.5-4.5 5-8l2 1c.4 2-.2 4-1 5.5H17a1.5 1.5 0 010 3h-1a1.5 1.5 0 01-.5 3h-1a1.5 1.5 0 01-1 2.5H8c-2 0-3-1-4-1z"/></svg>
+          </span>
+          <div>
+            <h3><span class="no">A/C 06</span>The munim's commentary</h3>
+            <p>An AI overview: four clerks — allocation critic, concentration risk, SIP health, performance attribution — hand notes to a synthesizer. Every figure is computed in Python first; no agent may invent one, and each claim shows its number. If the AI is unavailable, the dashboard still renders complete — a munim's ledger stands even when the commentary stops.</p>
+          </div>
+        </div>
+      </div>
+
+      <p class="carried">balance carried forward &nbsp;→&nbsp; folio 3</p>
+    </section>
+
+    <!-- ============ FOLIO 3 · THE METHOD (how it works) ============ -->
+    <section class="leaf reveal" aria-labelledby="method-h">
+      <p class="folio"><b>3</b>Folio Three<br>The Method</p>
+      <p class="kicker">A day's entries</p>
+      <h2 id="method-h">How a name earns its line in the book.</h2>
+
+      <div class="ledger-wrap">
+        <table class="ledger">
+          <caption>Entries illustrative &amp; synthetic — dated for demonstration. "Proposed" and "Approved" replace the old debit and credit columns; only a signature moves a name across.</caption>
+          <thead>
+            <tr>
+              <th scope="col">Date</th>
+              <th scope="col">Particulars</th>
+              <th scope="col" class="amt">Proposed</th>
+              <th scope="col" class="amt">Approved</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="date">16 Aug</td>
+              <td><span class="who">Scanner</span><span class="what">To scanning NSE movers — day's candidate list entered in the day-book.</span></td>
+              <td class="amt">12 names</td>
+              <td class="amt">—</td>
+            </tr>
+            <tr>
+              <td class="date">16 Aug</td>
+              <td><span class="who">Research</span><span class="what">To particulars gathered on each candidate, per read-only IND Money data.</span></td>
+              <td class="amt">12 names</td>
+              <td class="amt">—</td>
+            </tr>
+            <tr>
+              <td class="date">16 Aug</td>
+              <td><span class="who">Analyst</span><span class="what">To reports written, confidence figures affixed; weak cases set aside.</span></td>
+              <td class="amt">5 names</td>
+              <td class="amt">—</td>
+            </tr>
+            <tr>
+              <td class="date">16 Aug</td>
+              <td><span class="who">Risk Manager</span><span class="what">By guardrails applied — two struck off, one flagged for caution at 0.72 confidence.</span></td>
+              <td class="amt">3 names <span class="tick">†1 flag</span></td>
+              <td class="amt">—</td>
+            </tr>
+            <tr>
+              <td class="date">16 Aug</td>
+              <td><span class="who">The human gate</span><span class="what">Desk halts. Reports and risk notes laid before the proprietor for signature.</span></td>
+              <td class="amt">3 held</td>
+              <td class="amt"><span class="tick">✓ 2 signed</span></td>
+            </tr>
+            <tr class="total">
+              <td class="date">16 Aug</td>
+              <td><span class="who">To paper watchlist</span><span class="what">Approved names entered. No order placed — the broker layer is a stub, and always will be here.</span></td>
+              <td class="amt">—</td>
+              <td class="amt">2 names</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="notes-head">
+        <p class="kicker">Notes in the margin — the guardrails</p>
+      </div>
+      <div class="notes">
+        <p class="note"><span class="nb">N.B. i</span>No entry below <span class="num">0.70</span> confidence — such names are rejected outright, without discussion.</p>
+        <p class="note"><span class="nb">N.B. ii</span>Between <span class="num">0.70</span> and <span class="num">0.75</span>, the name is flagged for caution. It may still be signed, but the flag stays on the page.</p>
+        <p class="note"><span class="nb">N.B. iii</span>Not more than <span class="num">3</span> names to any one known sector — a crowded column is a careless column.</p>
+        <p class="note"><span class="nb">N.B. iv</span>Where the analyst writes <em>avoid</em>, the entry is struck through automatically. No appeal.</p>
+        <p class="note"><span class="nb">N.B. v</span>Nothing — nothing — reaches the watchlist without the proprietor's explicit approval.</p>
+      </div>
+
+      <p class="carried">balance carried forward &nbsp;→&nbsp; folio 4</p>
+    </section>
+
+    <!-- ============ FOLIO 4 · CLOSING ENTRY (final CTA) ============ -->
+    <section class="leaf closing reveal" aria-labelledby="close-h">
+      <p class="folio"><b>4</b>Folio Four<br>Closing Entry</p>
+      <p class="kicker">In witness whereof</p>
+      <h2 id="close-h">Open the book. Keep the pen.</h2>
+      <p class="sign">
+        The agents keep the entries; the signature line stays yours. Sit at the demo desk
+        with a full synthetic ledger, or bring your own read-only IND Money connection —
+        either way, this book records research, never orders.
+      </p>
+      <div class="cta-row" style="margin-top: var(--rule-h);">
+        <a class="btn btn-primary" href="#" aria-disabled="true">Launch the demo desk</a>
+        <a class="btn btn-secondary" href="#" aria-disabled="true">Connect IND Money</a>
+      </div>
+      <div class="sig-line" aria-hidden="true">
+        <div class="slot"><em>the five agents</em>Prepared by</div>
+        <div class="slot">Approved by (that's you)</div>
+      </div>
+      <p class="carried">account closed &nbsp;·&nbsp; e. &amp; o. e.</p>
+    </section>
+  </main>
+
+  <!-- ============ FOOTER ============ -->
+  <footer>
+    <p class="legal">Synthetic demo data · descriptive analytics only · not investment advice</p>
+    <nav aria-label="Legal">
+      <a href="#">Privacy</a>·<a href="#">Terms</a>
+    </nav>
+    <p class="mark">AlphaDesk — a बही खाता kept by machines, signed by you.</p>
+  </footer>
+
+</div>
+
+<script>
+  (function(){
+    var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    /* The stamp: thump in once when scrolled into view */
+    var stamp = document.getElementById('heroStamp');
+    if (stamp && !reduced && 'IntersectionObserver' in window){
+      var so = new IntersectionObserver(function(entries){
+        entries.forEach(function(e){
+          if (e.isIntersecting){
+            stamp.classList.add('inked');
+            so.disconnect();
+          }
+        });
+      }, { threshold: 0.6 });
+      so.observe(stamp);
+    } else if (stamp){
+      stamp.style.opacity = '1';
+    }
+
+    /* Near-still section reveals */
+    var leaves = document.querySelectorAll('.reveal');
+    if (!reduced && 'IntersectionObserver' in window){
+      var ro = new IntersectionObserver(function(entries){
+        entries.forEach(function(e){
+          if (e.isIntersecting){
+            e.target.classList.add('shown');
+            ro.unobserve(e.target);
+          }
+        });
+      }, { threshold: 0.08 });
+      leaves.forEach(function(el){ ro.observe(el); });
+    } else {
+      leaves.forEach(function(el){ el.classList.add('shown'); });
+    }
+
+    /* Inert CTAs */
+    document.querySelectorAll('a[aria-disabled="true"]').forEach(function(a){
+      a.addEventListener('click', function(ev){ ev.preventDefault(); });
+    });
+  })();
+</script>
+</body>
+</html>
