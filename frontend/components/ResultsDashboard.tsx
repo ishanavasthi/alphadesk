@@ -7,6 +7,7 @@ import { useIndMoney } from "@/components/AuthProvider";
 import { AgentStepCard, type StageStatus } from "@/components/AgentStepCard";
 import { RecommendationCard } from "@/components/RecommendationCard";
 import { ApprovalModal } from "@/components/ApprovalModal";
+import { rememberLabRun } from "@/components/ResumeRunCard";
 import {
   streamAnalyze,
   type AgentUpdate,
@@ -69,6 +70,10 @@ export function ResultsDashboard({ query, onReset }: { query: string; onReset: (
           // Reflect the run in the URL so a refresh reopens it at /lab/a/<run_id>.
           if (typeof window !== "undefined") {
             window.history.replaceState(null, "", `/lab/a/${e.run_id}`);
+            // …and remember it for this tab, so leaving the Lab and coming back
+            // offers the run instead of forgetting it ever happened. A new run
+            // overwrites the id — only one run is ever remembered.
+            rememberLabRun(e.run_id);
           }
         },
         onUpdate: (e: AgentUpdate) => {
