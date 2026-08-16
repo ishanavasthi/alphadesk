@@ -1,0 +1,645 @@
+<!doctype html>
+<!--
+  AlphaDesk landing candidate C — "Zinc Prospectus"
+  Vibe: clinical SaaS × annual-report restraint. Palette: House Zinc (DECISION.md, verbatim).
+
+  TYPOGRAPHY NOTE (deliberate): this variant uses the system sans stack
+  (ui-sans-serif, -apple-system, …) with tabular numerals — the same stack the
+  locked shadcn/zinc product uses. The whole thesis of this candidate is
+  continuity: the landing page must flow seamlessly into the app it opens
+  into, so adopting it costs nothing. No webfonts on purpose.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlphaDesk — Your whole net worth. Verified, then narrated.</title>
+<style>
+  :root{
+    --bg:#fafafa; --card:#ffffff; --border:#e4e4e7; --ink:#09090b;
+    --muted:#71717a; --faint:#a1a1aa; --accent:#2563eb;
+    --good:#059669; --bad:#dc2626;
+    --warn-bg:#fffbeb; --warn-border:#fde68a; --warn-ink:#92400e;
+    --cap1:#1d4ed8; --cap2:#60a5fa; --cap3:#bfdbfe;
+    --track:#f4f4f5; --radius:8px;
+    --shadow:0 1px 2px rgba(0,0,0,.04);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--ink);
+    font:15px/1.6 ui-sans-serif,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+    -webkit-font-smoothing:antialiased}
+  a{color:inherit;text-decoration:none}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+  .num{font-variant-numeric:tabular-nums}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+
+  /* ---------- sticky nav ---------- */
+  .nav{position:sticky;top:0;z-index:50;background:rgba(250,250,250,.92);
+    backdrop-filter:saturate(1.2) blur(8px);border-bottom:1px solid var(--border)}
+  .nav-in{display:flex;align-items:center;gap:24px;height:56px}
+  .logo{font-weight:600;font-size:16px;letter-spacing:-.01em}
+  .logo b{color:var(--accent);font-weight:600}
+  .nav-links{display:flex;gap:20px;font-size:13.5px;color:var(--muted);flex:1}
+  .nav-links a:hover{color:var(--ink)}
+  .btn{display:inline-flex;align-items:center;gap:7px;border-radius:6px;
+    font-size:14px;font-weight:500;padding:9px 16px;border:1px solid transparent;
+    cursor:pointer;transition:background .15s,border-color .15s,color .15s}
+  .btn.sm{font-size:13px;padding:5px 12px}
+  .btn.primary{background:var(--accent);color:#fff}
+  .btn.primary:hover{background:#1d4ed8}
+  .btn.outline{background:var(--card);border-color:var(--border);color:var(--ink)}
+  .btn.outline:hover{border-color:#d4d4d8;background:#f9f9fa}
+
+  /* ---------- hero ---------- */
+  .hero{padding:72px 0 64px}
+  .hero-grid{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr);
+    gap:56px;align-items:center}
+  .kicker{display:inline-flex;align-items:center;gap:8px;font-size:12px;
+    font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+    border:1px solid var(--border);background:var(--card);border-radius:999px;
+    padding:4px 12px;margin-bottom:20px}
+  .kicker .dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+  h1{font-size:44px;line-height:1.12;font-weight:600;letter-spacing:-.025em;margin-bottom:18px}
+  h1 .quiet{color:var(--muted)}
+  .lede{font-size:16.5px;color:var(--muted);max-width:46ch;margin-bottom:28px}
+  .cta-row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:26px}
+  .badges{display:flex;flex-wrap:wrap;gap:8px}
+  .tbadge{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;
+    color:var(--muted);background:var(--card);border:1px solid var(--border);
+    border-radius:999px;padding:4px 12px}
+  .tbadge svg{flex:none;color:var(--accent)}
+
+  /* ---------- hero mock ---------- */
+  .mock{background:var(--card);border:1px solid var(--border);border-radius:12px;
+    box-shadow:0 1px 2px rgba(0,0,0,.04),0 12px 32px -16px rgba(9,9,11,.10);
+    padding:16px;font-size:12px;min-width:0}
+  .mock-top{display:flex;align-items:center;gap:8px;padding:2px 2px 12px;
+    border-bottom:1px solid var(--border);margin-bottom:12px}
+  .mock-top .logo{font-size:13px}
+  .mock-top .crumb{color:var(--faint);font-size:11.5px}
+  .mock-top .sp{flex:1}
+  .chip{font-size:10.5px;border:1px solid var(--border);border-radius:999px;
+    padding:2px 8px;color:var(--muted);background:var(--card);white-space:nowrap}
+  .chip.syn{border-style:dashed}
+  .m-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:10px}
+  .m-stat{border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;
+    box-shadow:var(--shadow);min-width:0}
+  .m-stat h4{font-size:10.5px;font-weight:500;color:var(--muted);margin-bottom:1px;white-space:nowrap}
+  .m-stat .v{font-size:16px;font-weight:600;letter-spacing:-.02em;white-space:nowrap}
+  .m-stat .n{font-size:10px;color:var(--faint);white-space:nowrap}
+  .up{color:var(--good)} .down{color:var(--bad)}
+  .m-card{border:1px solid var(--border);border-radius:var(--radius);
+    box-shadow:var(--shadow);padding:12px;margin-bottom:10px;min-width:0}
+  .m-card h5{font-size:11.5px;font-weight:600;margin-bottom:1px}
+  .m-card .d{font-size:10.5px;color:var(--muted);margin-bottom:8px}
+  .m-half{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+  .m-half .m-card{margin-bottom:0}
+  /* allocation bars — accent on #f4f4f5 track, label left / value·% right */
+  .bar-row{display:grid;grid-template-columns:64px 1fr;align-items:center;
+    gap:8px;padding:3px 0}
+  .bar-row .lbl{font-size:10.5px;color:var(--ink);white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis}
+  .bar-cell{min-width:0}
+  .bar-track{height:12px;border-radius:3px;background:var(--track);position:relative;
+    overflow:hidden}
+  .bar-fill{position:absolute;inset:0 auto 0 0;border-radius:3px;background:var(--accent);
+    min-width:2px}
+  .bar-val{font-size:9.5px;color:var(--muted);text-align:right;margin-top:1px}
+  /* cap strip — sequential ramp, 2px gaps */
+  .strip{display:flex;height:18px;border-radius:5px;overflow:hidden;gap:2px}
+  .striplegend{display:flex;gap:10px;margin-top:8px;flex-wrap:wrap}
+  .striplegend .k{display:flex;align-items:center;gap:5px;font-size:9.5px;color:var(--muted)}
+  .sq{width:8px;height:8px;border-radius:2px;flex:none}
+  /* latest run rows */
+  .run-row{display:flex;align-items:center;gap:8px;padding:6px 2px;
+    border-bottom:1px solid var(--track);min-width:0}
+  .run-row:last-of-type{border-bottom:0}
+  .run-row .tk{font-weight:600;font-size:11px;letter-spacing:.01em}
+  .run-row .cf{color:var(--muted);font-size:10.5px;white-space:nowrap}
+  .run-row .why{color:var(--faint);font-size:10px;flex:1;text-align:right;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .verdict{font-size:9.5px;font-weight:600;letter-spacing:.05em;border-radius:4px;
+    padding:1px 7px;flex:none}
+  .verdict.pass{color:var(--good);background:#ecfdf5;border:1px solid #a7f3d0}
+  .verdict.flag{color:var(--warn-ink);background:var(--warn-bg);border:1px solid var(--warn-border)}
+  .verdict.reject{color:var(--bad);background:#fef2f2;border:1px solid #fecaca}
+  .verdict.null{color:var(--muted);background:var(--track);border:1px solid var(--border)}
+  .pause-strip{display:flex;align-items:center;gap:8px;background:var(--warn-bg);
+    border:1px solid var(--warn-border);color:var(--warn-ink);border-radius:6px;
+    padding:7px 10px;font-size:10.5px;margin-top:8px}
+  .pause-strip b{font-weight:600}
+  .pause-strip .btn{margin-left:auto;font-size:10px;padding:3px 9px;
+    background:var(--ink);color:#fff;border-radius:5px}
+
+  /* trend draw animation */
+  #trendline{stroke-dasharray:1;stroke-dashoffset:1;
+    animation:draw 1.5s cubic-bezier(.4,0,.2,1) .35s forwards}
+  #trendarea{opacity:0;animation:fadearea .6s ease 1.35s forwards}
+  #trenddot{opacity:0;transform-origin:center;transform-box:fill-box;
+    animation:pop .35s cubic-bezier(.34,1.56,.64,1) 1.85s forwards}
+  @keyframes draw{to{stroke-dashoffset:0}}
+  @keyframes fadearea{to{opacity:.07}}
+  @keyframes pop{0%{opacity:0;transform:scale(.2)}100%{opacity:1;transform:scale(1)}}
+
+  /* ---------- scroll reveal ---------- */
+  .rv{opacity:0;transform:translateY(14px);
+    transition:opacity .55s ease,transform .55s ease}
+  .rv.in{opacity:1;transform:none}
+  .rv.d1{transition-delay:.08s}.rv.d2{transition-delay:.16s}.rv.d3{transition-delay:.24s}
+
+  /* ---------- sections ---------- */
+  section{padding:72px 0}
+  .sec-head{max-width:560px;margin-bottom:40px}
+  .sec-kicker{font-size:12px;font-weight:600;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--accent);margin-bottom:10px}
+  h2{font-size:28px;font-weight:600;letter-spacing:-.02em;margin-bottom:10px}
+  .sec-sub{color:var(--muted);font-size:15px}
+
+  /* features bento */
+  .bento{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:16px}
+  .f-card{background:var(--card);border:1px solid var(--border);
+    border-radius:var(--radius);box-shadow:var(--shadow);padding:24px;
+    grid-column:span 2;display:flex;flex-direction:column;gap:10px;min-width:0}
+  .f-card.wide{grid-column:span 3}
+  .f-ico{width:34px;height:34px;border-radius:8px;background:#eff6ff;color:var(--accent);
+    display:grid;place-items:center;flex:none}
+  .f-card h3{font-size:15px;font-weight:600;letter-spacing:-.01em}
+  .f-card p{font-size:13.5px;color:var(--muted)}
+  .agent-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+  .agent-chips .chip{font-size:11px}
+  .agent-chips .arrow{color:var(--faint);font-size:11px;align-self:center}
+  .metric-chip{display:inline-block;background:#eff6ff;color:#1d4ed8;
+    border:1px solid #bfdbfe;border-radius:999px;padding:0 8px;font-size:11.5px;
+    font-weight:500;font-variant-numeric:tabular-nums}
+
+  /* trust band */
+  .trust{background:var(--card);border-block:1px solid var(--border);padding:44px 0}
+  .trust-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px}
+  .t-item{display:flex;gap:12px;align-items:flex-start}
+  .t-item .f-ico{width:30px;height:30px}
+  .t-item h4{font-size:13.5px;font-weight:600;margin-bottom:2px}
+  .t-item p{font-size:12.5px;color:var(--muted)}
+
+  /* how it works */
+  .steps{display:grid;gap:12px;max-width:760px}
+  .step{display:grid;grid-template-columns:56px 1fr;gap:20px;background:var(--card);
+    border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);
+    padding:20px 24px;align-items:start}
+  .step .no{font-size:13px;font-weight:600;color:var(--faint);
+    font-variant-numeric:tabular-nums;letter-spacing:.04em;padding-top:2px}
+  .step h3{font-size:15px;font-weight:600;margin-bottom:4px;display:flex;
+    align-items:center;gap:8px;flex-wrap:wrap}
+  .step p{font-size:13.5px;color:var(--muted)}
+  .step.gate{border-color:var(--warn-border);background:var(--warn-bg)}
+  .step.gate .no{color:var(--warn-ink)}
+  .step.gate p{color:#78350f}
+  .gate-chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;
+    font-weight:600;color:var(--warn-ink);background:#fff;
+    border:1px solid var(--warn-border);border-radius:999px;padding:2px 9px}
+  .rule-note{font-size:12.5px;color:var(--muted);margin-top:20px;max-width:760px;
+    border-left:2px solid var(--border);padding-left:14px}
+
+  /* final CTA */
+  .final{padding:88px 0;text-align:center}
+  .final h2{font-size:32px}
+  .final .sec-sub{max-width:52ch;margin:0 auto 30px}
+  .final .cta-row{justify-content:center;margin-bottom:18px}
+  .final .fine{font-size:12.5px;color:var(--faint)}
+
+  /* footer */
+  footer{border-top:1px solid var(--border);padding:28px 0 40px;
+    font-size:12.5px;color:var(--faint)}
+  .foot-in{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:center}
+  .foot-in .sp{flex:1}
+  footer a{color:var(--muted)}
+  footer a:hover{color:var(--ink)}
+  .foot-dot{width:8px;height:8px;border-radius:3px;background:var(--accent);flex:none}
+
+  /* ---------- responsive ---------- */
+  @media (max-width:960px){
+    .hero{padding:48px 0 48px}
+    .hero-grid{grid-template-columns:1fr;gap:44px}
+    h1{font-size:36px}
+    .bento{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .f-card,.f-card.wide{grid-column:span 1}
+    .trust-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  }
+  @media (max-width:640px){
+    .nav-links{display:none}
+    h1{font-size:31px}
+    section{padding:56px 0}
+    .bento{grid-template-columns:1fr}
+    .trust-grid{grid-template-columns:1fr}
+    .m-half{grid-template-columns:1fr}
+    .step{grid-template-columns:40px 1fr;padding:16px 18px;gap:12px}
+    .run-row .why{display:none}
+  }
+  @media (max-width:420px){
+    .wrap{padding:0 16px}
+    .m-stats{gap:6px}
+    .m-stat{padding:8px 9px}
+    .m-stat .v{font-size:14px}
+    .mock{padding:12px}
+  }
+
+  /* ---------- reduced motion: line renders complete, no draw ---------- */
+  @media (prefers-reduced-motion:reduce){
+    html{scroll-behavior:auto}
+    #trendline,#trendarea,#trenddot{animation:none}
+    #trendline{stroke-dashoffset:0}
+    #trendarea{opacity:.07}
+    #trenddot{opacity:1;transform:none}
+    .rv{opacity:1;transform:none;transition:none}
+    *{transition-duration:0s!important}
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ NAV ============ -->
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="logo" href="#top" aria-label="AlphaDesk home">alpha<b>Desk</b></a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#lab">Lab</a>
+      <a href="#trust">Trust</a>
+    </nav>
+    <a class="btn primary sm" href="#" data-inert>View the live demo</a>
+  </div>
+</header>
+
+<main id="top">
+
+<!-- ============ HERO ============ -->
+<section class="hero" aria-labelledby="hero-h">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="kicker rv"><span class="dot"></span>Portfolio analyzer · IND Money · waitlist</span>
+      <h1 id="hero-h" class="rv d1">Your whole net worth.<br><span class="quiet">Verified, then narrated.</span></h1>
+      <p class="lede rv d2">AlphaDesk links your IND Money account read-only and shows your
+        net worth, allocation, holdings and daily history — with an AI overview that narrates
+        numbers computed in Python. It never invents a figure, and it never places an order.</p>
+      <div class="cta-row rv d2">
+        <a class="btn primary" href="#" data-inert>View the live demo
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M3 8h9M8.5 4.5 12 8l-3.5 3.5" stroke="currentColor" stroke-width="1.6"
+              stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+        <a class="btn outline" href="#" data-inert>Join the waitlist</a>
+      </div>
+      <div class="badges rv d3" aria-label="Trust badges">
+        <span class="tbadge"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3" y="7" width="10" height="6.5" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" stroke="currentColor" stroke-width="1.4"/></svg>Read-only broker access</span>
+        <span class="tbadge"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4"/><path d="M8 5v3.4M8 10.8v.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>Descriptive, never advisory</span>
+        <span class="tbadge"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1.8 13.5 4v4c0 3.2-2.3 5.4-5.5 6.2C4.8 13.4 2.5 11.2 2.5 8V4L8 1.8Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>Tokens encrypted at rest</span>
+        <span class="tbadge"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="5.5" r="2.6" stroke="currentColor" stroke-width="1.4"/><path d="M3 13.5c.7-2.4 2.7-3.6 5-3.6s4.3 1.2 5 3.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>Delete-my-data built in</span>
+      </div>
+    </div>
+
+    <!-- ===== faithful miniature dashboard mock (DECISION.md chart rules) ===== -->
+    <div class="mock rv d1" role="img"
+      aria-label="Miniature AlphaDesk dashboard with synthetic data: stat cards, 26-week net-worth trend, allocation bars, market-cap strip, a holdings table with an honest null, and a history-staleness banner">
+      <div class="mock-top">
+        <span class="logo">alpha<b>Desk</b></span>
+        <span class="crumb">/ Portfolio</span>
+        <span class="sp"></span>
+        <span class="chip">IND Money · linked</span>
+        <span class="chip syn">Synthetic data</span>
+      </div>
+
+      <div class="m-stats num">
+        <div class="m-stat"><h4>Net worth</h4><div class="v">₹11,84,620</div>
+          <div class="n">after liabilities</div></div>
+        <div class="m-stat"><h4>Overall return</h4><div class="v up">+₹1,12,540</div>
+          <div class="n up">+10.5% on invested</div></div>
+        <div class="m-stat"><h4>History</h4><div class="v">182 days</div>
+          <div class="n">daily close snapshots</div></div>
+      </div>
+
+      <div class="m-card">
+        <h5>Net-worth trend</h5>
+        <div class="d">26 weeks of daily snapshots · synthetic</div>
+        <svg id="trend" viewBox="0 0 520 150" width="100%" aria-hidden="true"></svg>
+      </div>
+
+      <div class="m-half" style="margin-bottom:10px">
+        <div class="m-card">
+          <h5>Allocation</h5>
+          <div class="d">By asset type · share of value</div>
+          <div id="alloc" class="num"></div>
+        </div>
+        <div class="m-card">
+          <h5>Market cap mix</h5>
+          <div class="d">Equity by cap band</div>
+          <div class="strip" id="mcap"></div>
+          <div class="striplegend" id="mcaplegend"></div>
+        </div>
+      </div>
+
+      <div class="m-card" style="margin-bottom:0">
+        <h5>Holdings · honest nulls</h5>
+        <div class="d">Sortable table · synthetic rows</div>
+        <div class="num">
+          <div class="run-row"><span class="tk">HDFCBANK</span>
+            <span class="cf">₹2,41,300</span>
+            <span class="why">largest holding · 20.4% of net worth</span>
+            <span class="verdict pass">+12.4%</span></div>
+          <div class="run-row"><span class="tk">PPFAS FLEXI</span>
+            <span class="cf">₹1,86,900</span>
+            <span class="why">SIP active · monthly</span>
+            <span class="verdict pass">+8.1%</span></div>
+          <div class="run-row"><span class="tk">SGB AUG30</span>
+            <span class="cf">₹64,200</span>
+            <span class="why">cost basis unknown · shown as “—”, never −100%</span>
+            <span class="verdict null">—</span></div>
+        </div>
+        <div class="pause-strip">
+          <span aria-hidden="true">⏸</span>
+          <span><b>History paused</b> — last captured 3 days ago · a missed snapshot can’t be backfilled</span>
+          <span class="btn">Details</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ TRUST BAND ============ -->
+<div class="trust" id="trust">
+  <div class="wrap">
+    <div class="trust-grid">
+      <div class="t-item rv">
+        <span class="f-ico" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="3" y="7" width="10" height="6.5" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" stroke="currentColor" stroke-width="1.4"/></svg></span>
+        <div><h4>Read-only broker access</h4>
+          <p>The IND Money link can only read. No order can be placed through AlphaDesk — the capability doesn’t exist.</p></div>
+      </div>
+      <div class="t-item rv d1">
+        <span class="f-ico" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4"/><path d="M8 5v3.4M8 10.8v.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></span>
+        <div><h4>Descriptive, never advisory</h4>
+          <p>It narrates what is — never forecasts, never buy or sell calls on your real holdings.</p></div>
+      </div>
+      <div class="t-item rv d2">
+        <span class="f-ico" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1.8 13.5 4v4c0 3.2-2.3 5.4-5.5 6.2C4.8 13.4 2.5 11.2 2.5 8V4L8 1.8Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="m5.8 8 1.6 1.6 2.8-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <div><h4>Tokens encrypted at rest</h4>
+          <p>Broker tokens are Fernet-encrypted and never returned to the frontend. Prompts carry aggregates and symbols only.</p></div>
+      </div>
+      <div class="t-item rv d3">
+        <span class="f-ico" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5.5" r="2.6" stroke="currentColor" stroke-width="1.4"/><path d="M3 13.5c.7-2.4 2.7-3.6 5-3.6s4.3 1.2 5 3.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></span>
+        <div><h4>Delete-my-data built in</h4>
+          <p>One action revokes broker access upstream first, then cascade-deletes every row of yours.</p></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ FEATURES ============ -->
+<section id="features" aria-labelledby="features-h">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <div class="sec-kicker">Features</div>
+      <h2 id="features-h">The dashboard is the product</h2>
+      <p class="sec-sub">Computed numbers first. Narrative second.
+        Nothing rendered that wasn’t verified.</p>
+    </div>
+    <div class="bento">
+      <div class="f-card wide rv">
+        <span class="f-ico" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 14.5V9.5M7 14.5v-8M11 14.5V11M15 14.5V4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+        <h3>Net-worth dashboard</h3>
+        <p>Invested vs current, absolute and percent. Allocation by asset type, sector
+          and market cap. A sortable holdings table with honest nulls — an unknown cost
+          basis renders <span class="metric-chip">—</span>, never a fake −100%.</p>
+      </div>
+      <div class="f-card wide rv d1">
+        <span class="f-ico" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2.5 13.5 6.5 9l3 3 5.5-6.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="15" cy="5.5" r="1.4" fill="currentColor"/></svg></span>
+        <h3>Daily history you can trust</h3>
+        <p>One snapshot a day — <b>net worth at Indian market close, all sources
+          settled</b> — captured <span class="metric-chip">~23:45 IST</span>, after
+          mutual-fund NAVs publish. A missed snapshot can never be backfilled, so
+          staleness is shown, not hidden: “History paused — last captured N days ago.”</p>
+      </div>
+      <div class="f-card wide rv d2">
+        <span class="f-ico" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="4" cy="9" r="1.6" stroke="currentColor" stroke-width="1.4"/><circle cx="9" cy="4.5" r="1.6" stroke="currentColor" stroke-width="1.4"/><circle cx="9" cy="13.5" r="1.6" stroke="currentColor" stroke-width="1.4"/><circle cx="14" cy="9" r="1.6" stroke="currentColor" stroke-width="1.4"/><path d="M5.4 8.2 7.7 5.6M5.4 9.8l2.3 2.6M10.4 5.4 12.7 8M10.4 12.6l2.3-2.6" stroke="currentColor" stroke-width="1.2"/></svg></span>
+        <h3>An AI overview that shows its work</h3>
+        <p>Every metric is computed in Python; the agents may not invent figures, and
+          every claim carries its number — <em>You are <span class="metric-chip">47%</span>
+          financials. HHI <span class="metric-chip">0.31</span>. Largest holding
+          <span class="metric-chip">22%</span> of net worth</em> (illustrative). If the
+          LLM is down, “AI overview unavailable” — and every number still renders.</p>
+        <div class="agent-chips" aria-label="Overview agents">
+          <span class="chip">Allocation critic</span>
+          <span class="chip">Concentration risk</span>
+          <span class="chip">SIP health</span>
+          <span class="chip">Performance attribution</span><span class="arrow" aria-hidden="true">→</span>
+          <span class="chip">Synthesizer</span>
+        </div>
+      </div>
+      <div class="f-card wide rv d3">
+        <span class="f-ico" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="8" cy="8" r="4.5" stroke="currentColor" stroke-width="1.4"/><path d="m11.4 11.4 3.1 3.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></span>
+        <h3>See it before you sign in</h3>
+        <p>A public <span class="metric-chip">/demo</span> renders the full dashboard
+          from sample data — no sign-in, no broker link, and an unmissable banner on
+          every screen, so a screenshot can never pass for real money.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ HOW IT WORKS ============ -->
+<section id="how" aria-labelledby="how-h">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <div class="sec-kicker">How it works</div>
+      <h2 id="how-h">Five steps. One consent.</h2>
+      <p class="sec-sub">From waitlist to a nightly-verified net worth.</p>
+    </div>
+    <div class="steps num">
+      <div class="step rv"><span class="no">01</span>
+        <div><h3>Join the waitlist</h3>
+          <p>AlphaDesk is a public URL, gated by a waitlist. Register interest and you’re approved in batches — no open sign-up at launch.</p></div>
+      </div>
+      <div class="step rv d1"><span class="no">02</span>
+        <div><h3>Sign in</h3>
+          <p>A normal account sign-in. Your platform identity stays separate from your broker credential — linking comes later, and only with consent.</p></div>
+      </div>
+      <div class="step gate rv d1"><span class="no">03</span>
+        <div><h3>Read the consent screen <span class="gate-chip"><span aria-hidden="true">⏸</span> unskippable by design</span></h3>
+          <p>Before any broker redirect, one screen names exactly what will be read, why,
+            where it’s stored, and how to delete it. Not a checkbox buried in sign-up.</p></div>
+      </div>
+      <div class="step rv d2"><span class="no">04</span>
+        <div><h3>Link IND Money — read-only</h3>
+          <p>A standard OAuth link that can only read. Tokens are encrypted at rest and never
+            reach your browser; unlinking revokes access upstream, not just locally.</p></div>
+      </div>
+      <div class="step rv d2"><span class="no">05</span>
+        <div><h3>Dashboard, then nightly snapshots</h3>
+          <p>Your net worth, allocation and holdings render immediately. Every night at
+            ~23:45 IST a snapshot records net worth at market close, building the daily
+            history and trend.</p></div>
+      </div>
+    </div>
+    <p class="rule-note rv">No cross-source auto-merge: holdings are grouped by instrument for
+      display, and AlphaDesk asks before combining across sources — a silently wrong net worth
+      is the one error a user cannot catch.</p>
+  </div>
+</section>
+
+<!-- ============ LAB (secondary) ============ -->
+<section id="lab" aria-labelledby="lab-h">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <div class="sec-kicker">Lab · simulation</div>
+      <h2 id="lab-h">The research desk lives in the Lab</h2>
+      <p class="sec-sub">The v1 multi-agent desk is still here — clearly labelled a
+        simulation, and never fused with your real portfolio view.</p>
+    </div>
+    <div class="bento">
+      <div class="f-card wide rv">
+        <span class="f-ico" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4 3.5h10M4 6.7h10M4 9.9h6.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M4 14.5h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></span>
+        <h3>Scanner to watchlist — on paper</h3>
+        <p>A pipeline scans NSE movers, researches candidates, writes analyst reports,
+          applies risk guardrails, then pauses. Nothing joins the watchlist until you approve it.</p>
+        <div class="agent-chips" aria-label="Lab pipeline stages">
+          <span class="chip">Scanner</span><span class="arrow" aria-hidden="true">→</span>
+          <span class="chip">Research</span><span class="arrow" aria-hidden="true">→</span>
+          <span class="chip">Analyst</span><span class="arrow" aria-hidden="true">→</span>
+          <span class="chip">Risk guardrails</span><span class="arrow" aria-hidden="true">→</span>
+          <span class="chip" style="border-color:var(--warn-border);background:var(--warn-bg);color:var(--warn-ink)">⏸ You</span><span class="arrow" aria-hidden="true">→</span>
+          <span class="chip">Paper watchlist</span>
+        </div>
+      </div>
+      <div class="f-card wide rv d1">
+        <span class="f-ico" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="6.5" stroke="currentColor" stroke-width="1.4"/><path d="M9 5.8v3.6M9 12v.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></span>
+        <h3>A simulation that says so</h3>
+        <p>Every Lab view carries a “simulation — not investment advice” label. Its picks
+          land on a paper watchlist only, they are never shown beside your real holdings, and
+          <span class="metric-chip">0</span> real orders are ever placed — the Lab has no way to trade.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FINAL CTA ============ -->
+<section class="final" aria-labelledby="final-h">
+  <div class="wrap">
+    <h2 id="final-h" class="rv">Every number verified.<br>See it on sample data.</h2>
+    <p class="sec-sub rv d1">Open the live demo — the full dashboard on sample data, no
+      sign-in required — or join the waitlist to see your own net worth this way.</p>
+    <div class="cta-row rv d2">
+      <a class="btn primary" href="#" data-inert>View the live demo
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M3 8h9M8.5 4.5 12 8l-3.5 3.5" stroke="currentColor" stroke-width="1.6"
+            stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+      <a class="btn outline" href="#" data-inert>Join the waitlist</a>
+    </div>
+    <p class="fine rv d3">Sample data · read-only broker access · descriptive analytics only · not investment advice</p>
+  </div>
+</section>
+
+</main>
+
+<!-- ============ FOOTER ============ -->
+<footer>
+  <div class="wrap foot-in">
+    <span class="foot-dot" aria-hidden="true"></span>
+    <span>Synthetic demo data · descriptive analytics only · not investment advice</span>
+    <span class="sp"></span>
+    <a href="#" data-inert>Privacy</a>
+    <a href="#" data-inert>Terms</a>
+  </div>
+</footer>
+
+<script>
+/* inert CTAs / placeholder links */
+document.querySelectorAll('[data-inert]').forEach(a =>
+  a.addEventListener('click', e => e.preventDefault()));
+
+const inr = n => '₹' + new Intl.NumberFormat('en-IN', {maximumFractionDigits: 0}).format(n);
+
+/* ---------- hero mock: 26-week trend (2px accent, 7% area, endpoint dot) ---------- */
+(function () {
+  const svg = document.getElementById('trend');
+  const W = 520, H = 150, P = {l: 40, r: 12, t: 10, b: 20};
+  /* synthetic 26-week net-worth history (₹) */
+  const xs = [1042000,1048500,1039800,1055200,1061900,1053400,1070800,1082300,
+              1076500,1091200,1103800,1096400,1112700,1121500,1109900,1127300,
+              1139600,1131200,1148900,1160400,1152800,1167300,1174900,1169500,
+              1179800,1184620];
+  const min = Math.min(...xs) * 0.99, max = Math.max(...xs) * 1.008;
+  const X = i => P.l + (W - P.l - P.r) * i / (xs.length - 1);
+  const Y = v => P.t + (H - P.t - P.b) * (1 - (v - min) / (max - min));
+  let g = '';
+  for (let t = 0; t < 3; t++) {
+    const v = min + (max - min) * t / 2, y = Y(v);
+    g += `<line x1="${P.l}" x2="${W - P.r}" y1="${y}" y2="${y}" stroke="#f0f0f1"/>` +
+         `<text x="${P.l - 6}" y="${y + 3.5}" text-anchor="end"
+            style="font:9px ui-sans-serif,-apple-system,sans-serif;fill:var(--faint)">${(v / 100000).toFixed(1)}L</text>`;
+  }
+  const line = xs.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
+  const area = `${line} L${X(xs.length - 1).toFixed(1)},${H - P.b} L${X(0).toFixed(1)},${H - P.b} Z`;
+  g += `<path id="trendarea" d="${area}" fill="var(--accent)"/>`;
+  g += `<path id="trendline" d="${line}" fill="none" stroke="var(--accent)"
+          stroke-width="2" stroke-linejoin="round" stroke-linecap="round" pathLength="1"/>`;
+  const li = xs.length - 1;
+  g += `<circle id="trenddot" cx="${X(li).toFixed(1)}" cy="${Y(xs[li]).toFixed(1)}" r="4"
+          fill="var(--accent)" stroke="#fff" stroke-width="2"/>`;
+  g += `<text x="${P.l}" y="${H - 6}" style="font:9px ui-sans-serif,-apple-system,sans-serif;fill:var(--faint)">W1</text>` +
+       `<text x="${W - P.r}" y="${H - 6}" text-anchor="end"
+          style="font:9px ui-sans-serif,-apple-system,sans-serif;fill:var(--faint)">W26</text>`;
+  svg.innerHTML = g;
+})();
+
+/* ---------- hero mock: sorted single-hue allocation bars ---------- */
+(function () {
+  const rows = [
+    {label: 'Mutual funds',  value: 512400, pct: 43.3},
+    {label: 'Indian stocks', value: 386900, pct: 32.7},
+    {label: 'US stocks',     value: 128300, pct: 10.8},
+    {label: 'Fixed deposits',value:  94600, pct:  8.0},
+    {label: 'Savings',       value:  62420, pct:  5.3},
+  ].sort((a, b) => b.value - a.value);
+  const max = rows[0].value;
+  document.getElementById('alloc').innerHTML = rows.map(r => `
+    <div class="bar-row">
+      <div class="lbl">${r.label}</div>
+      <div class="bar-cell">
+        <div class="bar-track"><div class="bar-fill" style="width:${(r.value / max * 100).toFixed(1)}%"></div></div>
+        <div class="bar-val">${inr(r.value)} · ${r.pct.toFixed(1)}%</div>
+      </div>
+    </div>`).join('');
+})();
+
+/* ---------- hero mock: market-cap sequential strip (2px gaps) ---------- */
+(function () {
+  const bands = [
+    {label: 'Large', value: 298900, color: 'var(--cap1)'},
+    {label: 'Mid',   value: 149400, color: 'var(--cap2)'},
+    {label: 'Small', value:  66900, color: 'var(--cap3)'},
+  ];
+  const total = bands.reduce((s, b) => s + b.value, 0);
+  document.getElementById('mcap').innerHTML = bands.map(b =>
+    `<div style="flex:${b.value};background:${b.color}"
+       title="${b.label}cap · ${inr(b.value)} · ${(b.value / total * 100).toFixed(1)}%"></div>`).join('');
+  document.getElementById('mcaplegend').innerHTML = bands.map(b =>
+    `<span class="k"><span class="sq" style="background:${b.color}"></span>
+       ${b.label} · ${(b.value / total * 100).toFixed(0)}%</span>`).join('');
+})();
+
+/* ---------- scroll reveal (respects prefers-reduced-motion via CSS) ---------- */
+(function () {
+  const els = document.querySelectorAll('.rv');
+  if (!('IntersectionObserver' in window) ||
+      matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    els.forEach(el => el.classList.add('in'));
+    return;
+  }
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+    });
+  }, {threshold: 0.12, rootMargin: '0px 0px -6% 0px'});
+  els.forEach(el => io.observe(el));
+})();
+</script>
+</body>
+</html>
