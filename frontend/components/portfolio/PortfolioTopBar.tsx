@@ -1,5 +1,6 @@
 "use client";
 
+import { UserMenu } from "@/components/UserMenu";
 import type { PortfolioSummary } from "@/lib/api";
 import { Button, Chip } from "./ui";
 
@@ -106,6 +107,10 @@ export function PortfolioTopBar({
       </Button>
       {link ? <Chip tone={link.ok ? "ok" : "warn"}>{link.text}</Chip> : null}
       {demo ? <Chip>Demo data</Chip> : null}
+      {/* "Who are you" — the same flag-gated Clerk slot the Lab bar carries, so
+          signing out and "Delete my data" are reachable without leaving the
+          dashboard. Renders (and downloads) nothing when the flag is off. */}
+      <UserMenu />
     </header>
   );
 }
