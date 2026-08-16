@@ -15,6 +15,7 @@ import {
   type PortfolioSummary,
 } from "@/lib/api";
 import { AUTH_ENABLED } from "@/lib/auth";
+import { AiOverview } from "@/components/portfolio/AiOverview";
 import { AllocationBars, AllocationBarsSkeleton } from "@/components/portfolio/AllocationBars";
 import { CapStrip } from "@/components/portfolio/CapStrip";
 import { HoldingsTable } from "@/components/portfolio/HoldingsTable";
@@ -375,6 +376,11 @@ export default function PortfolioPage() {
         holdingsCount={holdings.length}
         countIsPartial={loadingHoldings}
       />
+
+      {/* AI overview (card A1). Streams its own metrics + narrative and degrades
+          to "AI overview unavailable" on its own — it never blocks the rest of
+          the dashboard, and every number here renders with or without the model. */}
+      <AiOverview />
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[2fr_1fr]">
         <NetWorthTrend points={history} lastCapturedAt={lastCapturedAt} />
