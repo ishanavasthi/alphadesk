@@ -81,3 +81,14 @@ def test_explicit_groq_provider_ignores_compat_env(
 ) -> None:
     monkeypatch.setenv("OPENAI_BASE_URL", "https://compat.example.com/v1")
     assert isinstance(get_chat_llm("llama-3.1-8b-instant", provider="groq"), ChatGroq)
+
+
+def test_openai_provider_applies_request_timeout() -> None:
+    llm = get_chat_llm("gpt-4o-mini", provider="openai", timeout=30)
+    assert llm.request_timeout == 30.0
+
+
+def test_overview_factory_sets_a_timeout() -> None:
+    from agents.portfolio.agents import default_llm_factory
+
+    assert default_llm_factory().request_timeout == 30.0
