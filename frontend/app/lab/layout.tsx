@@ -1,5 +1,8 @@
 import type { ReactNode } from "react";
 
+import { AuthProvider } from "@/components/AuthProvider";
+import { TopBar } from "@/components/TopBar";
+
 /**
  * The Lab — the multi-agent research desk, a labelled *simulation*.
  *
@@ -10,10 +13,16 @@ import type { ReactNode } from "react";
  * a one-time toast, because a run that produces buy/avoid calls with confidence
  * scores reads like advice unless something on the page says otherwise on every
  * view. Kept in the layout so no page can render without it.
+ *
+ * **The terminal `TopBar` lives here now.** Card U1 retired the app-wide
+ * `TerminalChrome` conditional; the Lab is the surface that keeps the dark
+ * Bloomberg chrome, so it renders it in its own layout. `/`, `/demo` and the
+ * marketing group get the light shadcn `SiteHeader`; `/portfolio` its own bar.
  */
 export default function LabLayout({ children }: { children: ReactNode }) {
   return (
-    <>
+    <AuthProvider>
+      <TopBar />
       <div
         data-lab-label
         role="note"
@@ -22,6 +31,6 @@ export default function LabLayout({ children }: { children: ReactNode }) {
         Lab — a live simulation. Runs aren&rsquo;t saved. Not investment advice; no orders are placed.
       </div>
       {children}
-    </>
+    </AuthProvider>
   );
 }
