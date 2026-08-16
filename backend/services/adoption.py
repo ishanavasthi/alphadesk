@@ -59,7 +59,7 @@ import httpx
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import BrokerLink, SnapshotDay, User
+from db.models import BrokerLink, SnapshotDay, User, Watchlist
 
 log = logging.getLogger(__name__)
 
@@ -224,10 +224,26 @@ async def adopt_local_data(session: AsyncSession, user_id: str) -> dict[str, int
         .values(user_id=user_id)
     )
 
+    # Watchlist joined the schema in F4 (after this module was first written).
+    # A Clerk deployment never writes a `local` watchlist row (single-tenant is
+    # off, so _lab_identity never returns LOCAL_USER_ID), so this is
+    # future-proofing/symmetry, not a live path — but leaving it out would
+    # strand any `local` watchlist row the way an unhandled table always does.
+    taken_symbols = select(Watchlist.symbol).where(Watchlist.user_id == user_id)
+    watch = await session.execute(
+        update(Watchlist)
+        .where(
+            Watchlist.user_id == LOCAL_USER_ID,
+            Watchlist.symbol.not_in(taken_symbols),
+        )
+        .values(user_id=user_id)
+    )
+
     await session.commit()
     return {
         "broker_links": int(links.rowcount or 0),
         "snapshot_days": int(days.rowcount or 0),
+        "watchlist": int(watch.rowcount or 0),
     }
 
 

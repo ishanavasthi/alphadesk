@@ -1,184 +1,167 @@
-# AlphaDesk Deploy Guide
+# AlphaDesk Deploy Guide (v2)
 
-Frontend on Vercel, backend on Hugging Face Spaces (Docker). Covers env vars and
-the IND Money OAuth callback wiring so the in-app Connect button works in prod.
+Frontend on Vercel, backend on Hugging Face Spaces (Docker), database on Neon
+(Postgres), identity via Clerk. This covers every env var the deployed code
+**requires**, the IND Money OAuth callback wiring, and the go-live sequence
+(the site ships gated behind a flag until you flip it).
+
+> The overnight build wired the live deployment already; `docs/MORNING.md`
+> records the exact state and the go-live steps. This file is the durable
+> reference — if the two disagree, trust the running state + MORNING.md and
+> fix this file.
 
 ## Topology
 
 ```
 Browser
-  -> Vercel        (Next.js frontend, NEXT_PUBLIC_API_URL points at HF)
+  -> Vercel        (Next.js frontend; NEXT_PUBLIC_API_URL -> HF, Clerk keys)
   -> HF Space      (FastAPI backend, port 7860)
-       -> Groq          (LLM)
-       -> IND Money MCP (market data, OAuth)
-       -> LangSmith     (tracing)
+       -> Neon          (Postgres: users, links, snapshots, watchlist)
+       -> Clerk         (identity — JWT verified networklessly via JWKS)
+       -> Groq          (Lab / research LLM)
+       -> OpenAI        (portfolio AI overview)
+       -> IND Money MCP (market data + portfolio, per-user OAuth)
+       -> LangSmith     (tracing — research graph only; portfolio graph off)
+  GitHub Actions   (snapshot.yml -> POST /internal/snapshot nightly)
 ```
 
-The OAuth callback (`/auth/callback`) is served by the backend itself. The
-Connect button opens the IND Money login in a popup; IND Money redirects the
-popup straight back to the backend, which exchanges the code and stores the
-token. The frontend only polls `/auth/status`. So the redirect URI must be the
-public backend URL, not the Vercel URL.
+The OAuth callback (`/auth/callback`) is served by the backend. Since F3 every
+IND Money link is **per user**, bound to the signed-in Clerk identity, with the
+refresh token Fernet-encrypted in Postgres. There is no shared/ambient
+credential and no admin-secret path (both removed at F3/L1).
 
 ---
 
-## 1. Backend -> Hugging Face Spaces
+## 1. Database — Neon (Postgres)
 
-### 1a. Create the Space
+Required — HF Spaces disk is ephemeral.
 
-1. huggingface.co -> New Space.
-2. SDK: **Docker** (blank template). Name e.g. `alphadesk`.
-3. Public URL becomes: `https://<user>-alphadesk.hf.space` (note it, call it
-   `BACKEND_URL` below).
+1. neon.tech -> new project -> copy the connection string
+   (`postgresql://…?sslmode=require`). The app's async engine translates
+   `sslmode` for asyncpg automatically; paste it verbatim.
+2. Run migrations against it once (and after any future migration):
+   ```bash
+   cd backend
+   DATABASE_URL="postgresql://…?sslmode=require" alembic upgrade head
+   ```
+3. Set `DATABASE_URL` as a Space secret (below).
 
-### 1b. Push the code
+## 2. Identity — Clerk
 
-The repo root already has a `Dockerfile` (serves `api.main:app` on port 7860).
-Push backend + Dockerfile to the Space repo:
+1. clerk.com -> create an application. Note the instance
+   (`<slug>.clerk.accounts.dev`).
+2. **Enable Waitlist mode:** Configure -> Restrictions -> Sign-up mode ->
+   Waitlist (not exposed via API — manual toggle).
+3. Keys: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` + `CLERK_SECRET_KEY` go on
+   **Vercel**; the backend needs only the public JWKS URL + issuer +
+   authorized parties (below) — it holds **no** Clerk secret.
 
-```bash
-git remote add space https://huggingface.co/spaces/<user>/alphadesk
-git push space main
-```
+## 3. Backend — Hugging Face Spaces
 
-The Dockerfile copies `backend/` and installs `requirements.txt` - that is all.
-RAG is unplugged as of v2: no `data/` copy, no chromadb, no ingest step, and no
-apt layer, which keeps the image small and the build fast. See the README's
-"RAG (dormant)" section for the re-enable path.
+SDK: **Docker** (blank). The repo-root `Dockerfile` serves `api.main:app` on
+7860, copies `backend/` + installs `requirements.txt` only (RAG unplugged
+since C1 — no `data/`, no chromadb, no apt layer). Deploy: the repo keeps
+GitHub history that HF's binary policy rejects, so the Space is pushed from the
+`space-deploy` snapshot branch — see `docs/STATUS.md` "Deploy notes".
 
-### 1c. Backend env vars (Space -> Settings -> Variables and secrets)
+### Backend env vars (Space -> Settings -> Variables and secrets)
 
-Mark anything sensitive as a **Secret**.
+Mark secrets as **Secret**.
 
 | Var | Value | Notes |
 | --- | --- | --- |
-| `GROQ_API_KEY` | your Groq key | secret; omit only if using an OpenAI-compatible endpoint |
-| `OPENAI_API_KEY` | compatible provider key | secret; required when using `OPENAI_BASE_URL` / `OPENAI_COMPATIBLE_MODEL` |
-| `OPENAI_BASE_URL` | compatible provider base URL | optional; enables OpenAI-compatible LLM mode |
-| `OPENAI_COMPATIBLE_MODEL` | compatible provider model | optional; enables OpenAI-compatible LLM mode |
+| `DATABASE_URL` | Neon connection string | secret; **required** — no DB ⇒ links/snapshots/watchlist don't persist |
+| `TOKEN_ENCRYPTION_KEY` | `python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"` | secret; **required** — encrypts broker refresh tokens; first Connect fails without it |
+| `CLERK_JWKS_URL` | `https://<slug>.clerk.accounts.dev/.well-known/jwks.json` | **required** |
+| `CLERK_ISSUER` | `https://<slug>.clerk.accounts.dev` | **required** |
+| `CLERK_AUTHORIZED_PARTIES` | the live frontend origin(s), comma-sep (`https://alphadesk.ishanavasthi.in`) | **required — unset ⇒ 503 on every auth** |
+| `ALPHADESK_OPERATOR_EMAIL` | your Clerk sign-in email | one-off: adopts pre-F3 `local` snapshot history to your account on first sign-in; unset ⇒ adoption never runs |
+| `CRON_SECRET` | `openssl rand -base64 32` | secret; guards `POST /internal/snapshot|prune`; also a **GitHub Actions secret** |
+| `OPENAI_API_KEY` | your OpenAI key | secret; the portfolio AI overview (A1). Set a provider-side budget cap in the OpenAI dashboard |
+| `GROQ_API_KEY` | your Groq key | secret; the Lab / research agents |
 | `IND_MONEY_MCP_URL` | `https://mcp.indmoney.com/mcp` | the MCP server |
-| `IND_MONEY_AUTH_REDIRECT` | `https://<user>-alphadesk.hf.space/auth/callback` | **critical** - must be the public backend URL |
+| `IND_MONEY_AUTH_REDIRECT` | `https://<user>-alphadesk.hf.space/auth/callback` | **critical** — exact public backend URL |
 | `CORS_ALLOW_ORIGINS` | `https://alphadesk.ishanavasthi.in,https://<your-vercel>.vercel.app` | comma-separated frontend origins |
-| `CORS_ALLOW_ORIGIN_REGEX` | `https://[a-z0-9-]+\.vercel\.app` | optional - allows Vercel preview deploys |
-| `LANGCHAIN_API_KEY` | your LangSmith key | secret, recommended |
-| `LANGCHAIN_TRACING_V2` | `true` | CLAUDE.md says keep tracing on |
-| `LANGCHAIN_PROJECT` | `alphaDesk` | |
-| `LANGSMITH_ENDPOINT` | region endpoint | e.g. `https://eu.api.smith.langchain.com` |
-| `LANGCHAIN_ENDPOINT` | same as above | both vars needed |
-| `BROKER` | leave blank | paper trading only |
-| `ALPHADESK_ADMIN_SECRET` | `openssl rand -base64 32` output | **secret, required** — guards `/auth/login` + `/auth/logout` (header `x-alphadesk-admin-secret`); with it unset those endpoints lock (fail-closed) |
-| `ALPHADESK_SINGLE_TENANT` | **never set on the Space** | local-dev-only flag; setting it here reopens the C0 hole |
+| `CORS_ALLOW_ORIGIN_REGEX` | `https://[a-z0-9-]+\.vercel\.app` | optional — Vercel preview deploys |
+| `LANGCHAIN_API_KEY` | LangSmith key | secret; **research-graph tracing only** — the portfolio graph is tracing-off at config level regardless |
+| `LANGCHAIN_TRACING_V2` | `true` | on for the research graph |
+| `LANGCHAIN_PROJECT` / `LANGSMITH_ENDPOINT` / `LANGCHAIN_ENDPOINT` | project + region endpoints | |
+| `BROKER` | leave blank | paper only — no real orders ever |
 
-Localhost origins stay allowed automatically, so local dev keeps working.
+**Must stay UNSET on the Space:** `ALPHADESK_SINGLE_TENANT` (local-dev only — if
+set in prod it fail-opens every request to the operator identity),
+`ALPHADESK_ADMIN_SECRET` (dead since L1 — the interim gate was removed),
+`OPENAI_BASE_URL` / `OPENAI_COMPATIBLE_MODEL` (setting either reroutes *all*
+agents through one model and collapses the Groq/OpenAI split).
 
-### 1d. Reconnecting IND Money after a restart
+### Reconnecting IND Money
 
-HF free Spaces have an **ephemeral filesystem and sleep when idle**. The token
-cache (`backend/.ind_money_token.json`) and the in-memory run registry are lost
-on every restart.
+Per-user now: sign in (Clerk) and click **Connect** — you're routed through a
+consent screen, then IND Money's OAuth, and the link (encrypted) is stored in
+Postgres, durable across restarts. There is no admin-header curl flow anymore.
 
-Since C0, the `IND_MONEY_OAUTH_*` env fallback **no longer authenticates in
-production** — ambient credentials only load under `ALPHADESK_SINGLE_TENANT`,
-which must stay unset on the Space (any visitor's queries would run on the
-operator's token; per-user links land in F3). Remove those five secrets from
-the Space if they are still set; they are dead weight.
+## 4. Frontend — Vercel
 
-After a restart, the operator re-connects via the gated login:
+Root Directory = `frontend`. Env vars (Project -> Settings -> Environment
+Variables):
 
-```bash
-curl -s -X POST https://<user>-alphadesk.hf.space/auth/login \
-  -H "x-alphadesk-admin-secret: $ALPHADESK_ADMIN_SECRET"
-# -> {"authorization_url": "..."}  — open it in a browser and log in,
-# or click Connect in the frontend (it will 401 without the header; use curl).
-```
+| Var | Value | Notes |
+| --- | --- | --- |
+| `NEXT_PUBLIC_API_URL` | `https://<user>-alphadesk.hf.space` | no trailing slash |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk publishable key | **required when auth is on** |
+| `CLERK_SECRET_KEY` | Clerk secret key | secret; **required when auth is on** |
+| `NEXT_PUBLIC_AUTH_ENABLED` | see go-live below | the launch switch |
 
-Restarts are rare — `.github/workflows/keepalive.yml` pings the Space every 6h
-against a 48h sleep threshold. Durable per-user tokens (Postgres, encrypted)
-arrive with F3.
+The repo commits `frontend/.env.production` with `NEXT_PUBLIC_AUTH_ENABLED=true`
+(the intended launched state), but **Vercel dashboard env vars override that
+file**, so you gate the actual deploy from the dashboard.
 
-Note: stored analyses and the paper watchlist are in-memory regardless - they
-survive a browser refresh but not a backend restart. Known limitation; a DB is
-future work.
+> ### ⚠ Never set `CLERK_SECRET_KEY` as `NEXT_PUBLIC_*`, and never commit keys
+> `NEXT_PUBLIC_*` values are inlined into the public bundle. The publishable key
+> is meant to be public; the secret key is not. Both belong in Vercel env vars
+> (and `frontend/.env.local`, gitignored), never in a committed file.
 
----
+### Go-live sequence (gated until you're ready)
 
-## 2. Frontend -> Vercel
+1. IND Money re-login (your own portfolio; proves the per-user flow).
+2. Clerk Waitlist mode enabled (§2).
+3. Clerk keys set on Vercel; `OPENAI_API_KEY` on the Space; OpenAI budget cap set.
+4. Set Vercel `NEXT_PUBLIC_AUTH_ENABLED=true` (or remove a `false` override) and
+   redeploy — the site goes behind Clerk Waitlist. **With auth on you MUST have
+   real Clerk keys on Vercel** or the browser hits Clerk's `host_invalid` page.
+5. Approve your first users from the Clerk dashboard.
 
-1. Import the repo in Vercel. Set **Root Directory = `frontend`** (the Next.js
-   app is in a subfolder).
-2. Framework auto-detects Next.js. Build `next build`, no overrides needed.
-3. Env var (Project -> Settings -> Environment Variables):
+Until step 4 the deployed site runs with the flag **off**: public landing +
+`/demo` (fully rendered from committed fixtures, no auth, no LLM), no sign-in
+wall — the safe pre-launch state.
 
-   | Var | Value |
-   | --- | --- |
-   | `NEXT_PUBLIC_API_URL` | `https://<user>-alphadesk.hf.space` |
+### Custom domain
 
-   No trailing slash needed - `lib/api.ts` strips it. This is a build-time
-   `NEXT_PUBLIC_*` var, so **redeploy after changing it**.
-4. Deploy.
+Vercel -> Domains -> add `alphadesk.ishanavasthi.in`; add the DNS record; then
+ensure that exact origin is in the backend `CORS_ALLOW_ORIGINS` **and**
+`CLERK_AUTHORIZED_PARTIES`.
 
-> ### ⚠ Never set `NEXT_PUBLIC_ALPHADESK_ADMIN_SECRET` on Vercel
->
-> Every `NEXT_PUBLIC_*` value is **inlined into the JavaScript bundle that each
-> visitor downloads**. It is not a server-side setting and there is no way to
-> scope it to you. Setting the admin secret here would hand every visitor the
-> key to `/portfolio/*` and `/auth/*` - that is, the operator's **real holdings,
-> net worth and IND Money link** - and it would stay in the bundles of every
-> previous deployment even after you removed it. Rotate
-> `ALPHADESK_ADMIN_SECRET` on the backend if it was ever set here.
->
-> It belongs only in `frontend/.env.local` (gitignored) on the operator's own
-> machine. Deployed, `/portfolio` is *supposed* to render the locked state; it
-> unlocks for real users when card **F3** replaces the interim gate with
-> per-user accounts. The same rule covers any future secret: if it must not be
-> public, it must not be `NEXT_PUBLIC_*`.
+## 5. Snapshots — GitHub Actions
 
-### 2a. Custom domain
+`.github/workflows/snapshot.yml` calls `POST /internal/snapshot` nightly
+(23:45 IST + a retry). Needs repo **secret** `CRON_SECRET` (matching the Space)
+and repo **variable** `BACKEND_URL`. A run with no linked users is green with
+`skipped`. GitHub disables scheduled workflows after 60 days of repo inactivity
+— the staleness banner surfaces a stalled job.
 
-1. Vercel -> Project -> Settings -> Domains -> add `alphadesk.ishanavasthi.in`.
-2. Add the CNAME (or A) record Vercel shows at your DNS host.
-3. After it goes live, make sure that exact origin is in the backend's
-   `CORS_ALLOW_ORIGINS`. Restart the Space if you changed it.
-
----
-
-## 3. Wire-up checklist (the cross-references that bite)
-
-These three must agree or auth/data calls fail:
+## 6. Wire-up checklist (the cross-references that bite)
 
 - `IND_MONEY_AUTH_REDIRECT` (backend) = `<BACKEND_URL>/auth/callback`, exact.
-- `CORS_ALLOW_ORIGINS` (backend) contains the live frontend origin
-  (`https://alphadesk.ishanavasthi.in`), exact scheme + host, no trailing slash.
+- `CORS_ALLOW_ORIGINS` (backend) ⊇ the live frontend origin, exact.
+- `CLERK_AUTHORIZED_PARTIES` (backend) ⊇ the live frontend origin, exact.
 - `NEXT_PUBLIC_API_URL` (frontend) = `<BACKEND_URL>`, exact.
+- `CRON_SECRET` identical on the Space and as a GitHub secret.
 
-The IND Money MCP uses **dynamic client registration** - the redirect URI is
-registered fresh on each Connect from `IND_MONEY_AUTH_REDIRECT`, so there is no
-allow-list to pre-register on IND Money's side. Just set that env correctly.
+## 7. Verify
 
----
-
-## 4. Verify
-
-1. Open `https://<user>-alphadesk.hf.space/` -> `{"service":"AlphaDesk",...}`.
-2. Open the frontend domain. DevTools -> Network: `/auth/status` returns 200, no
-   CORS error. CORS error here means `CORS_ALLOW_ORIGINS` is wrong.
-3. Click **Connect IND Money** -> popup -> log in -> popup shows
-   "IND Money connected." -> badge flips to authenticated. Failure here is
-   almost always a wrong `IND_MONEY_AUTH_REDIRECT`.
-4. Run a query (e.g. "analyse NDTV, Zee, Sun TV"). Pipeline animates over SSE,
-   recommendation cards render, Approve adds to the paper watchlist.
-5. Refresh on `/a/<run_id>` - analysis persists (until next backend restart).
-
----
-
-## 5. Env var quick reference
-
-**Backend (HF Space):** `GROQ_API_KEY`, `IND_MONEY_MCP_URL`,
-`IND_MONEY_AUTH_REDIRECT`, `CORS_ALLOW_ORIGINS`, `CORS_ALLOW_ORIGIN_REGEX`
-(optional), `LANGCHAIN_API_KEY`, `LANGCHAIN_TRACING_V2`, `LANGCHAIN_PROJECT`,
-`LANGSMITH_ENDPOINT`, `LANGCHAIN_ENDPOINT`, `BROKER` (blank),
-`ALPHADESK_ADMIN_SECRET` (secret). Do **not** set `ALPHADESK_SINGLE_TENANT` or
-the `IND_MONEY_OAUTH_*` credentials on the Space — since C0 the latter only
-work locally under single-tenant mode.
-
-**Frontend (Vercel):** `NEXT_PUBLIC_API_URL`.
+1. `https://<user>-alphadesk.hf.space/` -> service JSON.
+2. `https://<user>-alphadesk.hf.space/auth/status` -> 200 (unauthenticated).
+3. Frontend `/demo` -> full dashboard, no network to an authed/LLM endpoint.
+4. With auth on: sign in (Clerk), Connect (consent -> OAuth), `/portfolio`
+   renders your holdings, the AI overview streams, `DELETE /account` removes
+   everything.
