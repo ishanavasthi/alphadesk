@@ -116,7 +116,14 @@ export function DashboardMock() {
         </span>
       </div>
 
-      <div className="mb-2.5 grid grid-cols-3 gap-1.5 tabular-nums sm:gap-2">
+      {/* Three across needs ~96px of card interior for the longest note ("daily
+          close snapshots"), which a phone cannot give: at 360px each card gets
+          about 70px and the notes painted straight through their own borders.
+          So the strip is two-up below `sm` — the third card taking the full row
+          — and three across from `sm`, where the width is there. The nowrap is
+          scoped to that same breakpoint so a note wraps rather than spills if a
+          viewport is narrower still. */}
+      <div className="mb-2.5 grid grid-cols-2 gap-1.5 tabular-nums sm:grid-cols-3 sm:gap-2">
         {[
           { label: "Net worth", value: "₹11,84,620", note: "after liabilities", tone: "" },
           {
@@ -126,16 +133,24 @@ export function DashboardMock() {
             tone: "text-[var(--adp-good)]",
           },
           { label: "History", value: "182 days", note: "daily close snapshots", tone: "" },
-        ].map((s) => (
+        ].map((s, i) => (
           <div
             key={s.label}
-            className="min-w-0 rounded-lg border border-border px-2 py-2 shadow-[0_1px_2px_var(--adp-shadow)] sm:px-3 sm:py-2.5"
+            className={`min-w-0 rounded-lg border border-border px-2 py-2 shadow-[0_1px_2px_var(--adp-shadow)] sm:px-3 sm:py-2.5 ${
+              i === 2 ? "col-span-2 sm:col-span-1" : ""
+            }`}
           >
-            <div className="whitespace-nowrap text-[10.5px] text-muted-foreground">{s.label}</div>
-            <div className={`whitespace-nowrap text-sm font-semibold tracking-[-0.02em] sm:text-base ${s.tone}`}>
+            <div className="text-[10.5px] text-muted-foreground sm:whitespace-nowrap">
+              {s.label}
+            </div>
+            <div
+              className={`text-sm font-semibold tracking-[-0.02em] sm:whitespace-nowrap sm:text-base ${s.tone}`}
+            >
               {s.value}
             </div>
-            <div className={`whitespace-nowrap text-[10px] ${s.tone || "text-[var(--adp-faint)]"}`}>
+            <div
+              className={`text-[10px] sm:whitespace-nowrap ${s.tone || "text-[var(--adp-faint)]"}`}
+            >
               {s.note}
             </div>
           </div>
