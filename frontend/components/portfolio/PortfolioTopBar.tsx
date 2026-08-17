@@ -7,6 +7,7 @@ import { AppNav } from "@/components/shell/AppNav";
 import { UnlinkDialog } from "@/components/portfolio/UnlinkDialog";
 import { UserMenu } from "@/components/UserMenu";
 import type { PortfolioSummary } from "@/lib/api";
+import { PrivacyToggle } from "./PrivacyToggle";
 import { ThemeToggle } from "./ThemeToggle";
 import { Button, Chip } from "./ui";
 
@@ -99,6 +100,7 @@ export function PortfolioTopBar({
           but the Lab is one click away instead of a typed URL. */}
       <AppNav links={NAV_LINKS} className="text-[13px]" />
       <span className="flex-1" />
+      <PrivacyToggle />
       <ThemeToggle />
       <Button
         variant="outline"
