@@ -449,7 +449,210 @@ alternatives: the spike is what decides whether the join key comes for free.
 
 **Pick up when:** the columns/search/weight half can go any time. The group-by
 half waits on the `get_mf_funds_details` spike shared with **B2**, and on **B4**
-for whatever that spike does not supply.
+for whatever that spike does not supply. **B6** reuses this card's answers for its
+own grouping — settle the cross-asset question once, here.
+
+---
+
+### B5 — Portfolio greeting header + Day's P&L
+
+Reference design supplied 2026-08-17: a greeting line (`Good Afternoon, Ishan! 🎉`)
+over a playful market-mood one-liner, a summary card carrying **Current Value**,
+**Invested Amount**, **Total P&L** (abs + %) and **Day's P&L** (abs + %), and a
+footer reading `Last updated a while ago · ⟳ Refresh Holdings`.
+
+D1 already ships four stat cards, a live Refresh with a 30-second cooldown, and
+the top bar. The delta is: the greeting, the mood line, the relative timestamp —
+and **Day's P&L, which is the only hard part.**
+
+**Day's P&L does not exist in the payload and cannot be read from it.** C2: no
+date field at any level, and no previous-close or day-change field anywhere. Three
+routes, and they are not equivalent:
+
+1. **Diff against last night's S1 snapshot.** Available today with no new data.
+   But a level difference **conflates market movement with money moving** — this is
+   precisely B1's thesis. A ₹50k deposit renders as ₹50k of profit. Also `None` on
+   the user's first day, and unattributable across a missing day or a bucket in
+   `buckets_failed`. If used at all it must be labelled **"change since last
+   snapshot"**, never "Day's P&L".
+2. **Per-fund `units × ΔNAV` from B4's dated AMFI series.** Decomposes correctly,
+   is immune to flow conflation while units are unchanged, and yields the *per-fund*
+   number B6's treemap needs anyway. MF only. **This is the right route** — it makes
+   Day's P&L a B4 dependency rather than a B1 one.
+3. A vendor day-change field. There isn't one.
+
+**MF NAVs publish once daily after close**, so before tonight's publish "today" is
+genuinely **unknown, not zero** — the reference's own `0.00%` tiles are consistent
+with "not yet published". Render `—`, the same way D1 already refuses to render an
+unknown basis as `0.00%`.
+
+**Settle these:**
+
+- **"Last updated" must say *fetched*, not *as of*.** M1's `as_of` is stamped by
+  the connector at fetch time because no payload carries a date. "Prices as of
+  3:42pm" is a freshness claim we cannot make; "fetched 4 minutes ago" is true.
+- **Greeting timezone: use IST.** S1's `attributed_day` already owns the IST rule,
+  and a user abroad seeing "Good Morning" at their 2am is a smaller wrong than two
+  parts of the app disagreeing about what day it is.
+- **The name comes from Clerk and is often absent** — single-tenant local dev and
+  flag-off have no name at all. The greeting must read well with no name rather
+  than rendering "Good Afternoon, !".
+- **Keep the mood line a static rotation keyed to observed direction, not an LLM
+  call.** A1's overview is already spend-capped and currently paused
+  (`OVERVIEW_DAILY_GLOBAL_MAX=0`); a per-pageload joke would be a new uncapped
+  spend path and a new way for a page that must always render to fail. Whatever it
+  says about the market has to key off a number we actually hold.
+- **Do not port the loan cross-sell.** The reference's "Get cash up to ₹1,39,499
+  against your MFs" is a credit-product referral — outside `V2_PLAN.md` §8.3's
+  descriptive-only framing and a regulated-referral surface this project has not
+  accepted. Deliberately excluded, not overlooked.
+
+**Pick up when:** the greeting, mood line and relative timestamp can go any time.
+Day's P&L waits on **B4** (preferred) or ships as a snapshot diff **only** with
+B1's labelling honesty applied.
+
+### B6 — P&L treemap (`Your Profit & Loss`)
+
+Reference design supplied 2026-08-17: a treemap where **tile area = weight**,
+**fill = signed return**, and each tile is labelled with the fund name and its
+change %, over two controls — **Period** (`Total` | `Today`) and **Group by**
+(`Funds` | `Category` | `Sub-Category`) — with an `Others` rollup tile for the
+tail and truncated labels in tiles too small to hold one.
+
+**What works today:** `Period = Total`, `Group by = Funds`. Area needs weight and
+fill needs `pnl_pct`; both are in the M1 model already (see B3). That combination
+could ship alone.
+
+**What is blocked:** `Today` is B5's problem (and therefore B4's).
+`Category` / `Sub-Category` is B3's problem (and therefore B4's / the
+`get_mf_funds_details` spike's). The treemap has no independent blocker — it
+inherits both.
+
+**It conflicts with the locked design contract, and that needs settling first.**
+`docs/design/DECISION.md` states: *"P&L: good `#059669` · bad `#dc2626` — status
+colors never used as chart series colors."* A P&L treemap fills its marks with
+exactly those colors. The spirit is arguably intact — the rule exists so **hue
+never carries identity**, and here hue carries the *value* while identity stays in
+the tile label, which is the same section's other rule — but the contract says it
+literally. Amend `DECISION.md` explicitly before building this, rather than
+shipping a silent exception to a document D1/U1 are bound by.
+
+**Settle these:**
+
+- **Say what the encoding is, in a legend.** "Your Profit & Loss" implies area = P&L,
+  but area is *weight* and only the fill is P&L. A large holding with a small loss
+  will look worse than a small holding that halved. That is a legitimate design
+  choice and an illegible one if unlabelled.
+- **The diverging scale needs a fixed midpoint at 0 and a clamp.** One outlier
+  otherwise washes every other tile to the same shade.
+- **Three states must be visually distinct: zero, unknown, and not-applicable.**
+  `0.00%` (real, no move), `—` (NAV not published yet, or unknown cost basis where
+  `invested_amount is None`), and cash-like rows that have no return *by nature* —
+  C2 found `pnl_per == 0` on 3 of 3 `SA` rows for that reason. Rendering all three
+  as a grey `0.00%` tile asserts three different falsehoods.
+- **Red/green alone excludes colorblind readers.** The signed % is already in the
+  label — keep it there, and prefer a luminance-differentiated ramp consistent with
+  DECISION's ordered-ramp rule.
+- **Define `Others`.** What falls in, how it is composed, and whether its own fill
+  is a weighted average (a bucket mixing a +8% and a −8% holding into a neutral
+  tile hides both). It needs a tooltip listing members.
+- **Minimum tile size**, or the truncation in the reference (`Motial …`, `…`)
+  becomes the common case rather than the tail.
+- **Cross-asset again.** This is an MF-shaped mark; `SA`/`FD` do not belong in a
+  return map. Decide whether it is the MF sleeve or the whole portfolio (B3 has the
+  same open question — answer both the same way).
+
+**Pick up when:** `Total` × `Funds` can go once DECISION.md is amended. The other
+Period and Group by combinations arrive with **B4**/**B5**/**B3**.
+
+---
+
+## Tooling & process
+
+### B7 — Evaluate Paper (`paper.design`) as the drafting surface for pending design work
+
+**Researched 2026-08-17. Verdict: do not adopt as a source of truth yet; trial it
+on exactly one card.** Recorded so it isn't re-researched, and so the re-evaluation
+trigger is written down.
+
+**Why it's even a candidate.** Our design contract is unusual: `docs/design/DECISION.md`
+plus **four hand-written HTML/CSS reference pages**. Paper is an HTML/CSS-native
+canvas — "designs export as code", real flexbox, real CSS properties, no
+proprietary render layer — so unlike Figma its output is *the same medium our
+contract is already written in*. It also ships an **MCP server**, meaning an agent
+can read a design directly instead of squinting at a pasted screenshot, which is
+precisely how B3/B5/B6 got specced in this session.
+
+**Verified specifics:**
+
+- **MCP server:** local HTTP at `http://127.0.0.1:29979/mcp`, started by the **Paper
+  Desktop app** when a file is open. Claude Code install:
+  `/plugin marketplace add paper-design/agent-plugins` then
+  `/plugin install paper-desktop@paper`, or
+  `claude mcp add paper --transport http http://127.0.0.1:29979/mcp --scope user`.
+  **~24 tools, read *and* write:** page/selection/node inspection, screenshots,
+  **JSX export**, computed styles; and create-artboard, parse/add HTML, set text,
+  move/rename/duplicate/delete, update styles, plus `export` (PNG/JPG/SVG/MP4).
+- **Pricing:** Free = unlimited viewers/editors but **100 MCP tool calls per week**;
+  Pro = **$16/editor/mo billed yearly** ($20 monthly) for 1M calls/week; Orgs =
+  custom (SAML/SSO).
+- **Export targets:** React/JSX with Tailwind or inline styles, plus PNG/WebP/AVIF/MP4.
+
+**The disqualifier is the roadmap, not the tool.** The three capabilities our stack
+would actually depend on are **not shipped**:
+
+- **Tailwind import/export ("idiomatic Tailwind")** — *In Progress*.
+- **Themes and Tokens** — *In Progress*.
+- **shadcn support** (under "Icon Packs & Component Kits", with Base UI) — *Planned*.
+
+We are shadcn + Tailwind + zinc tokens. Adopting today means Paper emits HTML/CSS
+that a human hand-translates back into shadcn primitives — **reintroducing exactly
+the translation layer the tool exists to delete**, while adding a second place
+where visual truth lives. `DECISION.md` + the reference pages are binding for D1
+and U1; a rival source of truth is a worse problem than a slow design loop.
+
+**Other things that would bite:**
+
+- **The MCP is a local desktop dependency.** It only exists while the app has the
+  file open, on one machine. It cannot be a CI, headless, or cron dependency, and
+  any agent workflow built on it fails closed when the app is shut.
+- **No auth on the endpoint** — a localhost HTTP server with *write* access to
+  design files. Low risk on a personal machine; not something to expose.
+- **Vendor-stated flakiness:** long sessions drop the connection (restart advised),
+  and agents "can occasionally hallucinate the tools".
+- **Free tier is ~one agent session** (100 calls/week). A real trial costs $16/mo.
+
+**Recommended trial, if it happens:** **B6's treemap**, and nothing else. It is the
+one pending design decision that is purely visual, self-contained, and already
+blocked on a written question (the `DECISION.md` status-color amendment). Success
+looks like: the treemap drafted on the canvas, exported, and **landed back as a
+reference page + a DECISION.md amendment** — the contract stays where it is.
+Failure looks like: the export needs enough hand-rework that it saved nothing.
+
+**Re-evaluate when:** Tailwind integration and Themes/Tokens move from *In Progress*
+to shipped, **and** shadcn support lands. At that point the argument changes
+completely, because the export would land in our actual stack.
+
+---
+
+### Pending design decisions (need an answer before their cards can build)
+
+Consolidated from B3/B5/B6 so they are visible in one place rather than buried in
+prose. These are **decisions**, not tasks — each blocks a build.
+
+| # | Decision | Card | Why it blocks |
+| --- | --- | --- | --- |
+| 1 | Amend `DECISION.md` to permit P&L status colors as treemap fill — or reject the treemap | B6 | The contract says "status colors never used as chart series colors"; building either way without amending it makes D1/U1's binding document untrue |
+| 2 | Is the holdings surface the **MF sleeve** or the **whole portfolio**? | B3, B6 | Decides whether columns and group-by become contextual per asset type — the expensive answer, and both cards need the *same* answer |
+| 3 | **Weight** = the vendor's `holding_percent` or `current_value / total`? And of the portfolio or of the visible group? | B3 | The two disagree by construction (M1 §5); a table showing both contradicts itself |
+| 4 | How are **zero / unknown / not-applicable** distinguished visually? | B3, B6 | C2: cash-like rows are `0` *by nature*, unknown basis is `None`, unpublished NAV is neither. One grey tile for all three asserts three falsehoods |
+| 5 | Diverging ramp + colorblind treatment; `Others` bucket definition; minimum tile size | B6 | Red/green alone excludes readers; an undefined `Others` hides its members |
+| 6 | Day's P&L **wording and source** — `units × ΔNAV` (B4) vs a snapshot diff labelled "change since last snapshot" | B5 | A snapshot diff renders deposits as profit (B1); the label is the honesty |
+| 7 | Greeting: IST vs browser-local; no-name fallback; static mood-line copy table | B5 | Cheap, but it is copy someone has to write |
+
+Already filed on GitHub and still open: **#18** (Lab's look onto the product theme),
+**#19** (analysis playground), both `needs-design`; **#20** tracks the post-polish
+backlog round.
 
 ---
 
