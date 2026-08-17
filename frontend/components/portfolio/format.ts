@@ -7,11 +7,18 @@
  * - **INR everywhere**, `Intl.NumberFormat('en-IN')`, `₹` prefix, no decimals on
  *   amounts. The source converts foreign holdings to INR itself and publishes no
  *   currency field, so a `US` badge — not a `$` — is the exposure signal.
+ * - **A masked number is not a missing number.** When the privacy toggle is on
+ *   these helpers return a dot run, but `null` still returns `—`: "you chose to
+ *   hide this" and "the source never reported this" are different facts and must
+ *   not render as the same glyph. The `null` check therefore comes *first* in
+ *   every helper below.
  * - **A missing number is `—`, never a computed zero.** Money arrives from the
  *   API as a decimal *string* (or `null`); `null` means the source did not
  *   report it, and every helper here keeps that distinction instead of coercing
  *   it to `0` on the way through.
  */
+
+import { MASK, MASK_SHORT, amountsHidden } from "./privacy";
 
 const INR = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
 const UNITS = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 4 });
@@ -23,16 +30,25 @@ export function num(value: string | null | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-/** `₹10,07,655`. */
+/** `₹10,07,655`, or `₹••••••` while amounts are hidden. */
 export function inr(value: number | null): string {
   if (value === null) return "—";
+  if (amountsHidden()) return `₹${MASK}`;
   return `₹${INR.format(Math.round(value))}`;
 }
 
-/** `+₹88,905` / `−₹1,240`, using a real minus sign. */
+/**
+ * `+₹88,905` / `−₹1,240`, using a real minus sign.
+ *
+ * The sign survives masking. It is not the number, the percentage beside it
+ * already gives the direction away, and a P&L that hid whether it was a gain
+ * would be hiding the wrong thing.
+ */
 export function inrSigned(value: number | null): string {
   if (value === null) return "—";
-  return `${value >= 0 ? "+" : "−"}₹${INR.format(Math.abs(Math.round(value)))}`;
+  const sign = value >= 0 ? "+" : "−";
+  if (amountsHidden()) return `${sign}₹${MASK}`;
+  return `${sign}₹${INR.format(Math.abs(Math.round(value)))}`;
 }
 
 /** `+8.4%` / `−100.0%`. */
@@ -47,13 +63,31 @@ export function pct(value: number | null, digits = 1): string {
   return `${value.toFixed(digits)}%`;
 }
 
-/** `10.2L` — the y-axis unit for a net-worth chart read by Indian users. */
+/**
+ * `10.2L` — the y-axis unit for a net-worth chart read by Indian users.
+ *
+ * Masked, this is the whole point of the feature: the trend *line* is a shape
+ * and reveals nothing, but a labelled axis turns it back into a balance. The
+ * ticks still render (the gridline positions are the shape), they just stop
+ * naming a rupee figure.
+ */
 export function lakh(value: number): string {
+  if (amountsHidden()) return MASK_SHORT;
   return `${(value / 100000).toFixed(1)}L`;
 }
 
+/**
+ * Units held — masked alongside the amounts, and not as an afterthought.
+ *
+ * A holding's price sits in the next column and is a public number, so units
+ * left visible multiply straight back into the position value. Hiding the
+ * amount while publishing its two factors would be a toggle that only looks
+ * like one.
+ */
 export function units(value: number | null): string {
-  return value === null ? "—" : UNITS.format(value);
+  if (value === null) return "—";
+  if (amountsHidden()) return MASK_SHORT;
+  return UNITS.format(value);
 }
 
 /** Colour class for a signed figure. Status colours, never chart series. */
