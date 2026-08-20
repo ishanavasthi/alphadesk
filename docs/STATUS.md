@@ -3,7 +3,7 @@
 Plan of record: [`../V2_PLAN.md`](../V2_PLAN.md). The orchestrator updates this
 file at every card completion and gate. Newest facts win; keep entries terse.
 
-**Last updated:** 2026-08-21 (B10 manual fixed deposits built and verified on `feat/b10-manual-fd` — PR pending merge)
+**Last updated:** 2026-08-21 (B10 manual fixed deposits merged as PR #69 and **deployed** — Neon at migration 0008, Space rebuilt, Vercel production live)
 
 | Card | Status | Notes |
 | --- | --- | --- |
@@ -28,7 +28,7 @@ file at every card completion and gate. Newest facts win; keep entries terse.
 | Card | Status | Notes |
 | --- | --- | --- |
 | B8 top movers | ✅ **done 2026-08-20** | Merged via PR #67 (issue #66). `GET /portfolio/movers` over captured snapshots (price-basis ranking, balance rows as flows, opened/closed never ±100%, window snapping, `buckets_failed` exclusion), `snapshot_holdings.name` (migration 0007), Top movers card on `/portfolio`. Docs: `docs/SPECS/B8.md`, `docs/TESTING/B8.md`. |
-| B10 manual FDs | ✅ **built 2026-08-21 — PR open** | Issue #68 (implements #56, first slice of #55; vendor FD repair stays B9/#65). `manual_fds` (migration 0008), pure-Decimal accrual recomputed on every read (clamp before start, freeze at maturity), `/portfolio/fds` CRUD (404-not-403, no-DB: reads empty / writes 503), additive merge into `/holdings?asset_type=FD` + `/summary.manual` with vendor fields byte-untouched, "Fixed deposits — manual" card + add/edit/delete dialogs. Orchestrator re-verified: 794 pytest green in a clean env (the 9 failures in the operator checkout reproduce on `main` — `.env` leakage, pre-existing), 158 vitest + build + tsc, migration idempotent, accruals reconciled by hand, all seven visual states pixel-checked at 1280+375 (both dev-console findings reproduce on `main`). Docs: `docs/SPECS/B10.md`, `docs/TESTING/B10.md`. |
+| B10 manual FDs | ✅ **done + deployed 2026-08-21** | Merged via PR #69 (issue #68; implements #56, first slice of #55 — vendor FD repair stays B9/#65). `manual_fds` (migration 0008), pure-Decimal accrual recomputed on every read (clamp before start, freeze at maturity), `/portfolio/fds` CRUD (404-not-403, no-DB: reads empty / writes 503), additive merge into `/holdings?asset_type=FD` + `/summary.manual` with vendor fields byte-untouched, "Fixed deposits — manual" card + add/edit/delete dialogs. Verified pre-merge: 794 pytest / 158 vitest / build / tsc, migration idempotent, accruals reconciled by hand, seven visual states at 1280+375. **Deployed 2026-08-21:** `alembic upgrade head` run against Neon (0007→0008, `manual_fds` present with CASCADE FK, 0 rows); Space rebuilt from `space-deploy` @ `b12f04e` (`/portfolio/fds` answers 401, `/portfolio/movers` unaffected); Vercel production READY on merge commit `230849e` with the FD card in the page chunk. No new env vars. Docs: `docs/SPECS/B10.md`, `docs/TESTING/B10.md`. |
 
 ## Deploy notes (read before pushing to the Space)
 
@@ -43,7 +43,7 @@ file at every card completion and gate. Newest facts win; keep entries terse.
   deliberately not done.
 - Space: `https://huggingface.co/spaces/heyavasthi/alphadesk`, live at
   `https://heyavasthi-alphadesk.hf.space`. Currently running `space-deploy` @
-  the mcp-pin commit.
+  `b12f04e` (B10 manual fixed deposits, deployed 2026-08-21).
 
 ## Landmines found so far
 
