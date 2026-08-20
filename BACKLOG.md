@@ -16,6 +16,34 @@ real holdings; `V2_PLAN.md` §8.3 is the wording of record).
 
 ---
 
+## Top of queue
+
+### B9 — FD data integrity (source is wrong; stop presenting it as ours) — #65
+**Status:** filed 2026-08-21, **ahead of everything else in this file**. Live wrong
+data on the production dashboard, and it silently corrupts stored history that
+cannot be backfilled (the MCP is point-in-time).
+
+Verified against the raw payloads in `snapshot_raw`: IND Money reports the FD
+bucket as `invested 15,000 / market_value 10,162 / total_pnl -4,838 /
+pnl_per -32.25`, and AlphaDesk passes those through unchanged — the mapping is
+correct, the source is not. The loss is one deposit reported as ₹5,000 invested /
+₹162 current, and `total_pnl` has been frozen at exactly −4,838 for five days.
+
+Two worse symptoms found alongside it: the FD bucket **vanished entirely** on
+2026-08-18 (a phantom −₹8,550 dip written into `snapshot_days.total_value`, with
+`buckets_failed` NULL), and on 2026-08-20 it was inside `total_networth` but
+missing from the `assets` breakdown. `services/snapshots.py` marks a bucket failed
+only on throttle/unsupported/source-error — a bucket the vendor silently omits
+reads as "sold everything", which defeats S1's "a partial day never passes for
+complete".
+
+Scope, acceptance criteria, the SQL to pull every payload, and the exact
+`snapshot_raw` ids are in **#65**. Not to be confused with §"FD tracking" below,
+which is the long-term fix (compute the value ourselves); B9 is about not lying
+until then.
+
+---
+
 ## Deferred connectors
 
 ### Groww
@@ -165,7 +193,11 @@ who computes their current value and how double-counting against a broker row is
 prevented.
 
 ### FD tracking
-IND Money's MCP is unreliable for FDs (user-reported). FDs are the clearest case
+IND Money's MCP is unreliable for FDs — **verified 2026-08-21 with payloads, not
+just user-reported** (see B9 / #65: a ₹5,000 deposit valued at ₹162, a P&L frozen
+for five days, and the whole bucket dropping out of two daily snapshots). That
+evidence is the strongest argument yet for owning FD valuation ourselves.
+FDs are the clearest case
 for manual entry because their value is *computable*, not quoted: principal +
 rate + compounding + start/maturity date → accrued value, no price feed needed.
 Good first manual asset type for exactly that reason.
@@ -348,6 +380,89 @@ sub-category / AMC / AUM group-by needs the same `get_mf_funds_details` spike).
 ### Tax-lot / capital-gains view
 Realised vs unrealised, STCG/LTCG split, ITR season utility. Needs transaction
 history the current tools may not expose — gated on the data spike.
+
+### B8 — Top movers over a user-chosen period
+
+**Status:** picked up 2026-08-21 — issue [#66](https://github.com/ishanavasthi/alphadesk/issues/66)
+carries the settled contract; built on `feat/b8-top-movers` (backend + frontend
+halves by parallel Opus agents, both suites green on the merged tree).
+
+**What's wanted** (user's framing, 2026-08-21). "Which of my holdings moved the
+most between date A and date B?" — a ranked gainers/losers list over an
+arbitrary window the user picks (a preset — 1D / 1W / 1M / 3M / YTD — or two
+explicit dates), not just the single net-worth line `/portfolio/history`
+returns today. Answered from the captured snapshots, so it is history the user
+already owns rather than a fresh source call.
+
+**Why it's worth doing.** It is the first feature that reads
+`snapshot_holdings` for anything, and the cheapest one: S1 has been freezing
+`units`, `current_price`, `current_value` and `invested_amount` per row per day
+since 2026-08-16, and nothing has ever queried it. Today the only way to answer
+"what moved" is to hand-write SQL against Neon — which is exactly how this card
+was written. It also gives the daily capture a second user-facing reason to
+exist beyond the trend line.
+
+**What's already in place** (don't re-derive):
+
+- `snapshot_holdings` is keyed by `(source, external_id)` — M1's identity pair —
+  which is stable across days and is what a two-day join must match on. It is
+  **not** `symbol`: on IND Money, MF and SA rows carry `symbol = NULL`.
+- `services.snapshots.history_points(session, user_id, days=…)` is the existing
+  windowed read and the shape to follow — same `attributed_day` IST rule, same
+  "no DB configured ⇒ honestly empty, never a 500" degradation
+  (`/portfolio/history`).
+- Display names are **not** in `snapshot_holdings` — they live only in
+  `snapshot_raw.payload…rows[].investment`, which is **pruned at 90 days**. A
+  movers view older than the prune horizon can render ids and nothing else.
+  Either denormalize a `name` column onto `snapshot_holdings` going forward, or
+  accept nameless history and say so. Decide before scoping, not after the first
+  pruned window.
+
+**The hard parts — settle these before scoping:**
+
+- **Rank by what?** Percent and rupees disagree violently on a real portfolio.
+  Over 2026-08-16 → 08-20 the largest *rupee* movers were a savings account
+  (+₹16,488) and an FD, while the largest *percent* mover was a ₹0.94 Amazon
+  fraction (+1.55%). Both readings are useless alone; the view needs both
+  columns and probably a minimum-position floor before it ranks anything.
+- **Bank, FD and cash rows are not movers.** They have no `units` and no
+  `current_price` — their Δ is a deposit or a spend, i.e. B1's *flow*, not
+  market movement. Mixing them into a "top movers" list asserts a market move
+  that never happened. Either exclude non-priced buckets or label them as flow
+  in a separate group — and prefer the price series (`current_price`), not
+  `current_value`, wherever a price exists, so a top-up doesn't read as a gain.
+  This is the same conflation **B1** exists to fix; B8 is the read-only,
+  ship-now half of it.
+- **Endpoints of the window may not exist.** A user can ask for a range whose
+  first or last day was never captured (no snapshot before 2026-08-16 at all;
+  the backend was restarted, the cron missed). Snap to the nearest captured day
+  **and say which days were actually compared** — never silently widen the
+  window or interpolate. Same rule for `buckets_failed` days: a bucket that
+  failed on one endpoint is *unknown*, not flat.
+- **Positions that appear or vanish mid-window have no percentage.** A holding
+  bought after day A, sold before day B, or a bucket the source returned empty
+  for (the FD bucket came back `{"rows": []}` on 2026-08-18 and 08-20 with
+  `buckets_failed` NULL — an honest empty, not a failure) must render as
+  "opened" / "closed" / "not held", never as +100% or −100%.
+- **Framing holds** (`V2_PLAN.md` §8.3): descriptive arithmetic over the user's
+  own captured history. It ranks what *did* happen; it does not rate, recommend
+  or project.
+
+**Sketch of the surface** (not locked): `GET /portfolio/movers?from=&to=&limit=`
+alongside `/portfolio/history` — same identity, same rate limit, same
+optional-DB degradation — returning per holding: id, name (where known), the two
+compared dates, start/end price and value, Δ% and Δ₹, and a `basis` field of
+`price` | `balance` | `opened` | `closed`. UI-wise it is a gainers/losers pair of
+lists under the trend line, with the window control shared with the chart.
+
+**Pick up when:** there is enough captured history for a window longer than a
+week to mean anything (D+30 from first capture, so ~2026-09-15), or sooner if a
+dashboard card wants it. Does **not** block on B1's transaction spike — the
+priced-instrument half is computable from what S1 already stores, which is
+precisely why it can ship first. Related: **B1** (the flow half of the same
+question), **B5 — Day's P&L** (the 1D case of this card; if both ship they
+should share one computation), **B6 — P&L treemap** (same per-holding Δ, drawn
+instead of ranked), **B3 — Holdings table v2** (its rows are this card's rows).
 
 ---
 

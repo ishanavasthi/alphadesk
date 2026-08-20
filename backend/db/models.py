@@ -317,6 +317,12 @@ class SnapshotHolding(SQLModel, table=True):
     #: Stable within `source`; the other half of M1's identity pair.
     external_id: str = Field(max_length=255)
     asset_type: str = Field(max_length=32)
+    #: The source's own display label for the row, frozen with it (card B8).
+    #: `Text` rather than a bounded string on purpose: a name is decoration, and
+    #: a source that one day returns a 300-character fund name must not be able
+    #: to fail a capture that can never be retried. NULL is honest — the source
+    #: leaves it empty on some rows, and rows captured before B8 have none.
+    name: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     symbol: str | None = Field(default=None, max_length=64)
     isin: str | None = Field(default=None, max_length=32)
     units: Decimal | None = Field(
