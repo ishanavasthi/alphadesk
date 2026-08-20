@@ -46,6 +46,7 @@ export function StatCards({
   holdingsCount,
   countIsPartial,
   holdingsHref,
+  manual,
 }: {
   summary: PortfolioSummary;
   holdingsCount: number;
@@ -56,17 +57,48 @@ export function StatCards({
    * page and has no holdings route to link into.
    */
   holdingsHref?: string;
+  /**
+   * What the reader's manual fixed deposits add to the net worth (card B10).
+   *
+   * A **labelled** addition. The headline becomes the combined figure — that is
+   * the number they asked this app to keep — but the subline names the addition
+   * and repeats the source's own total beside it, so the vendor figure is never
+   * silently replaced by one this app assembled. Absent (or zero rows) and this
+   * card is byte-identical to before B10.
+   */
+  manual?: { total: number; count: number } | null;
 }) {
   const liabilities = num(summary.liabilities_total);
   const pnl = num(summary.pnl);
   const pnlPct = num(summary.pnl_pct);
 
+  const vendorNetWorth = num(summary.net_worth);
+  const added = manual && manual.count > 0 ? manual : null;
+  const netWorth =
+    added && vendorNetWorth !== null ? vendorNetWorth + added.total : vendorNetWorth;
+  const sourceNote =
+    liabilities === null ? "as the source reports it" : `after ${inr(liabilities)} liabilities`;
+
   return (
     <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
       <Stat
         label="Net worth"
-        value={inr(num(summary.net_worth))}
-        note={liabilities === null ? "as the source reports it" : `after ${inr(liabilities)} liabilities`}
+        value={inr(netWorth)}
+        note={
+          added ? (
+            <>
+              <span className="adp-num">
+                incl. {inr(added.total)} in {added.count} manual FD
+                {added.count === 1 ? "" : "s"}
+              </span>
+              <div className="adp-num">
+                source reports {inr(vendorNetWorth)} · {sourceNote}
+              </div>
+            </>
+          ) : (
+            sourceNote
+          )
+        }
       />
       <Stat
         label="Current value"
