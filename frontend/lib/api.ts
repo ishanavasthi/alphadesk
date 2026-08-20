@@ -610,6 +610,82 @@ export function getPortfolioHistory(days = 90, signal?: AbortSignal): Promise<Hi
   return portfolioFetch<HistoryResponse>(`/portfolio/history?days=${days}`, signal);
 }
 
+// --------------------------------------------------------------------------- #
+// Top movers (card B8)
+// --------------------------------------------------------------------------- #
+
+/**
+ * Why a row is in the list it is in — the honest-data core of the movers card.
+ *
+ * `price` rows carry units and a price at both ends, so their percentage is a
+ * real market move and only they are ranked. `balance` rows (savings, FDs) have
+ * no price: their delta is money moved, not a move. `opened`/`closed` existed at
+ * only one endpoint and have no comparison at all — never a ±100%.
+ */
+export type MoverBasis = "price" | "balance" | "opened" | "closed";
+
+export interface MoverRow {
+  source: string;
+  external_id: string;
+  asset_type: string;
+  name: string | null;
+  symbol: string | null;
+  basis: MoverBasis;
+  start_price: Money;
+  end_price: Money;
+  start_value: Money;
+  end_value: Money;
+  change_abs: Money;
+  change_pct: Money;
+  currency: string;
+}
+
+/** A window's two ends. Either side is `null` when no day could be found. */
+export interface MoversWindow {
+  from: string | null;
+  to: string | null;
+}
+
+/** A bucket that failed on one of the compared days, so its rows are unknown. */
+export interface MoversExclusion {
+  asset_type: string;
+  reason: string;
+}
+
+export interface MoversResponse {
+  requested: MoversWindow;
+  compared: MoversWindow;
+  note: string | null;
+  gainers: MoverRow[];
+  losers: MoverRow[];
+  flows: MoverRow[];
+  opened: MoverRow[];
+  closed: MoverRow[];
+  excluded: MoversExclusion[];
+}
+
+/**
+ * GET /portfolio/movers — ranked gainers/losers between two captured days.
+ *
+ * Dates only: the presets (1D/1W/1M/3M/YTD) are a frontend concern, and the API
+ * snaps whatever window it is given to the days it actually captured. Omitting
+ * `to` means the latest captured day; omitting `from` means seven attributed
+ * days before it.
+ */
+export function getMovers(
+  from?: string,
+  to?: string,
+  limit?: number,
+  signal?: AbortSignal,
+): Promise<MoversResponse> {
+  const params = new URLSearchParams();
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  if (limit !== undefined) params.set("limit", String(limit));
+  const query = params.toString();
+  return portfolioFetch<MoversResponse>(`/portfolio/movers${query ? `?${query}` : ""}`, signal);
+}
+
 /** The outcome of a capture attempt. `in_flight` means one was already running. */
 export interface CaptureResult {
   status: "captured" | "already_captured" | "skipped" | "failed" | "in_flight";
