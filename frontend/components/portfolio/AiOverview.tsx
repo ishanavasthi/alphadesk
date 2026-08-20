@@ -9,6 +9,7 @@ import {
   type OverviewSegment,
 } from "@/lib/api";
 import { Badge, Button, Card } from "@/components/portfolio/ui";
+import { MASK, useAmountsHidden } from "@/components/portfolio/privacy";
 
 /**
  * The AI overview panel (card A1) — `docs/design/a2-overview.html`.
@@ -167,6 +168,8 @@ export function AiOverview({
 
   const regenerate = useCallback(() => setRunKey((k) => k + 1), []);
 
+  const hideAmounts = useAmountsHidden();
+  const metricUnits = new Map(metrics.map((m) => [m.key, m.unit]));
   const shown = metrics.filter((m) => m.available);
 
   return (
@@ -206,7 +209,7 @@ export function AiOverview({
           ) : phase === "degraded" || narrative.length === 0 ? (
             <DegradedBox message={DEGRADE_COPY[reason ?? "error"] ?? DEGRADE_COPY.error} degraded />
           ) : (
-            <Narrative paragraphs={narrative} />
+            <Narrative paragraphs={narrative} units={metricUnits} hide={hideAmounts} />
           )}
         </div>
 
@@ -237,7 +240,7 @@ export function AiOverview({
                     {m.label}
                   </dt>
                   <dd className="min-w-0 break-words text-right font-semibold tabular-nums">
-                    {m.display}
+                    {maskFigure(m.display, m.unit, hideAmounts)}
                     {m.detail && m.unit !== "text" ? (
                       <small className="ml-1 font-normal text-[var(--adp-faint)]">{m.detail}</small>
                     ) : null}
@@ -257,13 +260,43 @@ export function AiOverview({
   );
 }
 
-function Narrative({ paragraphs }: { paragraphs: OverviewParagraph[] }) {
+/**
+ * Mask a backend-rendered figure.
+ *
+ * This panel is the one place on the surface that does **not** go through
+ * `format.ts`: every figure it shows is `display`, a string already rendered by
+ * Python and shipped over the wire. A mask applied only at the formatter layer
+ * would leave real rupee amounts sitting in the most quotable part of the page,
+ * so the same rule is enforced a second time, here, on purpose.
+ *
+ * `unit === undefined` means the chip cites a metric the rail did not send. That
+ * should not happen — chips and metrics arrive in the same payload — but the
+ * failure is closed rather than open: an unclassifiable figure is hidden, minus
+ * the rupee sign it may not deserve. A privacy control that leaks whatever it
+ * fails to recognise is not one.
+ */
+function maskFigure(display: string, unit: string | undefined, hide: boolean): string {
+  if (!hide) return display;
+  if (unit === "inr") return `₹${MASK}`;
+  if (unit === undefined) return MASK;
+  return display;
+}
+
+function Narrative({
+  paragraphs,
+  units,
+  hide,
+}: {
+  paragraphs: OverviewParagraph[];
+  units: Map<string, string>;
+  hide: boolean;
+}) {
   return (
     <div className="space-y-2.5 text-[13.5px] leading-[1.75] text-[var(--adp-prose)]">
       {paragraphs.map((para, i) => (
         <p key={i}>
           {para.segments.map((seg, j) => (
-            <Segment key={j} seg={seg} />
+            <Segment key={j} seg={seg} units={units} hide={hide} />
           ))}
         </p>
       ))}
@@ -271,7 +304,15 @@ function Narrative({ paragraphs }: { paragraphs: OverviewParagraph[] }) {
   );
 }
 
-function Segment({ seg }: { seg: OverviewSegment }) {
+function Segment({
+  seg,
+  units,
+  hide,
+}: {
+  seg: OverviewSegment;
+  units: Map<string, string>;
+  hide: boolean;
+}) {
   if ("text" in seg) return <>{seg.text}</>;
   // A metric chip: the figure is the Python-computed display, never model text.
   return (
@@ -279,7 +320,7 @@ function Segment({ seg }: { seg: OverviewSegment }) {
       className="mx-px inline-block rounded-full border border-[var(--adp-accent-ring)] bg-[var(--adp-accent-soft)] px-1.5 py-px text-[12px] font-semibold text-[var(--adp-chip-ink)] tabular-nums"
       title={seg.label}
     >
-      {seg.display}
+      {maskFigure(seg.display, units.get(seg.metric), hide)}
     </span>
   );
 }

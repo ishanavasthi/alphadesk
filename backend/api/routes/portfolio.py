@@ -46,7 +46,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from collections.abc import Callable
 from typing import Any, NoReturn, Optional
@@ -90,6 +90,7 @@ from services.snapshots import (
     capture_if_missing,
     history_points,
     last_captured_at,
+    movers_report,
     optional_session,
     schedule_capture_if_missing,
 )
@@ -704,6 +705,102 @@ async def history(
             if points
             else "No daily snapshots have been captured yet; the first one starts the line."
         ),
+    }
+
+
+def _mover_json(row: Any) -> dict[str, Any]:
+    return {
+        "source": row.source,
+        "external_id": row.external_id,
+        "asset_type": row.asset_type,
+        "name": row.name,
+        "symbol": row.symbol,
+        "basis": row.basis,
+        "start_price": _num(row.start_price),
+        "end_price": _num(row.end_price),
+        "start_value": _num(row.start_value),
+        "end_value": _num(row.end_value),
+        "change_abs": _num(row.change_abs),
+        "change_pct": _num(row.change_pct),
+        "currency": row.currency,
+    }
+
+
+def _day(value: Optional[date]) -> Optional[str]:
+    return None if value is None else value.isoformat()
+
+
+@router.get("/movers")
+async def movers(
+    from_day: Optional[date] = Query(
+        None, alias="from", description="Window start (YYYY-MM-DD). Default: 7 days before `to`."
+    ),
+    to_day: Optional[date] = Query(
+        None, alias="to", description="Window end (YYYY-MM-DD). Default: the latest captured day."
+    ),
+    limit: int = Query(5, ge=1, le=50, description="Cap on each of gainers and losers."),
+    user_id: str = Depends(portfolio_identity),
+    session: Optional[AsyncSession] = Depends(optional_session),
+) -> dict[str, Any]:
+    """What moved most between two captured days — read from history, not the source.
+
+    Descriptive arithmetic over the user's own snapshots (card B8): it ranks what
+    *did* happen and rates, recommends and projects nothing. No source call is
+    made here at all, which is why it can afford to answer a five-year window.
+
+    Three honesty rules do the work, all of them in `services.snapshots`:
+    percentages come from `current_price` so a top-up never reads as a rally;
+    unpriced balances (savings, deposits) land in ``flows`` and are never ranked
+    as movers; and a position present on only one of the two days is listed as
+    opened or closed rather than rendered as ±100%.
+
+    Presets (1D/1W/1M/3M/YTD) are a frontend concern — this takes dates.
+
+    Degrades to empty lists with a note (never a 500) when no database is
+    configured or the query fails, exactly like ``/history``.
+    """
+    empty = {
+        "requested": {"from": _day(from_day), "to": _day(to_day)},
+        "compared": {"from": None, "to": None},
+        "gainers": [],
+        "losers": [],
+        "flows": [],
+        "opened": [],
+        "closed": [],
+        "excluded": [],
+        "limit": limit,
+        "currency": CURRENCY,
+    }
+    if session is None:
+        return {
+            **empty,
+            "note": "No database is configured, so no history is being captured.",
+        }
+    try:
+        report = await movers_report(
+            session, user_id, from_day=from_day, to_day=to_day, limit=limit
+        )
+    except Exception:  # noqa: BLE001 - movers are additive; they never fail the page
+        _log.warning("portfolio movers unavailable", exc_info=True)
+        return {**empty, "note": "Movers could not be read from the database."}
+    return {
+        "requested": {
+            "from": _day(report.requested_from),
+            "to": _day(report.requested_to),
+        },
+        "compared": {
+            "from": _day(report.compared_from),
+            "to": _day(report.compared_to),
+        },
+        "note": report.note,
+        "gainers": [_mover_json(r) for r in report.gainers],
+        "losers": [_mover_json(r) for r in report.losers],
+        "flows": [_mover_json(r) for r in report.flows],
+        "opened": [_mover_json(r) for r in report.opened],
+        "closed": [_mover_json(r) for r in report.closed],
+        "excluded": [dict(item) for item in report.excluded],
+        "limit": limit,
+        "currency": CURRENCY,
     }
 
 

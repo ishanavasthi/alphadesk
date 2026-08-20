@@ -85,3 +85,17 @@ Frontend → Vercel (Root Directory = `frontend`, set `NEXT_PUBLIC_API_URL`). Ba
 
 - The `alphaDesk_graph` / `alphaDesk_*` naming (mixed case) is intentional and used across the codebase — match it.
 - Broker integration is out of scope by design: implement `BrokerAdapter` in `backend/broker/` and set `BROKER=<name>`; the Execution agent already calls `broker.place_order` when one is configured. Leave `BROKER` blank for paper-only.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `ishanavasthi/alphadesk`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles, each label string equal to its name. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.

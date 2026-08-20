@@ -28,6 +28,7 @@ import { useLinkConsent } from "@/components/consent/LinkConsent";
 import { toTrendPoints, type TrendPoint } from "@/components/portfolio/NetWorthTrend";
 import type { CaptureState } from "@/components/portfolio/PortfolioTopBar";
 import { num, typeLabel } from "@/components/portfolio/format";
+import { toggleAmountsHidden, useAmountsHidden } from "@/components/portfolio/privacy";
 import {
   ConnectGate,
   LockedState,
@@ -200,6 +201,9 @@ export interface PortfolioContextValue {
    */
   overview: OverviewComplete | null;
   setOverview: (overview: OverviewComplete) => void;
+  /** Are rupee amounts hidden? See `privacy.ts` for why the flag lives outside React. */
+  hideAmounts: boolean;
+  toggleAmounts: () => void;
 }
 
 const PortfolioContext = createContext<PortfolioContextValue | null>(null);
@@ -544,6 +548,19 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     [summary],
   );
 
+  /**
+   * The privacy flag mirrored into React.
+   *
+   * The value the formatters read lives at module scope (`privacy.ts`) because
+   * they are pure functions called during render. This subscription exists only
+   * so a flip re-renders the surface; nothing under this provider is memoised,
+   * so one re-render reaches every number on the page. The server snapshot is
+   * `false`, which is what the server would have rendered anyway — it paints no
+   * amounts at all while `phase` is `loading`.
+   */
+  const hideAmounts = useAmountsHidden();
+  const toggleAmounts = toggleAmountsHidden;
+
   const demo = summary?.source === "stub";
   // Never the whole-portfolio fallback while a drill-down is selected: that
   // would print portfolio-wide sectors under a "Within <asset type>" heading.
@@ -574,6 +591,8 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
             drillTypes,
             overview,
             setOverview,
+            hideAmounts,
+            toggleAmounts,
           }
         : null,
     [
@@ -596,6 +615,8 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       chooseSector,
       drillTypes,
       overview,
+      hideAmounts,
+      toggleAmounts,
     ],
   );
 

@@ -4,6 +4,7 @@ import { AiOverview } from "@/components/portfolio/AiOverview";
 import { AllocationBars, AllocationBarsSkeleton } from "@/components/portfolio/AllocationBars";
 import { CapStrip } from "@/components/portfolio/CapStrip";
 import { NetWorthTrend } from "@/components/portfolio/NetWorthTrend";
+import { TopMovers } from "@/components/portfolio/TopMovers";
 import { usePortfolio } from "@/components/portfolio/PortfolioProvider";
 import { StalenessBanner } from "@/components/portfolio/StalenessBanner";
 import { StatCards } from "@/components/portfolio/StatCards";
@@ -82,6 +83,13 @@ export default function PortfolioOverviewPage() {
           <CardHead title="Market cap mix" desc="Equity holdings by cap band" />
           <CapStrip slices={summary.by_market_cap} />
         </Card>
+      </div>
+
+      {/* Directly under the trend line, per card B8: the line says the total
+          moved, this says which holdings moved it. It reads the same captured
+          snapshots and makes no fresh source call. */}
+      <div className="mt-4">
+        <TopMovers />
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">

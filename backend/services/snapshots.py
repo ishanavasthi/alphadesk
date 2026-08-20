@@ -335,6 +335,9 @@ def _holding_row(snapshot_id: int, holding: Holding) -> SnapshotHolding:
         source=holding.source,
         external_id=holding.external_id,
         asset_type=holding.asset_type.value,
+        # Frozen with the row, not looked up later: the only other copy lives in
+        # `snapshot_raw`, which is pruned at 90 days (card B8).
+        name=holding.name,
         symbol=holding.symbol,
         isin=holding.isin,
         units=holding.units,
@@ -692,6 +695,348 @@ async def last_captured_at(session: AsyncSession, user_id: str) -> Optional[date
 
 
 # --------------------------------------------------------------------------- #
+# Top movers — descriptive arithmetic over two captured days (card B8)
+# --------------------------------------------------------------------------- #
+#: How many attributed days back an omitted ``from`` reaches.
+DEFAULT_MOVERS_WINDOW_DAYS = 7
+
+#: Ranked as a market move: the row carried units *and* a unit price on both
+#: days, so a percentage can be taken from the price.
+BASIS_PRICE = "price"
+#: A balance, not a position: no units, no price. Its delta is a deposit or a
+#: withdrawal — money moved, not market movement — so it is never ranked.
+BASIS_BALANCE = "balance"
+#: Present on the later day only.
+BASIS_OPENED = "opened"
+#: Present on the earlier day only.
+BASIS_CLOSED = "closed"
+
+
+@dataclass(frozen=True)
+class MoverRow:
+    """One holding's story between two captured days.
+
+    ``change_pct`` is **only ever** derived from ``current_price``. Taking it
+    from ``current_value`` would report a top-up as a rally and a partial sell
+    as a crash, which is the single way this card could lie about someone's
+    money. Where no price is available on both days it stays ``None`` and the
+    row is not ranked at all.
+    """
+
+    source: str
+    external_id: str
+    asset_type: str
+    name: Optional[str]
+    symbol: Optional[str]
+    basis: str
+    start_price: Optional[Decimal]
+    end_price: Optional[Decimal]
+    start_value: Optional[Decimal]
+    end_value: Optional[Decimal]
+    change_abs: Optional[Decimal]
+    change_pct: Optional[Decimal]
+    currency: str
+
+
+@dataclass(frozen=True)
+class MoversReport:
+    """What `/portfolio/movers` serializes. Empty lists are a real answer."""
+
+    requested_from: Optional[date]
+    requested_to: Optional[date]
+    compared_from: Optional[date]
+    compared_to: Optional[date]
+    note: Optional[str]
+    gainers: tuple[MoverRow, ...] = ()
+    losers: tuple[MoverRow, ...] = ()
+    flows: tuple[MoverRow, ...] = ()
+    opened: tuple[MoverRow, ...] = ()
+    closed: tuple[MoverRow, ...] = ()
+    excluded: tuple[dict[str, str], ...] = ()
+
+
+def _empty_report(
+    requested_from: Optional[date],
+    requested_to: Optional[date],
+    note: str,
+    *,
+    compared_from: Optional[date] = None,
+    compared_to: Optional[date] = None,
+) -> MoversReport:
+    return MoversReport(
+        requested_from=requested_from,
+        requested_to=requested_to,
+        compared_from=compared_from,
+        compared_to=compared_to,
+        note=note,
+    )
+
+
+def _external_code(external_id: str) -> Optional[str]:
+    """The instrument-code half of an M1 external id, if it has one.
+
+    Ids are ``"<raw_type>:<investment_code>"`` where the source supplied a code,
+    and ``"<raw_type>:h:<hash>"`` where it did not. Only the first form can be
+    matched back to a `snapshot_raw` row, and the hashed form deliberately
+    matches nothing rather than approximately something.
+    """
+    _, sep, rest = external_id.partition(":")
+    if not sep or not rest or rest.startswith("h:"):
+        return None
+    return rest
+
+
+async def _names_from_raw(
+    session: AsyncSession, snapshot_ids: Sequence[int]
+) -> dict[str, str]:
+    """Display names recovered from the raw payloads, keyed by instrument code.
+
+    The fallback for rows captured before B8 added `snapshot_holdings.name`. It
+    can come back empty and that is fine: `snapshot_raw` is pruned at 90 days,
+    so an old row's name may simply no longer exist anywhere. A nameless row is
+    an honest nameless row.
+    """
+    names: dict[str, str] = {}
+    rows = await session.execute(
+        select(SnapshotRaw.payload).where(SnapshotRaw.snapshot_id.in_(list(snapshot_ids)))
+    )
+    for (payload,) in rows.all():
+        if not isinstance(payload, dict) or payload.get("kind") != "holdings":
+            continue
+        inner = payload.get("payload")
+        if not isinstance(inner, dict):
+            continue
+        for row in inner.get("rows") or []:
+            if not isinstance(row, dict):
+                continue
+            code = row.get("investment_code")
+            name = row.get("investment")
+            if isinstance(code, str) and code.strip() and isinstance(name, str) and name.strip():
+                names.setdefault(code.strip(), name.strip())
+    return names
+
+
+def _basis_and_change(
+    start: Optional[SnapshotHolding], end: Optional[SnapshotHolding]
+) -> tuple[str, Optional[Decimal], Optional[Decimal]]:
+    """``(basis, change_abs, change_pct)`` for one joined pair."""
+    if start is None or end is None:
+        # Present on one day only. There is no "change" to state: a position
+        # that appeared is not up 100% and one that left is not down 100% —
+        # that is the fabricated return M1 spent a card eliminating.
+        return (BASIS_OPENED if start is None else BASIS_CLOSED), None, None
+
+    change_abs = end.current_value - start.current_value
+    priced = (
+        start.units is not None
+        and end.units is not None
+        and start.current_price is not None
+        and end.current_price is not None
+    )
+    if not priced:
+        # A savings balance or a fixed deposit: the delta is a cash flow.
+        return BASIS_BALANCE, change_abs, None
+    if start.current_price == 0:
+        # Priced at zero on the earlier day; a percentage off it is undefined,
+        # not infinite. Unranked rather than invented.
+        return BASIS_PRICE, change_abs, None
+    pct = (
+        (end.current_price - start.current_price) / start.current_price * Decimal(100)
+    ).quantize(Decimal("0.01"))
+    return BASIS_PRICE, change_abs, pct
+
+
+async def movers_report(
+    session: AsyncSession,
+    user_id: str,
+    *,
+    from_day: Optional[date] = None,
+    to_day: Optional[date] = None,
+    limit: int = 5,
+    now: Optional[datetime] = None,
+) -> MoversReport:
+    """Rank what moved between two **captured** days. Never interpolates.
+
+    The window is *snapped* to days that exist: `compared_from` is the earliest
+    capture at or after `from_day`, `compared_to` the latest at or before
+    `to_day`. It is never widened past what was asked for and a gap is never
+    filled in — the source is point-in-time, so a day nobody captured has no
+    answer, and inventing one would be inventing a return.
+
+    A bucket named in either day's ``buckets_failed`` is *unknown*, not empty:
+    every row of that asset type is dropped from every list and the bucket is
+    named in ``excluded``. Reporting a holding as closed because the bucket
+    listing it was throttled would be the worst sentence this endpoint could
+    write.
+    """
+    now = now or _now_utc()
+    latest = await session.scalar(
+        select(func.max(SnapshotDay.captured_on)).where(SnapshotDay.user_id == user_id)
+    )
+    if latest is None:
+        return _empty_report(
+            from_day,
+            to_day,
+            "No daily snapshots have been captured yet, so there is nothing to compare.",
+        )
+
+    requested_to = to_day or latest
+    requested_from = from_day or (requested_to - timedelta(days=DEFAULT_MOVERS_WINDOW_DAYS))
+    if requested_from > requested_to:
+        return _empty_report(
+            requested_from, requested_to, "The window ends before it starts."
+        )
+
+    in_window = (
+        SnapshotDay.user_id == user_id,
+        SnapshotDay.captured_on >= requested_from,
+        SnapshotDay.captured_on <= requested_to,
+    )
+    compared_from = await session.scalar(
+        select(func.min(SnapshotDay.captured_on)).where(*in_window)
+    )
+    compared_to = await session.scalar(
+        select(func.max(SnapshotDay.captured_on)).where(*in_window)
+    )
+    if compared_from is None or compared_to is None or compared_from >= compared_to:
+        return _empty_report(
+            requested_from,
+            requested_to,
+            "Only one captured day falls in this window, so there is nothing to "
+            "compare it against."
+            if compared_from is not None
+            else "No days were captured in this window.",
+            compared_from=compared_from,
+            compared_to=compared_to,
+        )
+
+    rows = (
+        await session.execute(
+            select(SnapshotDay)
+            .where(
+                SnapshotDay.user_id == user_id,
+                SnapshotDay.captured_on.in_([compared_from, compared_to]),
+            )
+            .order_by(SnapshotDay.captured_on)
+        )
+    ).scalars().all()
+    start_day, end_day = rows[0], rows[-1]
+
+    excluded: list[dict[str, str]] = []
+    unknown: set[str] = set()
+    for day_row in (start_day, end_day):
+        for failure in day_row.buckets_failed or []:
+            asset_type = str(failure.get("asset_type"))
+            unknown.add(asset_type)
+            excluded.append(
+                {
+                    "asset_type": asset_type,
+                    "reason": f"bucket failed on {day_row.captured_on.isoformat()}",
+                }
+            )
+
+    holdings = (
+        await session.execute(
+            select(SnapshotHolding).where(
+                SnapshotHolding.snapshot_id.in_([start_day.id, end_day.id])
+            )
+        )
+    ).scalars().all()
+
+    start_rows: dict[tuple[str, str], SnapshotHolding] = {}
+    end_rows: dict[tuple[str, str], SnapshotHolding] = {}
+    for holding in holdings:
+        if holding.asset_type in unknown:
+            continue
+        # Joined on M1's identity pair, never on `symbol` — which is NULL on
+        # every mutual-fund and savings row this source returns, and would
+        # collapse them all into one.
+        key = (holding.source, holding.external_id)
+        bucket = start_rows if holding.snapshot_id == start_day.id else end_rows
+        bucket[key] = holding
+
+    missing_names = [
+        key
+        for key in set(start_rows) | set(end_rows)
+        if not ((end_rows.get(key) or start_rows[key]).name)
+    ]
+    raw_names = (
+        await _names_from_raw(session, [start_day.id, end_day.id])
+        if missing_names
+        else {}
+    )
+
+    ranked: list[MoverRow] = []
+    flows: list[MoverRow] = []
+    opened: list[MoverRow] = []
+    closed: list[MoverRow] = []
+    for key in sorted(set(start_rows) | set(end_rows)):
+        start = start_rows.get(key)
+        end = end_rows.get(key)
+        # One of the two is always present — the key came from their union.
+        anchor = end if end is not None else start
+        if anchor is None:  # pragma: no cover - unreachable by construction
+            continue
+        basis, change_abs, change_pct = _basis_and_change(start, end)
+        code = _external_code(anchor.external_id)
+        row = MoverRow(
+            source=anchor.source,
+            external_id=anchor.external_id,
+            asset_type=anchor.asset_type,
+            name=anchor.name or (raw_names.get(code) if code else None),
+            symbol=anchor.symbol,
+            basis=basis,
+            start_price=start.current_price if start else None,
+            end_price=end.current_price if end else None,
+            start_value=start.current_value if start else None,
+            end_value=end.current_value if end else None,
+            change_abs=change_abs,
+            change_pct=change_pct,
+            currency=anchor.currency,
+        )
+        if basis == BASIS_PRICE:
+            ranked.append(row)
+        elif basis == BASIS_BALANCE:
+            flows.append(row)
+        elif basis == BASIS_OPENED:
+            opened.append(row)
+        else:
+            closed.append(row)
+
+    movable = [r for r in ranked if r.change_pct is not None]
+    gainers = sorted(
+        (r for r in movable if r.change_pct > 0),
+        key=lambda r: r.change_pct,
+        reverse=True,
+    )[:limit]
+    losers = sorted((r for r in movable if r.change_pct < 0), key=lambda r: r.change_pct)[
+        :limit
+    ]
+
+    snapped = compared_from != requested_from or compared_to != requested_to
+    note = None
+    if snapped:
+        note = (
+            f"No snapshot exists for the exact window asked for, so "
+            f"{compared_from.isoformat()} to {compared_to.isoformat()} was "
+            "compared instead."
+        )
+    return MoversReport(
+        requested_from=requested_from,
+        requested_to=requested_to,
+        compared_from=compared_from,
+        compared_to=compared_to,
+        note=note,
+        gainers=tuple(gainers),
+        losers=tuple(losers),
+        flows=tuple(flows),
+        opened=tuple(opened),
+        closed=tuple(closed),
+        excluded=tuple(excluded),
+    )
+
+
+# --------------------------------------------------------------------------- #
 # The third net — opportunistic capture
 # --------------------------------------------------------------------------- #
 _in_flight: set[str] = set()
@@ -824,6 +1169,10 @@ __all__ = [
     "BUCKET_SOURCE_ERROR",
     "BUCKET_THROTTLED",
     "BUCKET_UNSUPPORTED",
+    "BASIS_BALANCE",
+    "BASIS_CLOSED",
+    "BASIS_OPENED",
+    "BASIS_PRICE",
     "CAPTURED",
     "FAILED",
     "BucketFailure",
@@ -832,7 +1181,10 @@ __all__ = [
     "RAW_RETENTION_DAYS",
     "SKIPPED",
     "CaptureReport",
+    "DEFAULT_MOVERS_WINDOW_DAYS",
     "HistoryPoint",
+    "MoverRow",
+    "MoversReport",
     "UserOutcome",
     "attributed_day",
     "capture_all",
@@ -844,6 +1196,7 @@ __all__ = [
     "history_points",
     "last_captured_at",
     "last_expected_day",
+    "movers_report",
     "optional_session",
     "prune_raw",
     "schedule_capture_if_missing",

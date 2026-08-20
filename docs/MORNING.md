@@ -50,6 +50,15 @@ Nothing reaches a real user until all of these are done.
 4. **OpenAI budget cap** — set a hard monthly limit in the OpenAI dashboard
    (the one control an app bug can't bypass; app-side ceilings only degrade).
    Confirm the Space has `OPENAI_API_KEY` (set overnight).
+   - ⚠️ **UN-PAUSE THE AI OVERVIEW — it is currently off on purpose.**
+     `OVERVIEW_DAILY_GLOBAL_MAX=0` on the Space *and* in local `backend/.env`,
+     paused 2026-08-17 while the dashboard is reworked (it was regenerating too
+     often during iteration). At `0` every overview degrades to "AI overview
+     paused — the daily generation budget is reached", with all computed
+     numbers still rendering — friends would see that box, not a narrative.
+     **Set both back to `500`** (Space → Variables, and local `.env`). The value
+     is re-read per request, but changing a Space variable restarts the Space.
+     Verify by loading `/portfolio` and confirming a narrative renders.
 5. **Flip the site live** — in Vercel, change the `NEXT_PUBLIC_AUTH_ENABLED`
    Production env var from `false` → `true`, redeploy. Site goes behind Clerk
    Waitlist. (This reverses the safe override from §4-decision below.)
@@ -136,8 +145,15 @@ None blocking; all documented. Pick any up in a fresh session.
   ever scales to multiple replicas.
 - **App-side spend ceilings are a courtesy, not a hard stop** — the OpenAI
   provider-side cap (go-live §4) is the real backstop. Env knobs on the Space:
-  `OVERVIEW_DAILY_GLOBAL_MAX` (500), `OVERVIEW_DAILY_USER_MAX` (20),
+  `OVERVIEW_DAILY_GLOBAL_MAX` (**currently `0` — paused, see go-live §2 step 4**),
+  `OVERVIEW_DAILY_USER_MAX` (20),
   `RATE_LIMIT_PER_CALLER_MAX` / `RATE_LIMIT_GLOBAL_MAX`.
+  Setting `OVERVIEW_DAILY_GLOBAL_MAX=0` is the supported **kill switch** for AI
+  spend: `SpendLimiter.reserve` denies every request (`reason="spend_cap"`), the
+  route degrades before any model call, and no tally is consumed — so flipping
+  it back to `500` restores generation immediately. A narrative already saved
+  for the current IST day still replays from `portfolio_cache` while paused;
+  that replay is free.
 - **`/demo` overview artifact is static** (`backend/tests/fixtures/demo/
   overview.json`, no LLM call). Regenerate with
   `cd backend && python -m agents.portfolio.demo` if fixtures/prompts change.
