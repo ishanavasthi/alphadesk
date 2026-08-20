@@ -35,6 +35,9 @@ vi.mock("@/lib/api", async () => {
     getPortfolioAllocation: vi.fn(),
     capturePortfolioSnapshot: vi.fn(),
     startAuthLogin: vi.fn(),
+    // Card B10's list read. Stubbed empty: these suites are about the source
+    // walk, and an unmocked call would reach for a backend that is not there.
+    listFds: vi.fn(async () => ({ fds: [], note: null })),
   };
 });
 

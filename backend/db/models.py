@@ -18,16 +18,20 @@
                        for forensics and pruned at 90 days.
     portfolio_cache    read-through cache of the `/portfolio/*` response bodies.
                        Derived data only — droppable at any moment. Issue #15.
+    manual_fds         fixed deposits the user entered by hand. Card B10 — the
+                       first user-authored rows in the schema, kept because the
+                       source's FD reporting is unreliable and an FD's value is
+                       computed from its terms rather than quoted.
 
 **Cascade semantics.** `broker_links.user_id`, `oauth_pending.user_id`,
-`snapshot_days.user_id` and `watchlist.user_id` are declared `ON DELETE CASCADE`
-*at the FK level*, as are `snapshot_holdings.snapshot_id` and
-`snapshot_raw.snapshot_id`. Deleting a `users` row therefore wipes every
-dependent row — including the user's entire net-worth history and paper
-watchlist — inside Postgres. A later "delete my data" card relies on
-that being a schema guarantee rather than an ORM-relationship convention: a raw
-`DELETE FROM users` from psql or a migration is just as safe as an ORM
-`session.delete(user)`.
+`snapshot_days.user_id`, `watchlist.user_id` and `manual_fds.user_id` are
+declared `ON DELETE CASCADE` *at the FK level*, as are
+`snapshot_holdings.snapshot_id` and `snapshot_raw.snapshot_id`. Deleting a
+`users` row therefore wipes every dependent row — including the user's entire
+net-worth history, paper watchlist and manual deposits — inside Postgres. A
+later "delete my data" card relies on that being a schema guarantee rather than
+an ORM-relationship convention: a raw `DELETE FROM users` from psql or a
+migration is just as safe as an ORM `session.delete(user)`.
 
 Every `*_enc` column is an opaque Fernet token — see `db.crypto`. Never select
 one into a log line.
@@ -37,6 +41,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from uuid import uuid4
 
 from sqlalchemy import Column, Date, DateTime, Numeric, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
@@ -370,8 +375,65 @@ class SnapshotRaw(SQLModel, table=True):
     )
 
 
+# --------------------------------------------------------------------------- #
+# Manually entered fixed deposits (card B10)
+# --------------------------------------------------------------------------- #
+class ManualFd(SQLModel, table=True):
+    """One fixed deposit the user typed in themselves.
+
+    The first row in this schema the *source* did not produce. It exists because
+    IND Money's FD reporting is verified unreliable (B9/#65: a Rs 5,000 deposit
+    reported at Rs 162, the bucket vanishing from the net-worth total for days at
+    a time), and because an FD is the one asset whose value is **computable
+    rather than quoted** — principal, rate, compounding and two dates are the
+    whole instrument. Nothing here is a price feed; `services.manual_fd` derives
+    the accrued value on every read.
+
+    **No Fernet.** FD terms are not credentials, and an encrypted column cannot
+    be filtered, summed or ordered — the whole point of keeping this in Postgres
+    rather than a blob. The row is user-owned financial *reference* data, at the
+    same sensitivity as the snapshot history sitting beside it.
+
+    `user_id` is a FK onto `users` with `ON DELETE CASCADE`, so L1's
+    delete-my-data removes a user's deposits inside Postgres with every other
+    `user_id`-keyed table and needs no code of its own.
+    """
+
+    __tablename__ = "manual_fds"
+
+    #: Server-generated uuid4 hex. Surrogate on purpose: a user may hold two
+    #: deposits with the same label at the same bank, and the id has to survive
+    #: an edit that changes every other field.
+    id: str = Field(default_factory=lambda: uuid4().hex, primary_key=True, max_length=32)
+    user_id: str = Field(
+        foreign_key="users.id",
+        ondelete="CASCADE",
+        index=True,
+        max_length=255,
+    )
+    #: Bank / deposit name, as the user wrote it. Their label, never normalized.
+    label: str = Field(max_length=120)
+    principal: Decimal = Field(sa_column=_money_column())
+    #: Annual rate in percent (``7.25`` is 7.25%). Four decimals because a bank
+    #: quoting 7.1875% is ordinary, and `Numeric` rather than float for the same
+    #: reason every other number in this schema is (M1 rule 1).
+    rate_pct: Decimal = Field(sa_column=Column(Numeric(9, 4), nullable=False))
+    #: ``monthly | quarterly | half_yearly | yearly | simple``. Stored as the
+    #: string, not an enum type: a new compounding convention must be a code
+    #: change, not a migration. Default `quarterly` — Indian bank FDs compound
+    #: quarterly, so it is the answer for most rows.
+    compounding: str = Field(default="quarterly", max_length=16)
+    start_date: date = Field(sa_column=Column(Date, nullable=False))
+    maturity_date: date = Field(sa_column=Column(Date, nullable=False))
+    created_at: datetime = Field(default_factory=utcnow, sa_column=_ts_column())
+    #: Bumped on every edit. The terms of a deposit are the only thing that can
+    #: change its value, so "when did this last change" is the audit line.
+    updated_at: datetime = Field(default_factory=utcnow, sa_column=_ts_column())
+
+
 __all__ = [
     "BrokerLink",
+    "ManualFd",
     "OAuthPending",
     "PortfolioCache",
     "SQLModel",

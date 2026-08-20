@@ -52,6 +52,9 @@ ROUTES = (
     "/portfolio/holdings?asset_type=MF",
     "/portfolio/allocation?asset_type=MF&by=sector",
     "/portfolio/history",
+    # Card B10. The write methods are gated by the same dependency and are
+    # covered in `test_api_manual_fd.py`, which can send them a body.
+    "/portfolio/fds",
 )
 
 

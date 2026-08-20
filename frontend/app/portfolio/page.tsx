@@ -3,6 +3,7 @@
 import { AiOverview } from "@/components/portfolio/AiOverview";
 import { AllocationBars, AllocationBarsSkeleton } from "@/components/portfolio/AllocationBars";
 import { CapStrip } from "@/components/portfolio/CapStrip";
+import { ManualFds } from "@/components/portfolio/ManualFds";
 import { NetWorthTrend } from "@/components/portfolio/NetWorthTrend";
 import { TopMovers } from "@/components/portfolio/TopMovers";
 import { usePortfolio } from "@/components/portfolio/PortfolioProvider";
@@ -38,6 +39,7 @@ export default function PortfolioOverviewPage() {
     drillTypes,
     overview,
     setOverview,
+    manual,
   } = usePortfolio();
 
   return (
@@ -63,6 +65,7 @@ export default function PortfolioOverviewPage() {
         holdingsCount={holdings.length}
         countIsPartial={loadingHoldings}
         holdingsHref="/portfolio/holdings"
+        manual={manual}
       />
 
       {/* AI overview (card A1). Streams its own metrics + narrative and degrades
@@ -90,6 +93,14 @@ export default function PortfolioOverviewPage() {
           snapshots and makes no fresh source call. */}
       <div className="mt-4">
         <TopMovers />
+      </div>
+
+      {/* Below the movers, per card B10: everything above this line is the
+          source's reading of your accounts, and everything in this card is a
+          deposit you told AlphaDesk about yourself. The caption in its header
+          keeps that distinction visible wherever the card is read. */}
+      <div className="mt-4">
+        <ManualFds />
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">

@@ -217,6 +217,7 @@ _ALL_TABLES = (
     "snapshot_raw",
     "watchlist",
     "portfolio_cache",
+    "manual_fds",
 )
 
 
