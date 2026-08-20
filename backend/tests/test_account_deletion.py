@@ -8,10 +8,9 @@ catch before it can happen for real.
 
 The exhaustiveness is deliberate: the test seeds `users`, `broker_links`,
 `oauth_pending`, `snapshot_days`, `snapshot_holdings`, `snapshot_raw`,
-`watchlist` and `portfolio_cache` — the whole schema (V2_PLAN §6, issue #15) —
-plus the Lab's in-memory registries
-and the no-database watchlist fallback, then asserts each is empty for the user
-afterward.
+`watchlist`, `portfolio_cache` and `manual_fds` — the whole schema (V2_PLAN §6,
+issue #15, card B10) — plus the Lab's in-memory registries and the no-database
+watchlist fallback, then asserts each is empty for the user afterward.
 """
 
 from __future__ import annotations
@@ -32,6 +31,7 @@ from api.main import _ACTIONS, _ANALYSES, _PAPER_WATCHLIST, _RUNS, app
 from db import crypto
 from db.models import (
     BrokerLink,
+    ManualFd,
     OAuthPending,
     PortfolioCache,
     SnapshotDay,
@@ -57,6 +57,7 @@ ALL_MODELS = (
     SnapshotRaw,
     Watchlist,
     PortfolioCache,
+    ManualFd,
 )
 
 
@@ -148,6 +149,19 @@ async def _seed_every_table(maker: Any) -> None:
                 action="buy",
                 run_id="run-abc",
                 added_at=_now(),
+            )
+        )
+        session.add(
+            ManualFd(
+                user_id=USER,
+                label="Demo Bank FD",
+                principal=Decimal("100000.00"),
+                rate_pct=Decimal("7.2500"),
+                compounding="quarterly",
+                start_date=date(2025, 1, 1),
+                maturity_date=date(2026, 1, 1),
+                created_at=_now(),
+                updated_at=_now(),
             )
         )
         session.add(

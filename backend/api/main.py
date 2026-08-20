@@ -43,6 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
 from api.routes.account import router as account_router  # noqa: E402
 from api.routes.internal import router as internal_router  # noqa: E402
+from api.routes.manual_fd import router as manual_fd_router  # noqa: E402
 from api.routes.overview import router as overview_router  # noqa: E402
 from api.routes.portfolio import evict_connector  # noqa: E402
 from api.routes.portfolio import router as portfolio_router  # noqa: E402
@@ -136,6 +137,12 @@ app.include_router(overview_router)
 # operator and must not hold a secret that can read holdings or unlink the
 # account. See `api/routes/internal.py`.
 app.include_router(internal_router)
+
+# /portfolio/fds — manually entered fixed deposits (card B10). Same identity and
+# serialization as the rest of `/portfolio/*`, but the writes refuse (503) rather
+# than fall back to memory: a deposit the user typed in is durable data or an
+# error. See `api/routes/manual_fd.py`.
+app.include_router(manual_fd_router)
 
 # DELETE /account — the DPDP "delete my data" surface (card L1): revoke the
 # broker token upstream first, then cascade-delete the user and every row they

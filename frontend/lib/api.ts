@@ -426,6 +426,21 @@ export interface PortfolioSummary {
   by_market_cap: AllocationSlice[];
   link_health: "linked" | "expiring" | "needs_relink" | "revoked";
   last_captured_at: string | null;
+  /**
+   * What the reader tracks here that the source does not report (card B10).
+   *
+   * Purely **additive**: every other field on this object is the source's own
+   * figure, passed through untouched, and this block sits beside them so the
+   * dashboard can state the combined number *and* the vendor one. Absent on a
+   * backend that predates B10 or has no database — hence optional.
+   */
+  manual?: ManualTotals | null;
+}
+
+/** The manual side of the net worth: what it adds up to, and how many rows. */
+export interface ManualTotals {
+  total: string;
+  fd_count: number;
 }
 
 export interface PortfolioHolding {
@@ -499,10 +514,19 @@ export class PortfolioError extends Error {
   }
 }
 
+/** Everything `/portfolio/*` speaks. `PATCH`/`DELETE` arrived with card B10. */
+type PortfolioMethod = "GET" | "POST" | "PATCH" | "DELETE";
+
+interface PortfolioRequest {
+  method?: PortfolioMethod;
+  /** Serialized as JSON when present. Omitted entirely for reads. */
+  body?: unknown;
+}
+
 async function portfolioFetch<T>(
   path: string,
   signal?: AbortSignal,
-  { method = "GET" }: { method?: "GET" | "POST" } = {},
+  { method = "GET", body }: PortfolioRequest = {},
 ): Promise<T> {
   // Flag off there is no way to produce a credential, so the build is locked.
   // Flag on, a signed-out visitor is an ordinary state and the backend's 401 is
@@ -516,27 +540,49 @@ async function portfolioFetch<T>(
     );
   }
 
+  const init: RequestInit = { method, cache: "no-store", signal };
+  if (body !== undefined) {
+    init.body = JSON.stringify(body);
+    init.headers = { "Content-Type": "application/json" };
+  }
+
   let response: Response;
   try {
-    response = await apiFetch(`${API_BASE}${path}`, {
-      method,
-      cache: "no-store",
-      signal,
-    });
+    response = await apiFetch(`${API_BASE}${path}`, init);
   } catch (err) {
     if ((err as Error).name === "AbortError") throw err;
     throw new PortfolioError(0, "unreachable", `Cannot reach AlphaDesk API at ${API_BASE}.`);
   }
 
-  if (response.ok) return response.json() as Promise<T>;
+  if (response.ok) {
+    // 204 is the honest answer to a delete and has no body to parse; asking for
+    // one would turn a success into a JSON syntax error.
+    if (response.status === 204) return undefined as T;
+    return response.json() as Promise<T>;
+  }
 
   // FastAPI puts our structured body in `detail`; a proxy error page will not.
   type Detail = { code?: string; message?: string; retry_after?: number };
-  let detail: Detail | string = "";
+  /** FastAPI's own 422 shape: one entry per field that failed validation. */
+  type Invalid = { loc?: unknown[]; msg?: string };
+  let detail: Detail | Invalid[] | string = "";
   try {
-    detail = ((await response.json()) as { detail?: Detail | string }).detail ?? "";
+    detail = ((await response.json()) as { detail?: Detail | Invalid[] | string }).detail ?? "";
   } catch {
     detail = "";
+  }
+  // A body-carrying write can fail FastAPI's own validation, which answers with
+  // an *array* of field errors rather than this app's `{code, message}`. Naming
+  // the field beats "Request failed (422)." for a reader who mistyped a date.
+  if (Array.isArray(detail)) {
+    const first = detail[0];
+    const field = Array.isArray(first?.loc) ? String(first.loc[first.loc.length - 1]) : "";
+    const message = first?.msg || `Request failed (${response.status}).`;
+    throw new PortfolioError(
+      response.status,
+      "invalid",
+      field ? `${field}: ${message}` : message,
+    );
   }
   if (typeof detail === "string") {
     throw new PortfolioError(
@@ -704,6 +750,88 @@ export interface CaptureResult {
  */
 export function capturePortfolioSnapshot(signal?: AbortSignal): Promise<CaptureResult> {
   return portfolioFetch<CaptureResult>("/portfolio/capture", signal, { method: "POST" });
+}
+
+// --------------------------------------------------------------------------- #
+// Manual fixed deposits (card B10)
+// --------------------------------------------------------------------------- #
+
+/** How the interest is added back. Indian bank FDs are quarterly by default. */
+export type FdCompounding = "monthly" | "quarterly" | "half_yearly" | "yearly" | "simple";
+
+/**
+ * One manually-entered fixed deposit, with its accrual recomputed by the server.
+ *
+ * The terms (`principal`, `rate_pct`, `compounding`, the two dates) are what the
+ * reader typed; everything from `current_value` down is derived from them on
+ * **every read** — that recomputation is the whole of the "tracking". Money is a
+ * decimal string here for the same reason it is everywhere else on this surface:
+ * a float would round somebody's deposit.
+ */
+export interface ManualFd {
+  id: string;
+  label: string;
+  principal: string;
+  rate_pct: string;
+  compounding: FdCompounding;
+  start_date: string;
+  maturity_date: string;
+  current_value: string;
+  accrued_interest: string;
+  maturity_value: string;
+  matured: boolean;
+  days_to_maturity: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ManualFdList {
+  fds: ManualFd[];
+  /**
+   * Why the list is empty when it is empty for a reason — a backend running
+   * without `DATABASE_URL` answers 200 with this note rather than a 500, and the
+   * card repeats it instead of claiming the reader owns no deposits.
+   */
+  note: string | null;
+}
+
+/** The terms a write sends. `compounding` defaults to quarterly server-side. */
+export interface ManualFdInput {
+  label: string;
+  principal: string;
+  rate_pct: string;
+  compounding?: FdCompounding;
+  start_date: string;
+  maturity_date: string;
+}
+
+/** GET /portfolio/fds — every manual FD this caller owns, freshly accrued. */
+export function listFds(signal?: AbortSignal): Promise<ManualFdList> {
+  return portfolioFetch<ManualFdList>("/portfolio/fds", signal);
+}
+
+/** POST /portfolio/fds — record a deposit. 503 `no_database` when there is none. */
+export function createFd(input: ManualFdInput, signal?: AbortSignal): Promise<ManualFd> {
+  return portfolioFetch<ManualFd>("/portfolio/fds", signal, { method: "POST", body: input });
+}
+
+/** PATCH /portfolio/fds/{id} — change any term; the accrual follows. */
+export function updateFd(
+  id: string,
+  patch: Partial<ManualFdInput>,
+  signal?: AbortSignal,
+): Promise<ManualFd> {
+  return portfolioFetch<ManualFd>(`/portfolio/fds/${encodeURIComponent(id)}`, signal, {
+    method: "PATCH",
+    body: patch,
+  });
+}
+
+/** DELETE /portfolio/fds/{id} — 204. Someone else's id is a 404, never a 403. */
+export function deleteFd(id: string, signal?: AbortSignal): Promise<void> {
+  return portfolioFetch<void>(`/portfolio/fds/${encodeURIComponent(id)}`, signal, {
+    method: "DELETE",
+  });
 }
 
 // --------------------------------------------------------------------------- #

@@ -192,7 +192,20 @@ normalized model (same aggregates, same AI metrics), which forces answers to
 who computes their current value and how double-counting against a broker row is
 prevented.
 
+**First slice shipped as B10** (fixed deposits — see §"FD tracking" below).
+Everything else here — gold, unlisted equity, real estate, EPF elsewhere — is
+still parked: FDs were taken first precisely because their value is computable
+from their terms, and every other class needs a price the user would have to
+keep updating by hand.
+
 ### FD tracking
+
+**Status:** picked up 2026-08-21 as **B10** — issue
+[#68](https://github.com/ishanavasthi/alphadesk/issues/68) carries the fixed
+contract. Specs: `docs/SPECS/B10.md`, `docs/TESTING/B10.md`. Manual entry only
+(add/edit/delete an FD, accrued value computed from the terms); the vendor FD
+bucket itself is still B9/#65.
+
 IND Money's MCP is unreliable for FDs — **verified 2026-08-21 with payloads, not
 just user-reported** (see B9 / #65: a ₹5,000 deposit valued at ₹162, a P&L frozen
 for five days, and the whole bucket dropping out of two daily snapshots). That

@@ -17,8 +17,10 @@ import {
   getPortfolioHistory,
   getPortfolioHoldings,
   getPortfolioSummary,
+  listFds,
   startAuthLogin,
   type AllocationSlice,
+  type ManualFd,
   type OverviewComplete,
   type PortfolioHolding,
   type PortfolioSummary,
@@ -204,6 +206,25 @@ export interface PortfolioContextValue {
   /** Are rupee amounts hidden? See `privacy.ts` for why the flag lives outside React. */
   hideAmounts: boolean;
   toggleAmounts: () => void;
+  /** Manually-entered fixed deposits (card B10), freshly accrued by the server. */
+  fds: ManualFd[];
+  fdsLoading: boolean;
+  /** The backend's own explanation for an empty list (no database configured). */
+  fdsNote: string | null;
+  /** A read that failed. Never a reason to take the rest of the page down. */
+  fdsError: string | null;
+  /** Re-read the list. Every write awaits this — the card owns no copy of a row. */
+  refreshFds: () => Promise<void>;
+  /**
+   * What the manual rows add to the net worth, or `null` when there are none.
+   *
+   * Summed from the rows in hand rather than read from `summary.manual`, and for
+   * one reason: the summary is fetched once per load, so after an add or a
+   * delete its block would state a total the list beside it contradicts. Both
+   * numbers come from the same server-side accrual — this one is simply the
+   * fresher of the two. Falls back to `summary.manual` before the list arrives.
+   */
+  manual: { total: number; count: number } | null;
 }
 
 const PortfolioContext = createContext<PortfolioContextValue | null>(null);
@@ -258,6 +279,14 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
   const [captureState, setCaptureState] = useState<CaptureState>("idle");
 
   const [overview, setOverview] = useState<OverviewComplete | null>(null);
+
+  // Manual fixed deposits (card B10). Kept out of the bucket walk on purpose:
+  // this is one cheap database read, it costs the rate-limited source nothing,
+  // and its list has to be re-read after every write the card makes.
+  const [fds, setFds] = useState<ManualFd[]>([]);
+  const [fdsLoading, setFdsLoading] = useState(AUTH_ENABLED);
+  const [fdsNote, setFdsNote] = useState<string | null>(null);
+  const [fdsError, setFdsError] = useState<string | null>(null);
 
   const aborter = useRef<AbortController | null>(null);
   const sectorAborter = useRef<AbortController | null>(null);
@@ -418,6 +447,42 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     };
   }, [reload]);
 
+  /**
+   * Re-read the manual FD list (card B10).
+   *
+   * The one call every write ends with, which is what makes the card's numbers
+   * the server's rather than an optimistic guess: an edited rate changes the
+   * accrual, and only the backend recomputes that. A failure is recorded and
+   * shown *in the card* — the rest of the dashboard is the source's data and
+   * has no reason to fall over because a manual row could not be read.
+   */
+  const refreshFds = useCallback(async () => {
+    if (!AUTH_ENABLED) return;
+    setFdsLoading(true);
+    try {
+      const payload = await listFds();
+      setFds(payload.fds ?? []);
+      setFdsNote(payload.note ?? null);
+      setFdsError(null);
+    } catch (err) {
+      const failure = err as PortfolioError;
+      // A backend older than card B10 has no such route. That is "there are no
+      // manual deposits here", not a fault worth alarming the reader about.
+      setFds([]);
+      setFdsError(
+        failure.status === 404
+          ? null
+          : failure.message || "Your manual deposits could not be read.",
+      );
+    } finally {
+      setFdsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshFds();
+  }, [reload, refreshFds]);
+
   // Counts the Refresh cooldown down one second at a time, purely for the label.
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -562,6 +627,19 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
   const toggleAmounts = toggleAmountsHidden;
 
   const demo = summary?.source === "stub";
+
+  // The manual addition, live. `summary.manual` is the same figure a moment
+  // earlier; the rows are what the reader just changed.
+  const manual = useMemo<{ total: number; count: number } | null>(() => {
+    if (fds.length) {
+      const total = fds.reduce((sum, fd) => sum + (num(fd.current_value) ?? 0), 0);
+      return { total, count: fds.length };
+    }
+    if (fdsLoading && summary?.manual && summary.manual.fd_count > 0) {
+      return { total: num(summary.manual.total) ?? 0, count: summary.manual.fd_count };
+    }
+    return null;
+  }, [fds, fdsLoading, summary]);
   // Never the whole-portfolio fallback while a drill-down is selected: that
   // would print portfolio-wide sectors under a "Within <asset type>" heading.
   const sectorSource =
@@ -593,6 +671,12 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
             setOverview,
             hideAmounts,
             toggleAmounts,
+            fds,
+            fdsLoading,
+            fdsNote,
+            fdsError,
+            refreshFds,
+            manual,
           }
         : null,
     [
@@ -617,6 +701,12 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       overview,
       hideAmounts,
       toggleAmounts,
+      fds,
+      fdsLoading,
+      fdsNote,
+      fdsError,
+      refreshFds,
+      manual,
     ],
   );
 

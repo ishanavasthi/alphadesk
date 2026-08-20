@@ -39,6 +39,12 @@ row yet — plus a real ``/history``. Both stay behind the same identity as the
 reads: they act on the caller's own account. The **cron-triggered** capture
 lives on a separate router with a separate secret (`api/routes/internal.py`),
 because a scheduled runner is not a person.
+
+B10 introduced the first rows on this surface the *source* did not produce:
+manually entered fixed deposits. They are merged in **additively and after the
+cache** — appended to `/holdings?asset_type=FD`, summarized in `/summary`'s new
+`manual` block — and never rewrite a vendor number. Their CRUD lives on its own
+router (`api/routes/manual_fd.py`), sharing this one's identity dependency.
 """
 
 from __future__ import annotations
@@ -84,7 +90,7 @@ from portfolio.models import (
     derive_pnl,
     is_us_exposure,
 )
-from services import portfolio_cache
+from services import manual_fd, portfolio_cache
 from services.snapshots import (
     attributed_day,
     capture_if_missing,
@@ -476,6 +482,61 @@ def _breakdown_by(value: str) -> BreakdownBy:
 
 
 # --------------------------------------------------------------------------- #
+# Manually entered holdings (card B10) — additive, never cached
+# --------------------------------------------------------------------------- #
+#: Manual rows are merged into the responses below **after** the read-through
+#: cache, never into it. Two reasons, and both matter:
+#:
+#: 1. A manual FD's value is recomputed from its terms on every read. Baking one
+#:    into a 15-minute cache entry would freeze an accrual that is supposed to be
+#:    the one number on this page that is always current.
+#: 2. The cache is keyed on the *source's* answer. Writing a user-authored row
+#:    into it would mean every write to `/portfolio/fds` had to invalidate a
+#:    cache key it has no business knowing about — machinery that merging after
+#:    the fact removes entirely.
+#:
+#: Additive is the whole posture: nothing here rewrites, reconciles against or
+#: repairs a vendor figure. Repairing the vendor's own FD bucket is card B9.
+async def _manual_holdings(
+    session: Optional[AsyncSession], user_id: str
+) -> list[dict[str, Any]]:
+    """``user_id``'s manual rows, serialized. Never raises — merging is additive.
+
+    A failure here must not take down a holdings page the source already
+    answered, so it degrades to "no manual rows" with a warning, exactly like
+    `last_captured_at` does for the summary.
+    """
+    if session is None:
+        return []
+    try:
+        rows = await manual_fd.as_holdings(session, user_id)
+    except Exception:  # noqa: BLE001 - see above
+        _log.warning("manual holdings unavailable", exc_info=True)
+        return []
+    return [_holding_json(h) for h in rows]
+
+
+async def _manual_block(
+    session: Optional[AsyncSession], user_id: str
+) -> dict[str, Any]:
+    """The summary's additive ``manual`` block: total accrued value and a count.
+
+    Computed per request and **never** cached, for the same reason as above. No
+    vendor-derived field is touched: `net_worth`, `by_asset_type` and the rest
+    pass through byte-identical, and the frontend does the labelled addition
+    ("incl. Rs X manual FDs") where a reader can see it happen.
+    """
+    if session is None:
+        return {"total": "0", "fd_count": 0}
+    try:
+        total, count = await manual_fd.manual_total(session, user_id)
+    except Exception:  # noqa: BLE001 - additive; it never fails the page
+        _log.warning("manual totals unavailable", exc_info=True)
+        return {"total": "0", "fd_count": 0}
+    return {"total": _num(total), "fd_count": count}
+
+
+# --------------------------------------------------------------------------- #
 # Routes
 # --------------------------------------------------------------------------- #
 @router.get("/summary")
@@ -497,6 +558,14 @@ async def summary(
     workflow, because the moment somebody opens the dashboard is the moment the
     source can still be asked about today. That net hangs off a **real** read: a
     cache hit made no source call, so it has learned nothing new about today.
+
+    Card B10 adds one **additive** top-level block, ``manual``, carrying the
+    total accrued value of the user's manually entered fixed deposits and how
+    many there are. It is computed per request on both paths (cache hit and
+    miss) and cached nowhere. Every vendor-derived field — ``net_worth``,
+    ``by_asset_type``, all of it — passes through byte-identical: this module
+    never recomputes the source's arithmetic, and a manual holding is a labelled
+    addition the frontend makes visible, not a silent adjustment made here.
     """
     key = portfolio_cache.summary_key()
     if not fresh:
@@ -511,7 +580,8 @@ async def summary(
             # tells someone their history stopped when it did not.
             captured_at = await _last_captured_at(session, user_id)
             cached["last_captured_at"] = captured_at.isoformat() if captured_at else None
-            return cached
+            # Manual deposits are recomputed per request and never cached (B10).
+            return {**cached, "manual": await _manual_block(session, user_id)}
 
     try:
         health = await connector.link_health(user_id)
@@ -524,7 +594,8 @@ async def summary(
         schedule_capture_if_missing(user_id, connector)
     payload = _snapshot_json(snapshot, health.value, captured_at, user_id)
     await portfolio_cache.put(session, user_id, key, payload, as_of=snapshot.as_of)
-    return payload
+    # After the cache write, deliberately: the `manual` block is per-request.
+    return {**payload, "manual": await _manual_block(session, user_id)}
 
 
 @router.post("/capture")
@@ -587,31 +658,45 @@ async def holdings(
 
     Cached per asset type (issue #15), which is what makes a second visit to
     Holdings free: one bucket walk is most of the source's per-minute budget.
+
+    **FD is the one bucket with a second source.** The user's manually entered
+    deposits (card B10) are appended *after* the cache read and write, so they
+    are always freshly valued, never baked into the vendor's cached answer, and
+    a write to `/portfolio/fds` shows up on the very next read with no cache
+    invalidation anywhere. They carry ``source: "manual"``; every vendor row is
+    untouched, and every other asset type is byte-identical to before.
     """
     parsed = _asset_type(asset_type)
     key = portfolio_cache.holdings_key(parsed.value)
+    payload: Optional[dict[str, Any]] = None
     if not fresh:
-        cached = await portfolio_cache.get(
+        payload = await portfolio_cache.get(
             session, user_id, key, max_age=HOLDINGS_TTL_SECONDS
         )
-        if cached is not None:
-            return cached
-    try:
-        rows = await connector.fetch_holdings(user_id, parsed)
-    except PortfolioSourceError as exc:
-        _fail(exc)
-    payload = {
-        "asset_type": parsed.value,
-        "currency": CURRENCY,
-        "holdings": [_holding_json(h) for h in rows],
-    }
-    await portfolio_cache.put(
-        session,
-        user_id,
-        key,
-        payload,
-        as_of=rows[0].as_of if rows else None,
-    )
+    if payload is None:
+        try:
+            rows = await connector.fetch_holdings(user_id, parsed)
+        except PortfolioSourceError as exc:
+            _fail(exc)
+        payload = {
+            "asset_type": parsed.value,
+            "currency": CURRENCY,
+            "holdings": [_holding_json(h) for h in rows],
+        }
+        await portfolio_cache.put(
+            session,
+            user_id,
+            key,
+            payload,
+            as_of=rows[0].as_of if rows else None,
+        )
+    if parsed is AssetType.FD:
+        manual = await _manual_holdings(session, user_id)
+        if manual:
+            # A new dict, not an in-place append: `payload` may be the object
+            # just handed to the cache writer, and a manual row must never end
+            # up inside a cached vendor answer.
+            payload = {**payload, "holdings": [*payload["holdings"], *manual]}
     return payload
 
 
