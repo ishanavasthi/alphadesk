@@ -138,14 +138,25 @@ export default function PrivacyPage() {
         <p>We use these services to run AlphaDesk. Each processes only what its function needs:</p>
         <ul>
           <li>
+            <b className="font-semibold text-foreground">OpenRouter</b> (LLM routing) is the
+            inference provider AlphaDesk currently routes to, for both the Lab&rsquo;s research
+            agents and your portfolio overview. OpenRouter forwards each prompt to the underlying
+            model it serves; where that model is an unattributed preview model, the identity of
+            the operator running it is not disclosed to OpenRouter&rsquo;s customers, and so is
+            not known to us. It receives only what the two entries below describe &mdash; for the
+            overview, aggregates and instrument symbols, never account numbers, broker ids, your
+            email, or your user id.
+          </li>
+          <li>
             <b className="font-semibold text-foreground">Groq</b> (LLM inference) runs the
-            Lab&rsquo;s research agents. Those prompts are public market-data prompts and do not
-            contain your holdings.
+            Lab&rsquo;s research agents when the Lab is configured to route to Groq. Those prompts
+            are public market-data prompts and do not contain your holdings.
           </li>
           <li>
             <b className="font-semibold text-foreground">OpenAI</b> (LLM inference) narrates your
-            portfolio overview from the aggregate figures described above. By default your inputs
-            are <b className="font-semibold text-foreground">not used to train models</b>, and are
+            portfolio overview from the aggregate figures described above, when the overview is
+            configured to route to OpenAI. By default your inputs are{" "}
+            <b className="font-semibold text-foreground">not used to train models</b>, and are
             retained for up to 30 days for abuse monitoring before deletion. We send OpenAI
             aggregates and instrument symbols only, never account numbers, broker ids, your email,
             or your user id.

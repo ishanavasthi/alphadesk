@@ -13,12 +13,13 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from agents.llm import get_chat_llm
+from agents.llm import get_lab_llm, structured
 from graph.state import AnalystRecommendation, PortfolioState, ResearchReport
 from rag.retriever import get_relevant_context
 
 # NOTE: the ``openai/`` prefix is part of the *Groq* model id (GPT OSS 120B
-# served by Groq) — this agent still routes through Groq, not OpenAI.
+# served by Groq) — the default route is Groq, not OpenAI. Override the tier
+# with LAB_ANALYST_MODEL / LAB_MODEL and the route with LAB_PROVIDER.
 ANALYST_MODEL = "openai/gpt-oss-120b"
 
 
@@ -36,7 +37,7 @@ class _AnalystOutput(BaseModel):
 
 
 def _get_llm():
-    return get_chat_llm(ANALYST_MODEL, temperature=0)
+    return get_lab_llm("analyst", ANALYST_MODEL, temperature=0)
 
 
 def _gather_context(report: ResearchReport) -> List[str]:
@@ -69,7 +70,7 @@ def _build_prompt(report: ResearchReport, context: List[str]) -> str:
 async def _analyze_one(report: ResearchReport) -> Optional[AnalystRecommendation]:
     context = _gather_context(report)
     try:
-        llm = _get_llm().with_structured_output(_AnalystOutput)
+        llm = structured(_get_llm(), _AnalystOutput)
         out = await llm.ainvoke(_build_prompt(report, context))
     except Exception:  # noqa: BLE001 - skip stocks the model can't score
         return None
