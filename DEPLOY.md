@@ -92,8 +92,37 @@ Mark secrets as **Secret**.
 **Must stay UNSET on the Space:** `ALPHADESK_SINGLE_TENANT` (local-dev only — if
 set in prod it fail-opens every request to the operator identity),
 `ALPHADESK_ADMIN_SECRET` (dead since L1 — the interim gate was removed),
-`OPENAI_BASE_URL` / `OPENAI_COMPATIBLE_MODEL` (setting either reroutes *all*
-agents through one model and collapses the Groq/OpenAI split).
+`OPENAI_BASE_URL` / `OPENAI_COMPATIBLE_MODEL` (only meaningful with an explicit
+`provider=compat`; leave them unset and use the per-family vars below instead).
+
+### Swapping provider / model per family
+
+The two LLM families are configured independently, each by its **own** vars.
+Leave everything here unset for the shipped defaults — AI Overview on real
+OpenAI `gpt-4o-mini`, Lab on Groq at its historical per-agent tiers. Valid
+providers: `openai`, `groq`, `openrouter`, `compat`; a typo raises rather than
+silently billing the wrong provider.
+
+| Var | Example | Notes |
+| --- | --- | --- |
+| `OVERVIEW_PROVIDER` | `openrouter` | AI Overview only. Unset ⇒ `openai` |
+| `OVERVIEW_MODEL` | `stealth/ox-alpha` | unset ⇒ `gpt-4o-mini`. Wins over the legacy `OPENAI_OVERVIEW_MODEL` |
+| `LAB_PROVIDER` | `openrouter` | Lab only. Unset ⇒ the ambient default, which is Groq |
+| `LAB_MODEL` | `stealth/ox-alpha` | blanket: all four Lab agents |
+| `LAB_SCANNER_MODEL` / `LAB_RESEARCH_MODEL` / `LAB_ANALYST_MODEL` / `LAB_RISK_MODEL` | | per-agent, beats `LAB_MODEL`. Unset ⇒ the historical tier |
+| `OPENROUTER_API_KEY` | `sk-or-v1-…` | secret; **required** for `provider=openrouter`. Never falls back to `OPENAI_API_KEY` |
+
+Setting only `LAB_PROVIDER` keeps each agent's historical model id — swapping
+the route never silently rewrites the tiering. The two families are fully
+independent: moving the Lab does not move the Overview.
+
+**Model must support tool-calling.** Structured output is pinned to
+`method="function_calling"` (`agents.llm.structured`) because strict
+`json_schema` is not universal — a model that lacks it answers in prose, the
+Analyst swallows the parse error as "skip this stock", and the run comes back
+empty with no error anywhere. Check `supported_parameters` includes `tools` on
+[openrouter.ai/models](https://openrouter.ai/models) before pointing the Lab at
+a new model.
 
 ### Reconnecting IND Money
 

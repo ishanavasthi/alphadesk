@@ -19,7 +19,7 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from agents.llm import get_chat_llm
+from agents.llm import get_lab_llm, structured
 from graph.state import PortfolioState, ScanResult
 from tools.ind_money import (
     MOVER_CATEGORIES,
@@ -38,7 +38,7 @@ _MOVERS_LIMIT = 8
 
 
 def _get_llm():
-    return get_chat_llm(SCANNER_MODEL, temperature=0)
+    return get_lab_llm("scanner", SCANNER_MODEL, temperature=0)
 
 
 class _Intent(BaseModel):
@@ -89,7 +89,7 @@ async def _intent(query: str) -> _Intent:
         f"Query: {query}"
     )
     try:
-        llm = _get_llm().with_structured_output(_Intent)
+        llm = structured(_get_llm(), _Intent)
         out = await llm.ainvoke(prompt)
         cats = [c for c in (out.categories or []) if c in MOVER_CATEGORIES]
         intent = _Intent(categories=cats, symbols=out.symbols or [])

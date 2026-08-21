@@ -1,9 +1,10 @@
 """The overview specialists and the synthesizer (card A1, item 3/5/8).
 
 Four parallel specialists each read the **verified metrics** and write a short
-finding; a synthesizer weaves them into the narrative. Every LLM call goes
-through OpenAI explicitly (``provider="openai"``) and every prompt is routed
-through :func:`redact`.
+finding; a synthesizer weaves them into the narrative. Every LLM call is built
+by :func:`agents.llm.get_overview_llm`, which reads ``OVERVIEW_PROVIDER`` /
+``OVERVIEW_MODEL`` and defaults to real OpenAI on ``gpt-4o-mini``; every prompt
+is routed through :func:`redact`.
 
 The agents never do arithmetic. They are handed the metric catalog — label,
 computed ``display``, and short ``detail`` — and are told to cite any figure by
@@ -21,12 +22,18 @@ from __future__ import annotations
 import os
 from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence
 
-from agents.llm import get_chat_llm
+from agents.llm import get_overview_llm, overview_model
 from agents.portfolio.metrics import Metric
 from agents.portfolio.redact import redact
 
-#: The OpenAI model the overview runs on. Cheap by default; override per deploy.
-OVERVIEW_MODEL = os.environ.get("OPENAI_OVERVIEW_MODEL", "").strip() or "gpt-4o-mini"
+#: The model the overview runs on when nothing overrides it. Cheap by default.
+OVERVIEW_MODEL_DEFAULT = "gpt-4o-mini"
+
+#: The configured overview model, resolved at import for callers that read it.
+#: ``default_llm_factory`` re-resolves at call time so a test (or a reload-free
+#: env change) takes effect; precedence is ``OVERVIEW_MODEL`` →
+#: ``OPENAI_OVERVIEW_MODEL`` (legacy) → the default above.
+OVERVIEW_MODEL = overview_model(OVERVIEW_MODEL_DEFAULT)
 
 #: Per-request timeout (seconds). A *stalled* provider connection would otherwise
 #: hold the SSE stream open near the server's ~600s ceiling; this makes a hung
@@ -94,9 +101,15 @@ class OverviewLLMError(RuntimeError):
 
 
 def default_llm_factory() -> Any:
-    """Construct the overview chat model on real OpenAI (provider wins over env)."""
-    return get_chat_llm(
-        OVERVIEW_MODEL, temperature=0.2, provider="openai", timeout=_overview_timeout()
+    """Construct the overview chat model from ``OVERVIEW_PROVIDER``/``OVERVIEW_MODEL``.
+
+    Both default to today's behaviour — real OpenAI on ``gpt-4o-mini`` — and the
+    provider default is the explicit ``"openai"``, never ``None``, so with
+    ``OVERVIEW_PROVIDER`` unset a stray ``OPENAI_BASE_URL`` still cannot reroute
+    the overview (card A1).
+    """
+    return get_overview_llm(
+        OVERVIEW_MODEL_DEFAULT, temperature=0.2, timeout=_overview_timeout()
     )
 
 
@@ -263,6 +276,7 @@ AsyncNode = Callable[[Any], Awaitable[Any]]
 
 __all__ = [
     "OVERVIEW_MODEL",
+    "OVERVIEW_MODEL_DEFAULT",
     "OverviewLLMError",
     "SPECIALISTS",
     "default_llm_factory",
