@@ -12,7 +12,7 @@ Two groups, deliberately separate:
 from __future__ import annotations
 
 from contextlib import suppress
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, AsyncIterator, Optional
 
@@ -29,7 +29,7 @@ from db.session import async_session
 from portfolio.connectors import StubConnector
 from portfolio.errors import NotLinked
 from portfolio.models import LinkHealth, PortfolioSnapshot
-from services import snapshots as svc
+from services import manual_fd, snapshots as svc
 
 CRON_SECRET = "test-cron-secret"
 CRON_AUTH = {CRON_SECRET_HEADER: CRON_SECRET}
@@ -213,8 +213,8 @@ async def api(test_database_url: str, monkeypatch: pytest.MonkeyPatch):
             await conn.execute(
                 text(
                     "TRUNCATE users, broker_links, oauth_pending, snapshot_days, "
-                    "snapshot_holdings, snapshot_raw, portfolio_cache "
-                    "RESTART IDENTITY CASCADE"
+                    "snapshot_holdings, snapshot_raw, portfolio_cache, "
+                    "manual_fds RESTART IDENTITY CASCADE"
                 )
             )
         await engine.dispose()
@@ -297,6 +297,42 @@ async def test_history_returns_the_captured_points(
     assert all(isinstance(p["net_worth"], str) for p in body["points"])
     assert body["last_captured_at"] is not None
     assert body["note"] is None
+
+
+async def test_history_prices_manual_deposits_retroactively(
+    api: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The B10 follow-up: a deposit entered today lifts *yesterday's* point too.
+
+    Nothing derived is stored — the terms price any past day deterministically —
+    so creating a deposit re-draws the whole line on the next read, over HTTP,
+    with no capture run and no migration.
+    """
+    client, maker, connector = api
+    monkeypatch.setenv("ALPHADESK_SINGLE_TENANT", "1")
+    for offset in (1, 0):
+        await _capture_via_service(maker, connector, PRIMARY_RUN - timedelta(days=offset))
+
+    before = (await client.get("/portfolio/history?days=90")).json()
+    assert len(before["points"]) == 2
+
+    async with maker() as session:
+        fd = await manual_fd.create_fd(
+            session,
+            "local",
+            label="SBI FD",
+            principal=Decimal("100000"),
+            rate_pct=Decimal("8"),
+            compounding="quarterly",
+            start_date=date(2026, 8, 1),
+            maturity_date=date(2027, 1, 1),
+        )
+
+    after = (await client.get("/portfolio/history?days=90")).json()
+    assert [p["date"] for p in after["points"]] == [p["date"] for p in before["points"]]
+    for b, a in zip(before["points"], after["points"]):
+        extra = manual_fd.value_row(fd, date.fromisoformat(a["date"])).current_value
+        assert Decimal(a["net_worth"]) == Decimal(b["net_worth"]) + extra
 
 
 async def test_summary_carries_last_captured_at(

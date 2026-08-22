@@ -670,7 +670,22 @@ async def history_points(
     days: int = 90,
     now: Optional[datetime] = None,
 ) -> list[HistoryPoint]:
-    """The user's captured net worth over the last ``days`` attributed days."""
+    """The user's captured net worth over the last ``days`` attributed days.
+
+    Each point also carries the user's **manual fixed deposits** (card B10),
+    each valued *as of that captured day* from its stored terms — never
+    stored, which is exactly what makes the whole line re-price retroactively
+    when a deposit is entered, edited or deleted. A day before a deposit's
+    `start_date` gains nothing (the deposit did not exist yet — the
+    clamp-to-principal rule is for valuing a *live* future-dated deposit, not
+    for rewriting the past), and past maturity the frozen maturity value is
+    what every later point gains. The vendor's captured total is never
+    touched; this is the same additive overlay `/summary` and `/holdings`
+    apply, extended down the time axis.
+
+    A manual read that fails costs the FD contribution, never the chart —
+    the same posture the summary's `manual` block takes.
+    """
     now = now or _now_utc()
     since = attributed_day(now) - timedelta(days=days)
     rows = await session.execute(
@@ -678,7 +693,34 @@ async def history_points(
         .where(SnapshotDay.user_id == user_id, SnapshotDay.captured_on >= since)
         .order_by(SnapshotDay.captured_on)
     )
-    return [HistoryPoint(captured_on=row[0], total_value=row[1]) for row in rows.all()]
+    points = [HistoryPoint(captured_on=row[0], total_value=row[1]) for row in rows.all()]
+
+    # Function-local on purpose: `services.manual_fd` imports `IST` from this
+    # module, so a top-level import would be a cycle.
+    from services import manual_fd
+
+    try:
+        fds = await manual_fd.list_fds(session, user_id)
+        if not fds:
+            return points
+        return [
+            HistoryPoint(
+                captured_on=p.captured_on,
+                total_value=p.total_value
+                + sum(
+                    (
+                        manual_fd.value_row(fd, p.captured_on).current_value
+                        for fd in fds
+                        if fd.start_date <= p.captured_on
+                    ),
+                    Decimal(0),
+                ),
+            )
+            for p in points
+        ]
+    except Exception:  # noqa: BLE001 - additive, like every other manual merge
+        log.warning("history: manual deposits unavailable; drawing vendor-only", exc_info=True)
+        return points
 
 
 async def last_captured_at(session: AsyncSession, user_id: str) -> Optional[datetime]:

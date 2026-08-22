@@ -22,7 +22,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import SnapshotDay, SnapshotHolding, SnapshotRaw, User
+from db.models import ManualFd, SnapshotDay, SnapshotHolding, SnapshotRaw, User
 from portfolio.connectors import PortfolioConnector, StubConnector
 from portfolio.errors import (
     NotLinked,
@@ -32,7 +32,7 @@ from portfolio.errors import (
     UserScopeError,
 )
 from portfolio.models import AssetType, Holding, LinkHealth, PortfolioSnapshot
-from services import snapshots as svc
+from services import manual_fd, snapshots as svc
 
 USER = "local"
 
@@ -715,6 +715,162 @@ async def test_last_captured_at_is_none_for_an_uncaptured_user(
     db_session: AsyncSession,
 ) -> None:
     assert await svc.last_captured_at(db_session, "nobody") is None
+
+
+# --------------------------------------------------------------------------- #
+# Manual FDs in the trend (the B10 follow-up): each captured day gains every
+# deposit's accrued value *as of that day*, computed on read, never stored
+# --------------------------------------------------------------------------- #
+async def _add_fd(
+    session: AsyncSession,
+    *,
+    start: date,
+    maturity: date,
+    user_id: str = USER,
+) -> ManualFd:
+    """One deposit of standard terms, placed through `create_fd` like prod."""
+    return await manual_fd.create_fd(
+        session,
+        user_id,
+        label="Test FD",
+        principal=Decimal("100000"),
+        rate_pct=Decimal("8"),
+        compounding="quarterly",
+        start_date=start,
+        maturity_date=maturity,
+    )
+
+
+async def _vendor_points(session: AsyncSession) -> dict[date, Decimal]:
+    """The captured totals with no manual rows in play, keyed by day."""
+    return {
+        p.captured_on: p.total_value
+        for p in await svc.history_points(session, USER, days=90, now=PRIMARY_RUN)
+    }
+
+
+async def test_a_running_deposit_accrues_into_every_captured_point(
+    db_session: AsyncSession,
+) -> None:
+    await _capture(db_session, now=PRIMARY_RUN - timedelta(days=1))
+    await _capture(db_session, now=PRIMARY_RUN)
+    vendor = await _vendor_points(db_session)
+
+    fd = await _add_fd(db_session, start=date(2026, 8, 1), maturity=date(2027, 1, 1))
+    points = await svc.history_points(db_session, USER, days=90, now=PRIMARY_RUN)
+
+    assert [p.captured_on for p in points] == sorted(vendor)
+    for p in points:
+        assert (
+            p.total_value
+            == vendor[p.captured_on] + manual_fd.value_row(fd, p.captured_on).current_value
+        )
+
+
+async def test_a_matured_deposit_adds_one_frozen_value_to_every_point(
+    db_session: AsyncSession,
+) -> None:
+    """100000 at 8% quarterly for exactly 365 days -> 108243.216 -> 108243.22.
+
+    The figure is frozen at maturity, so it is asserted as a literal: the
+    history must not keep accruing behind the chart any more than the live
+    valuation does.
+    """
+    await _capture(db_session, now=PRIMARY_RUN - timedelta(days=1))
+    await _capture(db_session, now=PRIMARY_RUN)
+    vendor = await _vendor_points(db_session)
+
+    await _add_fd(db_session, start=date(2025, 1, 1), maturity=date(2026, 1, 1))
+    points = await svc.history_points(db_session, USER, days=90, now=PRIMARY_RUN)
+
+    assert points
+    assert all(
+        p.total_value == vendor[p.captured_on] + Decimal("108243.22") for p in points
+    )
+
+
+async def test_days_before_the_start_date_contribute_nothing(
+    db_session: AsyncSession,
+) -> None:
+    """The clamp-to-principal rule values a *live* future-dated deposit; it
+    must not rewrite the past. A deposit that had not started did not exist,
+    so pre-start days stay exactly as captured rather than lifting by the
+    principal."""
+    await _capture(db_session, now=PRIMARY_RUN - timedelta(days=1))
+    await _capture(db_session, now=PRIMARY_RUN)
+    vendor = await _vendor_points(db_session)
+
+    await _add_fd(db_session, start=date(2026, 9, 1), maturity=date(2027, 3, 1))
+    points = await svc.history_points(db_session, USER, days=90, now=PRIMARY_RUN)
+
+    assert {p.captured_on: p.total_value for p in points} == vendor
+
+
+async def test_another_users_deposits_never_reach_this_users_history(
+    db_session: AsyncSession,
+) -> None:
+    await _capture(db_session, now=PRIMARY_RUN - timedelta(days=1))
+    await _capture(db_session, now=PRIMARY_RUN)
+    vendor = await _vendor_points(db_session)
+
+    await _add_fd(
+        db_session,
+        start=date(2026, 8, 1),
+        maturity=date(2027, 1, 1),
+        user_id="someone-else",
+    )
+    points = await svc.history_points(db_session, USER, days=90, now=PRIMARY_RUN)
+
+    assert {p.captured_on: p.total_value for p in points} == vendor
+
+
+async def test_history_degrades_to_vendor_points_when_the_manual_read_fails(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """History is additive and never fatal — the same posture `/summary`
+    takes when its `manual` block cannot be read. A broken manual read costs
+    the FD contribution, never the chart."""
+    await _capture(db_session, now=PRIMARY_RUN - timedelta(days=1))
+    await _capture(db_session, now=PRIMARY_RUN)
+    vendor = await _vendor_points(db_session)
+
+    fd = await _add_fd(db_session, start=date(2026, 8, 1), maturity=date(2027, 1, 1))
+    augmented = await svc.history_points(db_session, USER, days=90, now=PRIMARY_RUN)
+    assert augmented[0].total_value > vendor[augmented[0].captured_on], "sanity"
+
+    async def _boom(*_args: Any, **_kwargs: Any) -> list[ManualFd]:
+        raise RuntimeError("manual read down")
+
+    monkeypatch.setattr(manual_fd, "list_fds", _boom)
+    points = await svc.history_points(db_session, USER, days=90, now=PRIMARY_RUN)
+
+    assert {p.captured_on: p.total_value for p in points} == vendor
+    assert fd.id  # the row itself was never touched by the failed read
+
+
+async def test_a_valuation_failure_also_degrades_to_vendor_points(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The guard covers the arithmetic too, not just the list read: a deposit
+    whose terms cannot be valued costs its own contribution, never the chart."""
+    await _capture(db_session, now=PRIMARY_RUN - timedelta(days=1))
+    await _capture(db_session, now=PRIMARY_RUN)
+    vendor = await _vendor_points(db_session)
+
+    await _add_fd(db_session, start=date(2026, 8, 1), maturity=date(2027, 1, 1))
+
+    real = manual_fd.value_row
+
+    def _boom(fd: ManualFd, as_of: date) -> Any:
+        raise ValueError("unknown compounding convention")
+
+    monkeypatch.setattr(manual_fd, "value_row", _boom)
+    points = await svc.history_points(db_session, USER, days=90, now=PRIMARY_RUN)
+
+    assert {p.captured_on: p.total_value for p in points} == vendor
+    assert real  # the patched-out original existed; the guard caught the boom
 
 
 # --------------------------------------------------------------------------- #
