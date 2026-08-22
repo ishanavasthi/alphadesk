@@ -18,7 +18,7 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from agents.llm import get_chat_llm
+from agents.llm import get_lab_llm, structured
 from graph.state import (
     AnalystRecommendation,
     PortfolioState,
@@ -26,7 +26,8 @@ from graph.state import (
 )
 
 # NOTE: the ``openai/`` prefix is part of the *Groq* model id (GPT OSS 120B
-# served by Groq) — this agent still routes through Groq, not OpenAI.
+# served by Groq) — the default route is Groq, not OpenAI. Override the tier
+# with LAB_RISK_MODEL / LAB_MODEL and the route with LAB_PROVIDER.
 RISK_MODEL = "openai/gpt-oss-120b"
 MIN_CONFIDENCE = 0.70
 MAX_PER_SECTOR = 3
@@ -102,7 +103,7 @@ async def _annotate(
             f"action={getattr(rec, 'action', None)}"
         )
     try:
-        llm = get_chat_llm(RISK_MODEL, temperature=0).with_structured_output(_RiskNotes)
+        llm = structured(get_lab_llm("risk", RISK_MODEL, temperature=0), _RiskNotes)
         out = await llm.ainvoke("\n".join(lines))
         note_map = {n.symbol: n.note for n in out.notes}
         for a in assessments:

@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 from typing import Dict, Optional
 
-from agents.llm import get_chat_llm
+from agents.llm import get_lab_llm
 from graph.state import PortfolioState, ResearchReport, ScanResult
 from tools.ind_money import (
     GreeksHistoryResponse,
@@ -30,7 +30,7 @@ RESEARCH_MODEL = "llama-3.1-8b-instant"
 
 
 def _get_llm():
-    return get_chat_llm(RESEARCH_MODEL, temperature=0)
+    return get_lab_llm("research", RESEARCH_MODEL, temperature=0)
 
 
 def _fundamentals(detail: Optional[StockDetail]) -> Dict[str, float]:
