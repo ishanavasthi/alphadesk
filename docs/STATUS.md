@@ -3,7 +3,7 @@
 Plan of record: [`../V2_PLAN.md`](../V2_PLAN.md). The orchestrator updates this
 file at every card completion and gate. Newest facts win; keep entries terse.
 
-**Last updated:** 2026-08-21 (B10 manual fixed deposits built and verified on `feat/b10-manual-fd` — PR pending merge)
+**Last updated:** 2026-08-22 (B10 follow-up: manual FDs priced in the history trend, built on `feat/b10-fd-history` — PR pending merge)
 
 | Card | Status | Notes |
 | --- | --- | --- |
@@ -29,6 +29,7 @@ file at every card completion and gate. Newest facts win; keep entries terse.
 | --- | --- | --- |
 | B8 top movers | ✅ **done 2026-08-20** | Merged via PR #67 (issue #66). `GET /portfolio/movers` over captured snapshots (price-basis ranking, balance rows as flows, opened/closed never ±100%, window snapping, `buckets_failed` exclusion), `snapshot_holdings.name` (migration 0007), Top movers card on `/portfolio`. Docs: `docs/SPECS/B8.md`, `docs/TESTING/B8.md`. |
 | B10 manual FDs | ✅ **built 2026-08-21 — PR open** | Issue #68 (implements #56, first slice of #55; vendor FD repair stays B9/#65). `manual_fds` (migration 0008), pure-Decimal accrual recomputed on every read (clamp before start, freeze at maturity), `/portfolio/fds` CRUD (404-not-403, no-DB: reads empty / writes 503), additive merge into `/holdings?asset_type=FD` + `/summary.manual` with vendor fields byte-untouched, "Fixed deposits — manual" card + add/edit/delete dialogs. Orchestrator re-verified: 794 pytest green in a clean env (the 9 failures in the operator checkout reproduce on `main` — `.env` leakage, pre-existing), 158 vitest + build + tsc, migration idempotent, accruals reconciled by hand, all seven visual states pixel-checked at 1280+375 (both dev-console findings reproduce on `main`). Docs: `docs/SPECS/B10.md`, `docs/TESTING/B10.md`. |
+| B10 follow-up — FDs in the trend | ✅ **built 2026-08-22 — PR open** | The B10-deferred half: `/portfolio/history` now prices manual deposits. `history_points` adds each deposit's accrued value *computed at each captured day* (`value_row`) — read-time only, nothing stored, so entering/editing/deleting an FD re-prices the whole line on the next read with no capture run or migration; pre-`start_date` days contribute nothing (clamp-to-principal is for live valuation, not rewriting the past); post-maturity points gain the frozen maturity value. Snapshots stay byte-untouched; both consumers (`/portfolio/history`, AI overview `_history`) inherit one implementation; a failed manual read degrades to vendor-only points. Known caveat documented: days where the vendor's broken FD bucket sits inside captured `total_networth` (#65) double-count until B9 lands. No new deps, no frontend change. Tests: 6 service-level (`tests/test_snapshots.py`, TDD — watched fail first) + 1 HTTP retroactive-pricing test (`tests/test_snapshots_api.py`, whose teardown TRUNCATE now includes `manual_fds`). 819 pytest passed — the only failures are the 2 pre-existing `test_ratelimit` loop flakes that reproduce on the unmodified tree. |
 
 ## Deploy notes (read before pushing to the Space)
 
