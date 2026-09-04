@@ -371,6 +371,20 @@ def _holding_json(item: Holding) -> dict[str, Any]:
     """One row. ``Holding.raw`` is deliberately **not** serialized — it is the
     source's own row, kept for forensics, and shipping it to a browser would put
     vendor field names (and unmapped material) back above the boundary."""
+    note: Optional[str] = None
+    if (
+        item.asset_type is AssetType.FD
+        and item.pnl is not None
+        and item.pnl < 0
+    ):
+        # A fixed deposit cannot lose value, so a negative vendor P&L is a
+        # stale source record, not a real return (issue #65: ₹5,000 reported
+        # at ₹162, frozen for five days). Labelled on the row rather than
+        # hidden: the number is the vendor's, the caveat is ours.
+        note = (
+            "The source reports this deposit book at a loss. A fixed deposit "
+            "cannot lose value — treat this as a stale source record."
+        )
     return {
         "source": item.source,
         "external_id": item.external_id,
@@ -389,6 +403,7 @@ def _holding_json(item: Holding) -> dict[str, Any]:
         "us_exposure": item.is_us_exposure,
         "currency": item.currency,
         "as_of": item.as_of.isoformat(),
+        "note": note,
     }
 
 

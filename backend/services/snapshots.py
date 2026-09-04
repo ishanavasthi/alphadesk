@@ -180,6 +180,14 @@ FAILED = "failed"
 BUCKET_THROTTLED = "throttled"
 BUCKET_UNSUPPORTED = "unsupported"
 BUCKET_SOURCE_ERROR = "source_error"
+BUCKET_VANISHED = "vanished"
+#: A bucket the most recent prior snapshot held rows for, but which this run
+#: could neither value nor enumerate — the vendor silently omitted it (issue
+#: #65: FD absent from `assets` on 2026-08-18, then back the next day). Read
+#: as "sold everything", a partial day passes for complete and the phantom
+#: dip enters history; recorded as a failure instead. A genuine same-day
+#: sell-off flags once too — snapshots alone cannot tell the two apart, and
+#: an ambiguous day marked partial is honest where a silent one is not.
 
 
 @dataclass(frozen=True)
@@ -351,6 +359,36 @@ def _holding_row(snapshot_id: int, holding: Holding) -> SnapshotHolding:
     )
 
 
+async def _prior_bucket_types(
+    session: AsyncSession, user_id: str, day
+) -> set[str]:
+    """Asset types holding rows on the most recent captured day before ``day``.
+
+    The comparator for vanish detection: a bucket with rows then and nothing
+    now is ambiguous (vendor omission vs genuine sell-off), and the day is
+    marked partial rather than trusted. No prior day — the first capture ever,
+    or a fresh user — means nothing to compare against, never a failure.
+    """
+    prev_id = (
+        await session.execute(
+            select(SnapshotDay.id)
+            .where(SnapshotDay.user_id == user_id, SnapshotDay.captured_on < day)
+            .order_by(SnapshotDay.captured_on.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if prev_id is None:
+        return set()
+    rows = (
+        await session.execute(
+            select(distinct(SnapshotHolding.asset_type)).where(
+                SnapshotHolding.snapshot_id == prev_id
+            )
+        )
+    ).scalars()
+    return set(rows.all())
+
+
 async def capture_user(
     session: AsyncSession,
     user_id: str,
@@ -424,6 +462,27 @@ async def capture_user(
         raws.append(
             (snapshot.source, {"kind": "holdings", "asset_type": asset_type.value, "payload": raw})
         )
+
+    # Vanish detection (issue #65): a bucket the previous snapshot held rows
+    # for, but which this run neither valued nor read and did not explicitly
+    # fail, is a vendor omission until proven otherwise — never "sold
+    # everything". Nothing is backfilled or synthesized; the day is simply
+    # marked partial via `buckets_failed`.
+    prior_types = await _prior_bucket_types(session, user_id, day)
+    if prior_types:
+        present = {h.asset_type.value for h in holdings} | {
+            f.asset_type for f in failed
+        }
+        # UNKNOWN is never enumerated by design (`_capture_buckets`), so its
+        # absence proves nothing and must never flag.
+        candidates = (prior_types - present) - {AssetType.UNKNOWN.value}
+        for vanished in sorted(candidates):
+            log.warning(
+                "snapshot: %s bucket %s vanished since the previous capture",
+                user_id,
+                vanished,
+            )
+            failed.append(BucketFailure(vanished, BUCKET_VANISHED))
 
     rate = await fx()
 
@@ -1211,6 +1270,7 @@ __all__ = [
     "BUCKET_SOURCE_ERROR",
     "BUCKET_THROTTLED",
     "BUCKET_UNSUPPORTED",
+    "BUCKET_VANISHED",
     "BASIS_BALANCE",
     "BASIS_CLOSED",
     "BASIS_OPENED",

@@ -461,6 +461,8 @@ export interface PortfolioHolding {
   us_exposure: boolean;
   currency: string;
   as_of: string;
+  /** Backend caveat for rows the source misreports (issue #65: FD losses). */
+  note: string | null;
 }
 
 export interface HoldingsResponse {
