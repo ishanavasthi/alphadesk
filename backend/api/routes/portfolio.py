@@ -121,7 +121,86 @@ HOLDINGS_TTL_SECONDS = 900
 #: source call, and write the result back so everyone else gets the new reading.
 FRESH_QUERY = Query(False, description="Bypass the cache and re-read the source.")
 
+#: Reads older than this are served stale while a background task revalidates
+#: (issue #72, phase 3). Past this age the reader waits for a real read: a
+#: same-day number with an honest "fetched N ago" label is a head start, a
+#: days-old one is a trap.
+SUMMARY_STALE_MAX_SECONDS = 6 * 3600
+
+#: Users with a summary revalidation in flight. Process-wide single-flight, the
+#: same reasoning as the capture one in `services.snapshots`: two tabs opening
+#: at once schedule one rewrite, not two bursts against a per-minute budget.
+_summary_revalidating: set[str] = set()
+
+#: Strong references to revalidation tasks (`asyncio.create_task` is weak —
+#: see `services.snapshots._background` for the failure mode this prevents).
+_background_revalidations: set[Any] = set()
+
 _log = logging.getLogger(__name__)
+
+
+async def _read_summary_payload(
+    user_id: str,
+    connector: PortfolioConnector,
+    session: Optional[AsyncSession],
+    request: Optional[Request] = None,
+) -> dict[str, Any]:
+    """One real summary read: source → payload → cache write. No manual block.
+
+    Shared by the request path and the stale-while-revalidate background task
+    (which passes `request=None` and its own session — a request-scoped session
+    is gone by the time a background task runs). Raises `PortfolioSourceError`
+    for both callers to map: the route via `_fail`, the background via log.
+    """
+    with span(request, SRC):
+        health = await connector.link_health(user_id)
+        snapshot = await connector.fetch_snapshot(user_id)
+    with span(request, DB):
+        captured_at = await _last_captured_at(session, user_id)
+    if session is not None and _needs_capture(captured_at):
+        schedule_capture_if_missing(user_id, connector)
+    payload = _snapshot_json(snapshot, health.value, captured_at, user_id)
+    await portfolio_cache.put(
+        session, user_id, portfolio_cache.summary_key(), payload,
+        as_of=snapshot.as_of,
+    )
+    return payload
+
+
+def schedule_summary_revalidation(
+    user_id: str, connector: PortfolioConnector
+) -> None:
+    """Fire-and-forget `_read_summary_payload` with its own session.
+
+    The stale-while-revalidate writer: a reader who got a stale summary does
+    not wait for this, and the next reader gets the rewritten row. Never
+    raises, never blocks; a failure is logged and the next stale open retries.
+    """
+    if user_id in _summary_revalidating:
+        return
+    _summary_revalidating.add(user_id)
+
+    async def _run() -> None:
+        try:
+            from db.session import get_sessionmaker
+
+            maker = get_sessionmaker()
+            async with maker() as owned:
+                await _read_summary_payload(user_id, connector, owned)
+        except Exception:  # noqa: BLE001 - a background rewrite never breaks a page
+            _log.exception("summary revalidation failed for %s", user_id)
+        finally:
+            _summary_revalidating.discard(user_id)
+
+    try:
+        task = asyncio.create_task(_run())
+    except RuntimeError:
+        # No running loop (a sync test client, a script). Nothing to schedule;
+        # the reader already has the stale row, the next open retries.
+        _summary_revalidating.discard(user_id)
+        return
+    _background_revalidations.add(task)
+    task.add_done_callback(_background_revalidations.discard)
 
 
 async def _last_captured_at(
@@ -586,20 +665,30 @@ async def summary(
             cached["last_captured_at"] = captured_at.isoformat() if captured_at else None
             # Manual deposits are recomputed per request and never cached (B10).
             return {**cached, "manual": await _manual_block(session, user_id)}
+        if session is not None:
+            # Stale-while-revalidate (issue #72, phase 3): a row older than the
+            # TTL but younger than `SUMMARY_STALE_MAX_SECONDS` is served
+            # instantly — the "fetched N ago" stamp says exactly how old — while
+            # a single-flight background task rewrites it for the next reader.
+            # Past the cap the reader waits for a real read, as before.
+            stale = await portfolio_cache.get_with_age(session, user_id, key)
+            if stale is not None:
+                payload, fetched_at = stale
+                age = (datetime.now(timezone.utc) - fetched_at).total_seconds()
+                if age <= SUMMARY_STALE_MAX_SECONDS:
+                    schedule_summary_revalidation(user_id, connector)
+                    with span(request, DB):
+                        captured_at = await _last_captured_at(session, user_id)
+                    payload["last_captured_at"] = (
+                        captured_at.isoformat() if captured_at else None
+                    )
+                    return {**payload, "manual": await _manual_block(session, user_id)}
 
     try:
-        with span(request, SRC):
-            health = await connector.link_health(user_id)
-            snapshot = await connector.fetch_snapshot(user_id)
+        payload = await _read_summary_payload(user_id, connector, session, request)
     except PortfolioSourceError as exc:
         _fail(exc)
 
-    with span(request, DB):
-        captured_at = await _last_captured_at(session, user_id)
-    if session is not None and _needs_capture(captured_at):
-        schedule_capture_if_missing(user_id, connector)
-    payload = _snapshot_json(snapshot, health.value, captured_at, user_id)
-    await portfolio_cache.put(session, user_id, key, payload, as_of=snapshot.as_of)
     # After the cache write, deliberately: the `manual` block is per-request.
     return {**payload, "manual": await _manual_block(session, user_id)}
 
