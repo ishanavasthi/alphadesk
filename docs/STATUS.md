@@ -3,7 +3,7 @@
 Plan of record: [`../V2_PLAN.md`](../V2_PLAN.md). The orchestrator updates this
 file at every card completion and gate. Newest facts win; keep entries terse.
 
-**Last updated:** 2026-09-04 (overnight batch `overnight/2026-09-03` merged to `main` as `01aabfb`, Vercel auto-deploying; Space backend deploy blocked — HF token 401s, operator to supply a fresh token; #73 stays open until then)
+**Last updated:** 2026-09-04 (overnight batch merged as `01aabfb`; **Space redeployed @ `98a9e29` and live-verified** — Lab + Overview on B.ai `glm-5.3-flash`; #73 closed)
 
 | Card | Status | Notes |
 | --- | --- | --- |
