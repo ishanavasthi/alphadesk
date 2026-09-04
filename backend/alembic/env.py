@@ -40,7 +40,12 @@ target_metadata = SQLModel.metadata
 
 def _load_dotenv() -> None:
     """Load backend/.env if python-dotenv is available, so `alembic` needs no
-    extra shell setup. Never overrides an already-exported variable."""
+    extra shell setup. Never overrides an already-exported variable. Skipped
+    under pytest (issue #31): the suite's throwaway database URL arrives via
+    `-x db_url`, and loading the operator's dotfile here re-pollutes the
+    session `tests/conftest.py` just scrubbed."""
+    if os.environ.get("ALPHADESK_TESTING") == "1":
+        return
     try:
         from dotenv import load_dotenv
     except ImportError:  # pragma: no cover - dotenv is a hard dep today

@@ -33,8 +33,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 # Load backend/.env so LLM keys, LANGCHAIN_*, IND_MONEY_MCP_URL are present
-# before the graph and agents read them.
-load_dotenv()
+# before the graph and agents read them. Skipped under pytest (issue #31):
+# `tests/conftest.py` sets ALPHADESK_TESTING=1 before this import, and a test
+# suite that inherits the operator's dotfile fails order-dependently.
+if os.environ.get("ALPHADESK_TESTING") != "1":
+    load_dotenv()
 
 from sqlalchemy import delete as sa_delete  # noqa: E402
 from sqlalchemy import select  # noqa: E402
