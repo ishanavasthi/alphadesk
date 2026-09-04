@@ -34,6 +34,7 @@ vi.mock("@/lib/api", async () => {
     getPortfolioSummary: vi.fn(),
     getPortfolioHistory: vi.fn(),
     getPortfolioHoldings: vi.fn(),
+    getPortfolioHoldingsAll: vi.fn(),
     getPortfolioAllocation: vi.fn(),
     capturePortfolioSnapshot: vi.fn(),
     startAuthLogin: vi.fn(),
@@ -51,7 +52,7 @@ import {
 import {
   PortfolioError,
   getPortfolioHistory,
-  getPortfolioHoldings,
+  getPortfolioHoldingsAll,
   getPortfolioSummary,
 } from "@/lib/api";
 
@@ -124,10 +125,8 @@ beforeEach(() => {
     days: 365,
     currency: "INR",
   } as never);
-  vi.mocked(getPortfolioHoldings).mockResolvedValue({
-    asset_type: "MF",
-    currency: "INR",
-    holdings: [],
+  vi.mocked(getPortfolioHoldingsAll).mockResolvedValue({
+    buckets: [{ asset_type: "MF", status: "ok", holdings: [], retry_after: null }],
   } as never);
 });
 
@@ -146,7 +145,7 @@ describe("instant paint from the last known load", () => {
 
   it("revalidates the summary but does not re-walk an unchanged one", async () => {
     (await loadOnce()).unmount();
-    const walkedOnce = vi.mocked(getPortfolioHoldings).mock.calls.length;
+    const walkedOnce = vi.mocked(getPortfolioHoldingsAll).mock.calls.length;
 
     await act(async () => {
       mount();
@@ -155,13 +154,13 @@ describe("instant paint from the last known load", () => {
     // The summary was re-read...
     expect(vi.mocked(getPortfolioSummary).mock.calls.length).toBe(2);
     // ...and it said nothing had moved, so the buckets were not fetched again.
-    expect(vi.mocked(getPortfolioHoldings).mock.calls.length).toBe(walkedOnce);
+    expect(vi.mocked(getPortfolioHoldingsAll).mock.calls.length).toBe(walkedOnce);
     expect(screen.getByText(/buckets:1/)).toBeTruthy();
   });
 
   it("re-walks the buckets when the source's reading has moved", async () => {
     (await loadOnce()).unmount();
-    const walkedOnce = vi.mocked(getPortfolioHoldings).mock.calls.length;
+    const walkedOnce = vi.mocked(getPortfolioHoldingsAll).mock.calls.length;
 
     vi.mocked(getPortfolioSummary).mockResolvedValue(
       summaryAt("2026-08-16T15:30:00+00:00", "1100000.0") as never,
@@ -169,7 +168,7 @@ describe("instant paint from the last known load", () => {
     mount();
 
     await waitFor(() =>
-      expect(vi.mocked(getPortfolioHoldings).mock.calls.length).toBe(walkedOnce + 1),
+      expect(vi.mocked(getPortfolioHoldingsAll).mock.calls.length).toBe(walkedOnce + 1),
     );
     await waitFor(() => expect(screen.getByText(/worth:1100000.0/)).toBeTruthy());
   });

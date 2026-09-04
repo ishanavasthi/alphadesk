@@ -36,6 +36,65 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.session import async_url
 
+#: Marker that this process is the test suite. `api.main` skips `load_dotenv()`
+#: when it is set, so the operator's `backend/.env` can never leak into tests
+#: (issue #31). Set here, at conftest import, which runs before any test module
+#: imports the app.
+os.environ["ALPHADESK_TESTING"] = "1"
+
+#: Vars scrubbed for the whole session (issue #31). A test suite whose result
+#: depends on the operator's dotfile — and which can point a process-global
+#: engine at a production database — is the bug. DB-backed fixtures keep opting
+#: in explicitly: `TEST_DATABASE_URL` is deliberately NOT on this list.
+_SCRUB_PREFIXES = ("IND_MONEY_",)
+_SCRUB_VARS = frozenset(
+    {
+        "ALPHADESK_SINGLE_TENANT",
+        "DATABASE_URL",
+        # LLM provider keys + routing (incl. the v1 leftovers).
+        "GROQ_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "NVIDIA_API_KEY",
+        "BAI_API_KEY",
+        "BAI_BASE_URL",
+        "OVERVIEW_PROVIDER",
+        "OVERVIEW_MODEL",
+        "OPENAI_OVERVIEW_MODEL",
+        "OPENAI_OVERVIEW_TIMEOUT",
+        "LAB_PROVIDER",
+        "LAB_MODEL",
+        "LAB_SCANNER_MODEL",
+        "LAB_RESEARCH_MODEL",
+        "LAB_ANALYST_MODEL",
+        "LAB_RISK_MODEL",
+        "OPENAI_BASE_URL",
+        "OPENAI_COMPATIBLE_MODEL",
+        "OVERVIEW_DAILY_GLOBAL_MAX",
+        "OVERVIEW_DAILY_USER_MAX",
+        # Identity / infra.
+        "CLERK_JWKS_URL",
+        "CLERK_ISSUER",
+        "CLERK_AUTHORIZED_PARTIES",
+        "CRON_SECRET",
+        "LANGCHAIN_TRACING_V2",
+        "LANGCHAIN_API_KEY",
+        "LANGCHAIN_PROJECT",
+        "LANGSMITH_ENDPOINT",
+        "LANGCHAIN_ENDPOINT",
+    }
+)
+
+
+def _scrub_environment() -> None:
+    for var in _SCRUB_VARS:
+        os.environ.pop(var, None)
+    for var in [v for v in os.environ if v.startswith(_SCRUB_PREFIXES)]:
+        os.environ.pop(var, None)
+
+
+_scrub_environment()
+
 DEFAULT_TEST_DB_URL = "postgresql+asyncpg://postgres:test@localhost:5433/alphadesk"
 
 #: Fixed key so an encrypted value is reproducible within a run. Test-only —

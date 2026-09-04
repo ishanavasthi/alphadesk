@@ -1,0 +1,20 @@
+{
+  "holdings": [
+    {
+      "asset_type": "FD",
+      "assetclass_l2": "Debt",
+      "market_cap": "",
+      "investment": "",
+      "investment_code": "FD_DEPOSITS",
+      "broker": "",
+      "invested_amount": 15000,
+      "market_value": 10162,
+      "total_units": 0,
+      "unit_price": 0,
+      "total_pnl": -4838,
+      "pnl_per": -32.25333333333333,
+      "holding_percent": 100,
+      "xirr": 0
+    }
+  ]
+}

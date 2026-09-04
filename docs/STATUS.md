@@ -3,7 +3,11 @@
 Plan of record: [`../V2_PLAN.md`](../V2_PLAN.md). The orchestrator updates this
 file at every card completion and gate. Newest facts win; keep entries terse.
 
-**Last updated:** 2026-08-22 (B10 follow-up merged as PR #71; B10 manual FDs **deployed** 2026-08-21 — Neon at migration 0008, Space rebuilt @ `b12f04e`, Vercel production live)
+**Last updated:** 2026-09-04 (overnight batch `overnight/2026-09-03` complete on-branch, gate green; merge + Space deploy in progress)
+
+| Card | Status | Notes |
+| --- | --- | --- |
+| Overnight 2026-09-03 | ✅ **done on-branch, gate green 2026-09-04** | 10 commits: #31 test-hygiene (conftest scrub + `ALPHADESK_TESTING` + canary, incl. alembic `disable_existing_loggers=False` flake fix); #72 ph0 Server-Timing + ph1 parallel summary/history, ph2 `GET /holdings/all` batch (warm 7-bucket walk 4.2s→586ms), ph3 SWR summary (6h cap, single-flight) + ph4 no-op (upsert already cached); #41 greeting + fetched stamp; #60 segments pin (pre-existing wiring); #42-slice `nvidia`+`bai` providers + bare-name aliases; #65-slice (`BUCKET_VANISHED`, FD aggregate label, gross-vs-breakdown warn, negative-FD caveat; chart rendering deferred to #39); #35 Addendum B (no txn tool, fund_details shapes, exact code join, category rows; BACKLOG B1–B4 updated; leak gate PASS; scratch deleted). #73 bake-off: **B.ai `glm-5.3-flash` wins** (3/3 structured, good calibration); NIM kimi-k3 unusable (timeouts), OpenRouter minimax key 401. Gate: 882 pytest + 166 vitest + tsc + build, all green. Local `.env` → Lab/Overview on `bai/glm-5.3-flash`. Space needs `BAI_*`/`LAB_*`/`OVERVIEW_*` secrets + rebuild. |
 
 | Card | Status | Notes |
 | --- | --- | --- |

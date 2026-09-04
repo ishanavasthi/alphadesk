@@ -158,6 +158,31 @@ async def _age(maker: Any, key: str, seconds: int) -> None:
 # --------------------------------------------------------------------------- #
 # Hit, miss, expiry
 # --------------------------------------------------------------------------- #
+async def test_get_with_age_reports_payload_and_fetch_time(api: Any) -> None:
+    """`get_with_age` returns the row however old, with its age attached.
+
+    The summary's stale-while-revalidate path decides "too stale" itself, so
+    the service reports rather than expires. Plain `get` keeps enforcing TTLs.
+    """
+    _, maker, _ = api
+    async with maker() as session:
+        await portfolio_cache.put(session, USER, "summary", {"net_worth": "1"})
+    await _age(maker, "summary", 3600)
+    async with maker() as session:
+        entry = await portfolio_cache.get_with_age(session, USER, "summary")
+    assert entry is not None
+    payload, fetched_at = entry
+    assert payload == {"net_worth": "1"}
+    age = (datetime.now(timezone.utc) - fetched_at).total_seconds()
+    assert 3590 < age < 3700
+    async with maker() as session:
+        assert (
+            await portfolio_cache.get(session, USER, "summary", max_age=300)
+        ) is None
+        assert await portfolio_cache.get_with_age(session, USER, "nope") is None
+        assert await portfolio_cache.get_with_age(None, USER, "summary") is None
+
+
 async def test_summary_is_read_through_and_the_second_read_is_free(api: Any) -> None:
     client, maker, connector = api
 

@@ -33,14 +33,26 @@ import db.models  # noqa: E402,F401  (import registers all three tables)
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # `disable_existing_loggers=False`: fileConfig's default (True) disables
+    # every logger not named in alembic.ini — i.e. all of the app's loggers —
+    # whenever migrations run in-process. The CLI is unaffected (its loggers
+    # are alembic's own), but the pytest DB fixture runs `upgrade head` in the
+    # suite's process, and any caplog-based test after the first DB test would
+    # go deaf. Migration output keeps its root/sqlalchemy/alembic loggers
+    # either way.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = SQLModel.metadata
 
 
 def _load_dotenv() -> None:
     """Load backend/.env if python-dotenv is available, so `alembic` needs no
-    extra shell setup. Never overrides an already-exported variable."""
+    extra shell setup. Never overrides an already-exported variable. Skipped
+    under pytest (issue #31): the suite's throwaway database URL arrives via
+    `-x db_url`, and loading the operator's dotfile here re-pollutes the
+    session `tests/conftest.py` just scrubbed."""
+    if os.environ.get("ALPHADESK_TESTING") == "1":
+        return
     try:
         from dotenv import load_dotenv
     except ImportError:  # pragma: no cover - dotenv is a hard dep today

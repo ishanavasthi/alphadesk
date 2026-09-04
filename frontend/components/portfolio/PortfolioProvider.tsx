@@ -15,11 +15,12 @@ import {
   capturePortfolioSnapshot,
   getPortfolioAllocation,
   getPortfolioHistory,
-  getPortfolioHoldings,
+  getPortfolioHoldingsAll,
   getPortfolioSummary,
   listFds,
   startAuthLogin,
   type AllocationSlice,
+  type BatchBucket,
   type ManualFd,
   type OverviewComplete,
   type PortfolioHolding,
@@ -71,10 +72,6 @@ import {
  * `usePortfolio()` can promise a non-null summary.
  */
 
-/** Pacing between per-asset-type calls. Polite, not a rate-limit workaround. */
-const CALL_SPACING_MS = 180;
-/** Longest we will sit on a throttle before giving the bucket up for this load. */
-const MAX_RETRY_WAIT_S = 20;
 /**
  * How long Refresh stays disabled after a load starts.
  *
@@ -154,8 +151,6 @@ export interface Bucket {
   reportedValue: number | null;
   retryAfter: number | null;
 }
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * What `?reason=<code>` from the OAuth callback means, in the reader's terms.
@@ -365,12 +360,38 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       setSectorError(null);
       setSectorLoading(false);
 
+      // Issue #72, phase 1: the summary and the history are independent reads,
+      // so they go out together instead of one after the other. (The holdings
+      // walk below still waits for the summary — it needs the snapshot's
+      // bucket list.) The `timed` wrapper logs per-fetch start/finish offsets
+      // in dev only, so a slow open can be attributed to a fetch, not guessed.
+      const t0 = Date.now();
+      const timed = async <T,>(label: string, work: Promise<T>): Promise<T> => {
+        const start = Date.now();
+        if (process.env.NODE_ENV !== "production") {
+          // eslint-disable-next-line no-console
+          console.debug(`[portfolio-load] ${label} started at +${start - t0}ms`);
+        }
+        try {
+          return await work;
+        } finally {
+          if (process.env.NODE_ENV !== "production") {
+            // eslint-disable-next-line no-console
+            console.debug(
+              `[portfolio-load] ${label} finished at +${Date.now() - t0}ms`,
+            );
+          }
+        }
+      };
+      const [summaryOutcome, historyOutcome] = await Promise.allSettled([
+        timed("summary", getPortfolioSummary(signal, reload.fresh)),
+        timed("history", getPortfolioHistory(HISTORY_DAYS, signal)),
+      ]);
+
       let snapshot: PortfolioSummary;
-      try {
-        snapshot = await getPortfolioSummary(signal, reload.fresh);
-      } catch (err) {
+      if (summaryOutcome.status === "rejected") {
         if (signal.aborted) return;
-        const failure = err as PortfolioError;
+        const failure = summaryOutcome.reason as PortfolioError;
         // A gate always beats the memory: whatever was painted, this reader may
         // not see it now. Forgetting it is what stops a signed-out tab from
         // showing the previous session's holdings behind the gate.
@@ -389,25 +410,24 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
         }
         return;
       }
+      snapshot = summaryOutcome.value;
       if (signal.aborted) return;
       setSummary(snapshot);
       setPhase("ready");
 
       let points = memory?.history ?? [];
       let capturedAt = memory?.lastCapturedAt ?? null;
-      try {
-        const captured = await getPortfolioHistory(HISTORY_DAYS, signal);
+      if (historyOutcome.status === "fulfilled") {
         if (signal.aborted) return;
+        const captured = historyOutcome.value;
         points = toTrendPoints(captured.points);
         capturedAt = captured.last_captured_at;
         setHistory(points);
         setLastCapturedAt(capturedAt);
-      } catch {
+      } else if (!signal.aborted) {
         // History is additive; its absence must never take the page down.
-        if (!signal.aborted) {
-          points = [];
-          setHistory(points);
-        }
+        points = [];
+        setHistory(points);
       }
 
       // The expensive part. Skipped entirely when the painted walk is still the
@@ -733,15 +753,18 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
 }
 
 /**
- * Fetch holdings for the buckets the snapshot reported, one call at a time.
+ * Fetch holdings for the buckets the snapshot reported, in one batch call.
  *
- * Ordered by value so the biggest positions appear first, deduplicated (several
- * out-of-enum buckets share the single `UNKNOWN` query), and paced. A throttled
- * bucket waits out the source's own suggested delay once, then gives up for this
- * load rather than hammering a server that just said no.
+ * Issue #72, phase 2: this used to be N sequential `getPortfolioHoldings`
+ * calls (one per bucket + 180ms pacing + a throttle wait each) — N
+ * client↔server roundtrips, each carrying its own identity + database cost
+ * even on a cache hit. The backend now fans the same reads out concurrently
+ * (`GET /portfolio/holdings/all`, same per-bucket cache rows, same statuses)
+ * and this function maps that one response back onto the `Bucket[]` the pages
+ * render. Ordered by value so the biggest positions still appear first.
  *
  * Returns the walk it completed, so the caller can remember it for the instant
- * paint; the progressive `setBuckets` is still what renders it as it arrives.
+ * paint.
  */
 async function loadHoldings(
   snapshot: PortfolioSummary,
@@ -772,63 +795,56 @@ async function loadHoldings(
     (a, b) => (b[1].value ?? 0) - (a[1].value ?? 0),
   );
 
-  const walked: Bucket[] = [];
+  const toBucket = (
+    assetType: string,
+    meta: { label: string; value: number | null },
+    status: BucketStatus,
+    rows: PortfolioHolding[],
+    retryAfter: number | null,
+  ): Bucket => ({
+    assetType,
+    label: meta.label,
+    status,
+    rows,
+    reportedValue: meta.value,
+    retryAfter,
+  });
+
   setLoadingHoldings(true);
-  for (const [assetType, meta] of ordered) {
-    if (signal.aborted) break;
-
-    let bucket: Bucket = {
-      assetType,
-      label: meta.label,
-      status: "ok",
-      rows: [],
-      reportedValue: meta.value,
-      retryAfter: null,
-    };
-
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        const response = await getPortfolioHoldings(assetType, signal, fresh);
-        bucket = { ...bucket, status: "ok", rows: response.holdings };
-        break;
-      } catch (err) {
-        if (signal.aborted) return walked;
-        const failure = err as PortfolioError;
-        if (
-          failure.code === "rate_limited" &&
-          attempt === 0 &&
-          (failure.retryAfter ?? 0) <= MAX_RETRY_WAIT_S
-        ) {
-          bucket = { ...bucket, status: "rate_limited", retryAfter: failure.retryAfter };
-          setThrottle(failure.retryAfter);
-          await sleep((failure.retryAfter ?? 5) * 1000);
-          continue;
-        }
-        if (failure.code === "rate_limited") {
-          bucket = { ...bucket, status: "rate_limited", retryAfter: failure.retryAfter };
-        } else if (failure.code === "unverified_shape") {
-          bucket = { ...bucket, status: "unverified" };
-        } else if (
-          failure.code === "unsupported_asset_type" ||
-          failure.code === "unknown_asset_type"
-        ) {
-          // The source cannot enumerate this bucket at all (its own snapshot
-          // reports it, its holdings endpoint refuses it). That is the EPF-style
-          // gap, not an error.
-          bucket = { ...bucket, status: "unsupported" };
-        } else {
-          bucket = { ...bucket, status: "error" };
-        }
-        break;
-      }
-    }
-
-    if (signal.aborted) return walked;
-    setThrottle(null);
-    walked.push(bucket);
-    setBuckets((current) => [...current, bucket]);
-    await sleep(CALL_SPACING_MS);
+  let byType = new Map<string, BatchBucket>();
+  try {
+    const response = await getPortfolioHoldingsAll(signal, fresh);
+    if (signal.aborted) return [];
+    byType = new Map(response.buckets.map((bucket) => [bucket.asset_type, bucket]));
+  } catch (err) {
+    // The whole batch failed (the summary already gated, so this is the
+    // source, not the reader). Every bucket is an honest error, never a hole.
+    if (signal.aborted) return [];
+    const failure = err as PortfolioError;
+    const status: BucketStatus =
+      failure.code === "rate_limited" ? "rate_limited" : "error";
+    if (status === "rate_limited") setThrottle(failure.retryAfter);
+    const walked = ordered.map(([assetType, meta]) =>
+      toBucket(assetType, meta, status, [], failure.retryAfter ?? null),
+    );
+    setBuckets(() => walked);
+    setLoadingHoldings(false);
+    return walked;
   }
-  if (!signal.aborted) setLoadingHoldings(false);
+
+  const walked = ordered.map(([assetType, meta]) => {
+    const batch = byType.get(assetType);
+    if (!batch) return toBucket(assetType, meta, "error", [], null);
+    return toBucket(assetType, meta, batch.status, batch.holdings, batch.retry_after);
+  });
+  if (signal.aborted) return [];
+  const throttled = walked.filter((bucket) => bucket.status === "rate_limited");
+  setThrottle(
+    throttled.length
+      ? Math.max(...throttled.map((bucket) => bucket.retryAfter ?? 0))
+      : null,
+  );
+  setBuckets(() => walked);
+  setLoadingHoldings(false);
   return walked;
 }

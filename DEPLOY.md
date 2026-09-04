@@ -79,6 +79,8 @@ Mark secrets as **Secret**.
 | `CRON_SECRET` | `openssl rand -base64 32` | secret; guards `POST /internal/snapshot|prune`; also a **GitHub Actions secret** |
 | `OPENAI_API_KEY` | your OpenAI key | secret; the portfolio AI overview (A1). Set a provider-side budget cap in the OpenAI dashboard |
 | `GROQ_API_KEY` | your Groq key | secret; the Lab / research agents |
+| `NVIDIA_API_KEY` | your NIM key (`nvapi-…`) | secret; only needed when a family names `provider=nvidia` |
+| `BAI_API_KEY` | your B.ai key | secret; only needed when a family names `provider=bai` |
 | `IND_MONEY_MCP_URL` | `https://mcp.indmoney.com/mcp` | the MCP server |
 | `IND_MONEY_AUTH_REDIRECT` | `https://<user>-alphadesk.hf.space/auth/callback` | **critical** — exact public backend URL |
 | `CORS_ALLOW_ORIGINS` | `https://alphadesk.ishanavasthi.in,https://<your-vercel>.vercel.app` | comma-separated frontend origins |
@@ -100,7 +102,7 @@ set in prod it fail-opens every request to the operator identity),
 The two LLM families are configured independently, each by its **own** vars.
 Leave everything here unset for the shipped defaults — AI Overview on real
 OpenAI `gpt-4o-mini`, Lab on Groq at its historical per-agent tiers. Valid
-providers: `openai`, `groq`, `openrouter`, `compat`; a typo raises rather than
+providers: `openai`, `groq`, `openrouter`, `compat`, `nvidia`, `bai`; a typo raises rather than
 silently billing the wrong provider.
 
 | Var | Example | Notes |
@@ -110,7 +112,10 @@ silently billing the wrong provider.
 | `LAB_PROVIDER` | `openrouter` | Lab only. Unset ⇒ the ambient default, which is Groq |
 | `LAB_MODEL` | `stealth/ox-alpha` | blanket: all four Lab agents |
 | `LAB_SCANNER_MODEL` / `LAB_RESEARCH_MODEL` / `LAB_ANALYST_MODEL` / `LAB_RISK_MODEL` | | per-agent, beats `LAB_MODEL`. Unset ⇒ the historical tier |
+| `SCANNER_MODEL` / `RESEARCH_MODEL` / `ANALYST_MODEL` / `RISK_MODEL` | | deprecated aliases for the `LAB_`-prefixed names; the prefixed name wins if both are set |
 | `OPENROUTER_API_KEY` | `sk-or-v1-…` | secret; **required** for `provider=openrouter`. Never falls back to `OPENAI_API_KEY` |
+| `NVIDIA_API_KEY` | `nvapi-…` | secret; **required** for `provider=nvidia` (integrate.api.nvidia.com/v1) |
+| `BAI_API_KEY` | | secret; **required** for `provider=bai` (default api.b.ai/v1, overridable with `BAI_BASE_URL`) |
 
 Setting only `LAB_PROVIDER` keeps each agent's historical model id — swapping
 the route never silently rewrites the tiering. The two families are fully

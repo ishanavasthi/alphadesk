@@ -33,8 +33,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 # Load backend/.env so LLM keys, LANGCHAIN_*, IND_MONEY_MCP_URL are present
-# before the graph and agents read them.
-load_dotenv()
+# before the graph and agents read them. Skipped under pytest (issue #31):
+# `tests/conftest.py` sets ALPHADESK_TESTING=1 before this import, and a test
+# suite that inherits the operator's dotfile fails order-dependently.
+if os.environ.get("ALPHADESK_TESTING") != "1":
+    load_dotenv()
 
 from sqlalchemy import delete as sa_delete  # noqa: E402
 from sqlalchemy import select  # noqa: E402
@@ -105,12 +108,18 @@ _ORIGIN_REGEX = f"{_LOCAL_REGEX}|{_EXTRA_REGEX}" if _EXTRA_REGEX else _LOCAL_REG
 # (innermost) also lets CORS answer `OPTIONS` preflights before they ever reach —
 # and count against — the limiter.
 from api.ratelimit import RateLimitMiddleware  # noqa: E402
+from api.timing import ServerTimingMiddleware  # noqa: E402
 
 # Per-user / per-IP request rate limits on the expensive surfaces (card L1):
 # /analyze, /portfolio/overview and /auth/login. 429 past the ceiling — a global
 # and a per-caller cap, both configurable. Innermost; OPTIONS is exempt. See
 # `api/ratelimit.py`.
 app.add_middleware(RateLimitMiddleware)
+
+# `Server-Timing` (issue #72, phase 0): total + db/src/cache spans on every
+# response. Pure observation — it touches nothing but a response header, and it
+# sits inside CORS with the limiter so timings survive on 429s too.
+app.add_middleware(ServerTimingMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

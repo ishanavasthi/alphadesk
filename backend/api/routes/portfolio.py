@@ -57,10 +57,11 @@ from decimal import Decimal
 from collections.abc import Callable
 from typing import Any, NoReturn, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import bearer_token, register_identity, verify_token
+from api.timing import CACHE, DB, SRC, span
 from tools.ind_money_auth import LOCAL_USER_ID, single_tenant_mode
 from portfolio.connectors import (
     IndMoneyConnector,
@@ -120,7 +121,86 @@ HOLDINGS_TTL_SECONDS = 900
 #: source call, and write the result back so everyone else gets the new reading.
 FRESH_QUERY = Query(False, description="Bypass the cache and re-read the source.")
 
+#: Reads older than this are served stale while a background task revalidates
+#: (issue #72, phase 3). Past this age the reader waits for a real read: a
+#: same-day number with an honest "fetched N ago" label is a head start, a
+#: days-old one is a trap.
+SUMMARY_STALE_MAX_SECONDS = 6 * 3600
+
+#: Users with a summary revalidation in flight. Process-wide single-flight, the
+#: same reasoning as the capture one in `services.snapshots`: two tabs opening
+#: at once schedule one rewrite, not two bursts against a per-minute budget.
+_summary_revalidating: set[str] = set()
+
+#: Strong references to revalidation tasks (`asyncio.create_task` is weak —
+#: see `services.snapshots._background` for the failure mode this prevents).
+_background_revalidations: set[Any] = set()
+
 _log = logging.getLogger(__name__)
+
+
+async def _read_summary_payload(
+    user_id: str,
+    connector: PortfolioConnector,
+    session: Optional[AsyncSession],
+    request: Optional[Request] = None,
+) -> dict[str, Any]:
+    """One real summary read: source → payload → cache write. No manual block.
+
+    Shared by the request path and the stale-while-revalidate background task
+    (which passes `request=None` and its own session — a request-scoped session
+    is gone by the time a background task runs). Raises `PortfolioSourceError`
+    for both callers to map: the route via `_fail`, the background via log.
+    """
+    with span(request, SRC):
+        health = await connector.link_health(user_id)
+        snapshot = await connector.fetch_snapshot(user_id)
+    with span(request, DB):
+        captured_at = await _last_captured_at(session, user_id)
+    if session is not None and _needs_capture(captured_at):
+        schedule_capture_if_missing(user_id, connector)
+    payload = _snapshot_json(snapshot, health.value, captured_at, user_id)
+    await portfolio_cache.put(
+        session, user_id, portfolio_cache.summary_key(), payload,
+        as_of=snapshot.as_of,
+    )
+    return payload
+
+
+def schedule_summary_revalidation(
+    user_id: str, connector: PortfolioConnector
+) -> None:
+    """Fire-and-forget `_read_summary_payload` with its own session.
+
+    The stale-while-revalidate writer: a reader who got a stale summary does
+    not wait for this, and the next reader gets the rewritten row. Never
+    raises, never blocks; a failure is logged and the next stale open retries.
+    """
+    if user_id in _summary_revalidating:
+        return
+    _summary_revalidating.add(user_id)
+
+    async def _run() -> None:
+        try:
+            from db.session import get_sessionmaker
+
+            maker = get_sessionmaker()
+            async with maker() as owned:
+                await _read_summary_payload(user_id, connector, owned)
+        except Exception:  # noqa: BLE001 - a background rewrite never breaks a page
+            _log.exception("summary revalidation failed for %s", user_id)
+        finally:
+            _summary_revalidating.discard(user_id)
+
+    try:
+        task = asyncio.create_task(_run())
+    except RuntimeError:
+        # No running loop (a sync test client, a script). Nothing to schedule;
+        # the reader already has the stale row, the next open retries.
+        _summary_revalidating.discard(user_id)
+        return
+    _background_revalidations.add(task)
+    task.add_done_callback(_background_revalidations.discard)
 
 
 async def _last_captured_at(
@@ -291,6 +371,20 @@ def _holding_json(item: Holding) -> dict[str, Any]:
     """One row. ``Holding.raw`` is deliberately **not** serialized — it is the
     source's own row, kept for forensics, and shipping it to a browser would put
     vendor field names (and unmapped material) back above the boundary."""
+    note: Optional[str] = None
+    if (
+        item.asset_type is AssetType.FD
+        and item.pnl is not None
+        and item.pnl < 0
+    ):
+        # A fixed deposit cannot lose value, so a negative vendor P&L is a
+        # stale source record, not a real return (issue #65: ₹5,000 reported
+        # at ₹162, frozen for five days). Labelled on the row rather than
+        # hidden: the number is the vendor's, the caveat is ours.
+        note = (
+            "The source reports this deposit book at a loss. A fixed deposit "
+            "cannot lose value — treat this as a stale source record."
+        )
     return {
         "source": item.source,
         "external_id": item.external_id,
@@ -309,6 +403,7 @@ def _holding_json(item: Holding) -> dict[str, Any]:
         "us_exposure": item.is_us_exposure,
         "currency": item.currency,
         "as_of": item.as_of.isoformat(),
+        "note": note,
     }
 
 
@@ -541,6 +636,7 @@ async def _manual_block(
 # --------------------------------------------------------------------------- #
 @router.get("/summary")
 async def summary(
+    request: Request,
     fresh: bool = FRESH_QUERY,
     user_id: str = Depends(portfolio_identity),
     connector: PortfolioConnector = Depends(connector_for_request),
@@ -569,31 +665,45 @@ async def summary(
     """
     key = portfolio_cache.summary_key()
     if not fresh:
-        cached = await portfolio_cache.get(
-            session, user_id, key, max_age=SUMMARY_TTL_SECONDS
-        )
+        with span(request, CACHE):
+            cached = await portfolio_cache.get(
+                session, user_id, key, max_age=SUMMARY_TTL_SECONDS
+            )
         if cached is not None:
             # The one field that is *not* served from the cache. It comes from
             # this deployment's own database, costs a single indexed read, and is
             # what the staleness banner is derived from — a capture that landed
             # since the payload was cached has to show up immediately, or the page
             # tells someone their history stopped when it did not.
-            captured_at = await _last_captured_at(session, user_id)
+            with span(request, DB):
+                captured_at = await _last_captured_at(session, user_id)
             cached["last_captured_at"] = captured_at.isoformat() if captured_at else None
             # Manual deposits are recomputed per request and never cached (B10).
             return {**cached, "manual": await _manual_block(session, user_id)}
+        if session is not None:
+            # Stale-while-revalidate (issue #72, phase 3): a row older than the
+            # TTL but younger than `SUMMARY_STALE_MAX_SECONDS` is served
+            # instantly — the "fetched N ago" stamp says exactly how old — while
+            # a single-flight background task rewrites it for the next reader.
+            # Past the cap the reader waits for a real read, as before.
+            stale = await portfolio_cache.get_with_age(session, user_id, key)
+            if stale is not None:
+                payload, fetched_at = stale
+                age = (datetime.now(timezone.utc) - fetched_at).total_seconds()
+                if age <= SUMMARY_STALE_MAX_SECONDS:
+                    schedule_summary_revalidation(user_id, connector)
+                    with span(request, DB):
+                        captured_at = await _last_captured_at(session, user_id)
+                    payload["last_captured_at"] = (
+                        captured_at.isoformat() if captured_at else None
+                    )
+                    return {**payload, "manual": await _manual_block(session, user_id)}
 
     try:
-        health = await connector.link_health(user_id)
-        snapshot = await connector.fetch_snapshot(user_id)
+        payload = await _read_summary_payload(user_id, connector, session, request)
     except PortfolioSourceError as exc:
         _fail(exc)
 
-    captured_at = await _last_captured_at(session, user_id)
-    if session is not None and _needs_capture(captured_at):
-        schedule_capture_if_missing(user_id, connector)
-    payload = _snapshot_json(snapshot, health.value, captured_at, user_id)
-    await portfolio_cache.put(session, user_id, key, payload, as_of=snapshot.as_of)
     # After the cache write, deliberately: the `manual` block is per-request.
     return {**payload, "manual": await _manual_block(session, user_id)}
 
@@ -641,8 +751,191 @@ async def capture(
     }
 
 
+#: Longest the batch walk waits out one throttled bucket before marking it
+#: `rate_limited` for this load (issue #72, phase 2). Mirrors the frontend
+#: `MAX_RETRY_WAIT_S` the batch replaces: one patient wait, then give up for
+#: this load rather than hammering a source that just said no.
+_BATCH_RETRY_WAIT_S = 20
+#: Concurrent source reads inside one batch walk. The per-tool budget is
+#: 15 calls/min and a whole-portfolio burst stays well under it, while the N
+#: sequential client↔server roundtrips collapse into one response.
+_BATCH_CONCURRENCY = 4
+
+
+async def _read_cached_bucket(
+    request: Request,
+    user_id: str,
+    session: Optional[AsyncSession],
+    asset_type: AssetType,
+) -> list[dict[str, Any]] | None:
+    """One bucket from the read-through cache, or `None` on any kind of miss."""
+    with span(request, CACHE):
+        cached = await portfolio_cache.get(
+            session, user_id,
+            portfolio_cache.holdings_key(asset_type.value),
+            max_age=HOLDINGS_TTL_SECONDS,
+        )
+    if cached is None:
+        return None
+    rows = list(cached.get("holdings", []))
+    if asset_type is AssetType.FD:
+        rows = [*rows, *(await _manual_holdings(session, user_id))]
+    return rows
+
+
+async def _fetch_source_bucket(
+    request: Request,
+    user_id: str,
+    connector: PortfolioConnector,
+    asset_type: AssetType,
+) -> tuple[str, list[Holding], float | None]:
+    """One bucket from the source: `(status, model rows, retry_after)`.
+
+    A bucket the source cannot serve is labelled (`unsupported`,
+    `unverified`, `rate_limited`, `error`), never raised — the same contract
+    the old client-side walk kept. A throttled bucket is waited out once, then
+    labelled rather than retried forever. Only `ok` rows may be cached, and
+    the caller (which owns the session) does that serially.
+    """
+    for attempt in (0, 1):
+        try:
+            with span(request, SRC):
+                rows = await connector.fetch_holdings(user_id, asset_type)
+            return "ok", rows, None
+        except RateLimited as exc:
+            retry_after = exc.retry_after if exc.retry_after and exc.retry_after > 0 else 5
+            if attempt == 0 and retry_after <= _BATCH_RETRY_WAIT_S:
+                await asyncio.sleep(retry_after)
+                continue
+            return "rate_limited", [], retry_after
+        except UnsupportedAssetType:
+            return "unsupported", [], None
+        except UnverifiedShapeError:
+            return "unverified", [], None
+        except PortfolioSourceError:
+            return "error", [], None
+    raise AssertionError("unreachable")  # pragma: no cover - loop always returns
+
+
+@router.get("/holdings/all")
+async def holdings_all(
+    request: Request,
+    fresh: bool = FRESH_QUERY,
+    user_id: str = Depends(portfolio_identity),
+    connector: PortfolioConnector = Depends(connector_for_request),
+    session: Optional[AsyncSession] = Depends(optional_session),
+) -> dict[str, Any]:
+    """Every reported bucket in **one** response (issue #72, phase 2).
+
+    The dashboard's bucket walk used to be N sequential client↔server
+    roundtrips — one `GET /holdings?asset_type=` per bucket the snapshot
+    reported, each carrying its own identity + database cost even on a cache
+    hit. This endpoint fans those reads out concurrently server-side (one
+    shared connector, bounded by `_BATCH_CONCURRENCY`, per-bucket cache rows
+    reused) and returns per-bucket `{asset_type, status, holdings,
+    retry_after}` with the same status vocabulary the walk had. Rate-limit
+    discipline is unchanged: the same calls, paced in one place instead of N.
+
+    The bucket set comes from the cached summary when fresh enough, else one
+    snapshot read. A snapshot-level failure (`not_linked`, …) still fails the
+    whole call — there is no bucket list without it.
+    """
+    asset_names: list[str] = []
+    if not fresh:
+        with span(request, CACHE):
+            summary_cached = await portfolio_cache.get(
+                session, user_id, portfolio_cache.summary_key(),
+                max_age=SUMMARY_TTL_SECONDS,
+            )
+        if summary_cached is not None:
+            asset_names = [
+                s.get("asset_type", "")
+                for s in summary_cached.get("by_asset_type", [])
+                if s.get("asset_type")
+            ]
+    if not asset_names:
+        try:
+            with span(request, SRC):
+                snapshot = await connector.fetch_snapshot(user_id)
+        except PortfolioSourceError as exc:
+            _fail(exc)
+        asset_names = [
+            s.asset_type.value for s in snapshot.by_asset_type if s.asset_type
+        ]
+    # Distinct, tolerantly parsed: out-of-enum buckets share one UNKNOWN read,
+    # exactly as the old client-side walk did.
+    seen: set[str] = set()
+    ordered: list[AssetType] = []
+    for name in asset_names:
+        parsed = AssetType.coerce(name)
+        if parsed.value not in seen:
+            seen.add(parsed.value)
+            ordered.append(parsed)
+    # Phase 1 — cache, strictly sequential. One request-scoped `AsyncSession`
+    # is not concurrency-safe, so every statement that touches the database
+    # runs here or in phase 3, never inside the concurrent phase 2.
+    buckets: dict[str, dict[str, Any]] = {}
+    missing: list[AssetType] = []
+    if not fresh:
+        for asset_type in ordered:
+            rows = await _read_cached_bucket(request, user_id, session, asset_type)
+            if rows is None:
+                missing.append(asset_type)
+            else:
+                buckets[asset_type.value] = {
+                    "asset_type": asset_type.value,
+                    "status": "ok",
+                    "holdings": rows,
+                    "retry_after": None,
+                }
+    else:
+        missing = list(ordered)
+    # Phase 2 — source, concurrent. Pure source calls: no session use, so the
+    # semaphore (not the session) is the only shared state.
+    semaphore = asyncio.Semaphore(_BATCH_CONCURRENCY)
+
+    async def _one(
+        asset_type: AssetType,
+    ) -> tuple[AssetType, tuple[str, list[Holding], float | None]]:
+        async with semaphore:
+            return asset_type, await _fetch_source_bucket(
+                request, user_id, connector, asset_type
+            )
+
+    fetched = await asyncio.gather(*(_one(t) for t in missing))
+    # Phase 3 — serialize + cache, sequential again. Only `ok` rows are
+    # cached, and the FD manual merge stays after the write (B10): manual rows
+    # are freshly valued on every read, never baked into the vendor answer.
+    for asset_type, (status, rows, retry_after) in fetched:
+        serialized = [_holding_json(h) for h in rows]
+        if status == "ok":
+            await portfolio_cache.put(
+                session,
+                user_id,
+                portfolio_cache.holdings_key(asset_type.value),
+                {
+                    "asset_type": asset_type.value,
+                    "currency": CURRENCY,
+                    "holdings": serialized,
+                },
+                as_of=rows[0].as_of if rows else None,
+            )
+            if asset_type is AssetType.FD:
+                manual = await _manual_holdings(session, user_id)
+                if manual:
+                    serialized = [*serialized, *manual]
+        buckets[asset_type.value] = {
+            "asset_type": asset_type.value,
+            "status": status,
+            "holdings": serialized,
+            "retry_after": retry_after,
+        }
+    return {"buckets": [buckets[t.value] for t in ordered]}
+
+
 @router.get("/holdings")
 async def holdings(
+    request: Request,
     asset_type: str = Query(..., description="One of the 16 queryable asset types."),
     fresh: bool = FRESH_QUERY,
     user_id: str = Depends(portfolio_identity),
@@ -670,12 +963,14 @@ async def holdings(
     key = portfolio_cache.holdings_key(parsed.value)
     payload: Optional[dict[str, Any]] = None
     if not fresh:
-        payload = await portfolio_cache.get(
-            session, user_id, key, max_age=HOLDINGS_TTL_SECONDS
-        )
+        with span(request, CACHE):
+            payload = await portfolio_cache.get(
+                session, user_id, key, max_age=HOLDINGS_TTL_SECONDS
+            )
     if payload is None:
         try:
-            rows = await connector.fetch_holdings(user_id, parsed)
+            with span(request, SRC):
+                rows = await connector.fetch_holdings(user_id, parsed)
         except PortfolioSourceError as exc:
             _fail(exc)
         payload = {
@@ -702,6 +997,7 @@ async def holdings(
 
 @router.get("/allocation")
 async def allocation(
+    request: Request,
     asset_type: str = Query(..., description="One of the 16 queryable asset types."),
     by: str = Query(..., description="assets | sector | market_cap"),
     fresh: bool = FRESH_QUERY,
@@ -727,11 +1023,13 @@ async def allocation(
         parsed.value, parsed_by.value, attributed_day(datetime.now(timezone.utc))
     )
     if not fresh:
-        cached = await portfolio_cache.get(session, user_id, key)
+        with span(request, CACHE):
+            cached = await portfolio_cache.get(session, user_id, key)
         if cached is not None:
             return cached
     try:
-        result = await connector.fetch_allocation(user_id, parsed, parsed_by)
+        with span(request, SRC):
+            result = await connector.fetch_allocation(user_id, parsed, parsed_by)
     except PortfolioSourceError as exc:
         _fail(exc)
     payload = _allocation_json(result)
