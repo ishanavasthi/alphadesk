@@ -365,12 +365,38 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       setSectorError(null);
       setSectorLoading(false);
 
+      // Issue #72, phase 1: the summary and the history are independent reads,
+      // so they go out together instead of one after the other. (The holdings
+      // walk below still waits for the summary — it needs the snapshot's
+      // bucket list.) The `timed` wrapper logs per-fetch start/finish offsets
+      // in dev only, so a slow open can be attributed to a fetch, not guessed.
+      const t0 = Date.now();
+      const timed = async <T,>(label: string, work: Promise<T>): Promise<T> => {
+        const start = Date.now();
+        if (process.env.NODE_ENV !== "production") {
+          // eslint-disable-next-line no-console
+          console.debug(`[portfolio-load] ${label} started at +${start - t0}ms`);
+        }
+        try {
+          return await work;
+        } finally {
+          if (process.env.NODE_ENV !== "production") {
+            // eslint-disable-next-line no-console
+            console.debug(
+              `[portfolio-load] ${label} finished at +${Date.now() - t0}ms`,
+            );
+          }
+        }
+      };
+      const [summaryOutcome, historyOutcome] = await Promise.allSettled([
+        timed("summary", getPortfolioSummary(signal, reload.fresh)),
+        timed("history", getPortfolioHistory(HISTORY_DAYS, signal)),
+      ]);
+
       let snapshot: PortfolioSummary;
-      try {
-        snapshot = await getPortfolioSummary(signal, reload.fresh);
-      } catch (err) {
+      if (summaryOutcome.status === "rejected") {
         if (signal.aborted) return;
-        const failure = err as PortfolioError;
+        const failure = summaryOutcome.reason as PortfolioError;
         // A gate always beats the memory: whatever was painted, this reader may
         // not see it now. Forgetting it is what stops a signed-out tab from
         // showing the previous session's holdings behind the gate.
@@ -389,25 +415,24 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
         }
         return;
       }
+      snapshot = summaryOutcome.value;
       if (signal.aborted) return;
       setSummary(snapshot);
       setPhase("ready");
 
       let points = memory?.history ?? [];
       let capturedAt = memory?.lastCapturedAt ?? null;
-      try {
-        const captured = await getPortfolioHistory(HISTORY_DAYS, signal);
+      if (historyOutcome.status === "fulfilled") {
         if (signal.aborted) return;
+        const captured = historyOutcome.value;
         points = toTrendPoints(captured.points);
         capturedAt = captured.last_captured_at;
         setHistory(points);
         setLastCapturedAt(capturedAt);
-      } catch {
+      } else if (!signal.aborted) {
         // History is additive; its absence must never take the page down.
-        if (!signal.aborted) {
-          points = [];
-          setHistory(points);
-        }
+        points = [];
+        setHistory(points);
       }
 
       // The expensive part. Skipped entirely when the painted walk is still the

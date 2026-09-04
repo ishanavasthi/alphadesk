@@ -57,10 +57,11 @@ from decimal import Decimal
 from collections.abc import Callable
 from typing import Any, NoReturn, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import bearer_token, register_identity, verify_token
+from api.timing import CACHE, DB, SRC, span
 from tools.ind_money_auth import LOCAL_USER_ID, single_tenant_mode
 from portfolio.connectors import (
     IndMoneyConnector,
@@ -541,6 +542,7 @@ async def _manual_block(
 # --------------------------------------------------------------------------- #
 @router.get("/summary")
 async def summary(
+    request: Request,
     fresh: bool = FRESH_QUERY,
     user_id: str = Depends(portfolio_identity),
     connector: PortfolioConnector = Depends(connector_for_request),
@@ -569,27 +571,31 @@ async def summary(
     """
     key = portfolio_cache.summary_key()
     if not fresh:
-        cached = await portfolio_cache.get(
-            session, user_id, key, max_age=SUMMARY_TTL_SECONDS
-        )
+        with span(request, CACHE):
+            cached = await portfolio_cache.get(
+                session, user_id, key, max_age=SUMMARY_TTL_SECONDS
+            )
         if cached is not None:
             # The one field that is *not* served from the cache. It comes from
             # this deployment's own database, costs a single indexed read, and is
             # what the staleness banner is derived from — a capture that landed
             # since the payload was cached has to show up immediately, or the page
             # tells someone their history stopped when it did not.
-            captured_at = await _last_captured_at(session, user_id)
+            with span(request, DB):
+                captured_at = await _last_captured_at(session, user_id)
             cached["last_captured_at"] = captured_at.isoformat() if captured_at else None
             # Manual deposits are recomputed per request and never cached (B10).
             return {**cached, "manual": await _manual_block(session, user_id)}
 
     try:
-        health = await connector.link_health(user_id)
-        snapshot = await connector.fetch_snapshot(user_id)
+        with span(request, SRC):
+            health = await connector.link_health(user_id)
+            snapshot = await connector.fetch_snapshot(user_id)
     except PortfolioSourceError as exc:
         _fail(exc)
 
-    captured_at = await _last_captured_at(session, user_id)
+    with span(request, DB):
+        captured_at = await _last_captured_at(session, user_id)
     if session is not None and _needs_capture(captured_at):
         schedule_capture_if_missing(user_id, connector)
     payload = _snapshot_json(snapshot, health.value, captured_at, user_id)
@@ -643,6 +649,7 @@ async def capture(
 
 @router.get("/holdings")
 async def holdings(
+    request: Request,
     asset_type: str = Query(..., description="One of the 16 queryable asset types."),
     fresh: bool = FRESH_QUERY,
     user_id: str = Depends(portfolio_identity),
@@ -670,12 +677,14 @@ async def holdings(
     key = portfolio_cache.holdings_key(parsed.value)
     payload: Optional[dict[str, Any]] = None
     if not fresh:
-        payload = await portfolio_cache.get(
-            session, user_id, key, max_age=HOLDINGS_TTL_SECONDS
-        )
+        with span(request, CACHE):
+            payload = await portfolio_cache.get(
+                session, user_id, key, max_age=HOLDINGS_TTL_SECONDS
+            )
     if payload is None:
         try:
-            rows = await connector.fetch_holdings(user_id, parsed)
+            with span(request, SRC):
+                rows = await connector.fetch_holdings(user_id, parsed)
         except PortfolioSourceError as exc:
             _fail(exc)
         payload = {
@@ -702,6 +711,7 @@ async def holdings(
 
 @router.get("/allocation")
 async def allocation(
+    request: Request,
     asset_type: str = Query(..., description="One of the 16 queryable asset types."),
     by: str = Query(..., description="assets | sector | market_cap"),
     fresh: bool = FRESH_QUERY,
@@ -727,11 +737,13 @@ async def allocation(
         parsed.value, parsed_by.value, attributed_day(datetime.now(timezone.utc))
     )
     if not fresh:
-        cached = await portfolio_cache.get(session, user_id, key)
+        with span(request, CACHE):
+            cached = await portfolio_cache.get(session, user_id, key)
         if cached is not None:
             return cached
     try:
-        result = await connector.fetch_allocation(user_id, parsed, parsed_by)
+        with span(request, SRC):
+            result = await connector.fetch_allocation(user_id, parsed, parsed_by)
     except PortfolioSourceError as exc:
         _fail(exc)
     payload = _allocation_json(result)
