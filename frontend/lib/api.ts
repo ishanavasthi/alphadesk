@@ -637,6 +637,35 @@ export function getPortfolioHoldings(
   );
 }
 
+/** One bucket of the batch walk (issue #72, phase 2). Same status vocabulary. */
+export interface BatchBucket {
+  asset_type: string;
+  status: "ok" | "unsupported" | "unverified" | "rate_limited" | "error";
+  holdings: PortfolioHolding[];
+  retry_after: number | null;
+}
+
+export interface BatchHoldingsResponse {
+  buckets: BatchBucket[];
+}
+
+/**
+ * GET /portfolio/holdings/all — every reported bucket in one response.
+ *
+ * The dashboard's bucket walk used to be N sequential calls here; the backend
+ * now fans them out concurrently (same calls, same per-bucket cache rows, same
+ * statuses) and this is the one call that replaces the walk.
+ */
+export function getPortfolioHoldingsAll(
+  signal?: AbortSignal,
+  fresh?: boolean,
+): Promise<BatchHoldingsResponse> {
+  return portfolioFetch<BatchHoldingsResponse>(
+    `/portfolio/holdings/all${freshParam(fresh, "?")}`,
+    signal,
+  );
+}
+
 /** GET /portfolio/allocation — one (asset_type, by) slice, fetched on demand. */
 export function getPortfolioAllocation(
   assetType: string,

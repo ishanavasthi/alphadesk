@@ -647,6 +647,188 @@ async def capture(
     }
 
 
+#: Longest the batch walk waits out one throttled bucket before marking it
+#: `rate_limited` for this load (issue #72, phase 2). Mirrors the frontend
+#: `MAX_RETRY_WAIT_S` the batch replaces: one patient wait, then give up for
+#: this load rather than hammering a source that just said no.
+_BATCH_RETRY_WAIT_S = 20
+#: Concurrent source reads inside one batch walk. The per-tool budget is
+#: 15 calls/min and a whole-portfolio burst stays well under it, while the N
+#: sequential client↔server roundtrips collapse into one response.
+_BATCH_CONCURRENCY = 4
+
+
+async def _read_cached_bucket(
+    request: Request,
+    user_id: str,
+    session: Optional[AsyncSession],
+    asset_type: AssetType,
+) -> list[dict[str, Any]] | None:
+    """One bucket from the read-through cache, or `None` on any kind of miss."""
+    with span(request, CACHE):
+        cached = await portfolio_cache.get(
+            session, user_id,
+            portfolio_cache.holdings_key(asset_type.value),
+            max_age=HOLDINGS_TTL_SECONDS,
+        )
+    if cached is None:
+        return None
+    rows = list(cached.get("holdings", []))
+    if asset_type is AssetType.FD:
+        rows = [*rows, *(await _manual_holdings(session, user_id))]
+    return rows
+
+
+async def _fetch_source_bucket(
+    request: Request,
+    user_id: str,
+    connector: PortfolioConnector,
+    asset_type: AssetType,
+) -> tuple[str, list[Holding], float | None]:
+    """One bucket from the source: `(status, model rows, retry_after)`.
+
+    A bucket the source cannot serve is labelled (`unsupported`,
+    `unverified`, `rate_limited`, `error`), never raised — the same contract
+    the old client-side walk kept. A throttled bucket is waited out once, then
+    labelled rather than retried forever. Only `ok` rows may be cached, and
+    the caller (which owns the session) does that serially.
+    """
+    for attempt in (0, 1):
+        try:
+            with span(request, SRC):
+                rows = await connector.fetch_holdings(user_id, asset_type)
+            return "ok", rows, None
+        except RateLimited as exc:
+            retry_after = exc.retry_after if exc.retry_after and exc.retry_after > 0 else 5
+            if attempt == 0 and retry_after <= _BATCH_RETRY_WAIT_S:
+                await asyncio.sleep(retry_after)
+                continue
+            return "rate_limited", [], retry_after
+        except UnsupportedAssetType:
+            return "unsupported", [], None
+        except UnverifiedShapeError:
+            return "unverified", [], None
+        except PortfolioSourceError:
+            return "error", [], None
+    raise AssertionError("unreachable")  # pragma: no cover - loop always returns
+
+
+@router.get("/holdings/all")
+async def holdings_all(
+    request: Request,
+    fresh: bool = FRESH_QUERY,
+    user_id: str = Depends(portfolio_identity),
+    connector: PortfolioConnector = Depends(connector_for_request),
+    session: Optional[AsyncSession] = Depends(optional_session),
+) -> dict[str, Any]:
+    """Every reported bucket in **one** response (issue #72, phase 2).
+
+    The dashboard's bucket walk used to be N sequential client↔server
+    roundtrips — one `GET /holdings?asset_type=` per bucket the snapshot
+    reported, each carrying its own identity + database cost even on a cache
+    hit. This endpoint fans those reads out concurrently server-side (one
+    shared connector, bounded by `_BATCH_CONCURRENCY`, per-bucket cache rows
+    reused) and returns per-bucket `{asset_type, status, holdings,
+    retry_after}` with the same status vocabulary the walk had. Rate-limit
+    discipline is unchanged: the same calls, paced in one place instead of N.
+
+    The bucket set comes from the cached summary when fresh enough, else one
+    snapshot read. A snapshot-level failure (`not_linked`, …) still fails the
+    whole call — there is no bucket list without it.
+    """
+    asset_names: list[str] = []
+    if not fresh:
+        with span(request, CACHE):
+            summary_cached = await portfolio_cache.get(
+                session, user_id, portfolio_cache.summary_key(),
+                max_age=SUMMARY_TTL_SECONDS,
+            )
+        if summary_cached is not None:
+            asset_names = [
+                s.get("asset_type", "")
+                for s in summary_cached.get("by_asset_type", [])
+                if s.get("asset_type")
+            ]
+    if not asset_names:
+        try:
+            with span(request, SRC):
+                snapshot = await connector.fetch_snapshot(user_id)
+        except PortfolioSourceError as exc:
+            _fail(exc)
+        asset_names = [
+            s.asset_type.value for s in snapshot.by_asset_type if s.asset_type
+        ]
+    # Distinct, tolerantly parsed: out-of-enum buckets share one UNKNOWN read,
+    # exactly as the old client-side walk did.
+    seen: set[str] = set()
+    ordered: list[AssetType] = []
+    for name in asset_names:
+        parsed = AssetType.coerce(name)
+        if parsed.value not in seen:
+            seen.add(parsed.value)
+            ordered.append(parsed)
+    # Phase 1 — cache, strictly sequential. One request-scoped `AsyncSession`
+    # is not concurrency-safe, so every statement that touches the database
+    # runs here or in phase 3, never inside the concurrent phase 2.
+    buckets: dict[str, dict[str, Any]] = {}
+    missing: list[AssetType] = []
+    if not fresh:
+        for asset_type in ordered:
+            rows = await _read_cached_bucket(request, user_id, session, asset_type)
+            if rows is None:
+                missing.append(asset_type)
+            else:
+                buckets[asset_type.value] = {
+                    "asset_type": asset_type.value,
+                    "status": "ok",
+                    "holdings": rows,
+                    "retry_after": None,
+                }
+    else:
+        missing = list(ordered)
+    # Phase 2 — source, concurrent. Pure source calls: no session use, so the
+    # semaphore (not the session) is the only shared state.
+    semaphore = asyncio.Semaphore(_BATCH_CONCURRENCY)
+
+    async def _one(
+        asset_type: AssetType,
+    ) -> tuple[AssetType, tuple[str, list[Holding], float | None]]:
+        async with semaphore:
+            return asset_type, await _fetch_source_bucket(
+                request, user_id, connector, asset_type
+            )
+
+    fetched = await asyncio.gather(*(_one(t) for t in missing))
+    # Phase 3 — serialize + cache, sequential again. Only `ok` rows are
+    # cached, and the FD manual merge stays after the write (B10): manual rows
+    # are freshly valued on every read, never baked into the vendor answer.
+    for asset_type, (status, rows, retry_after) in fetched:
+        serialized = [_holding_json(h) for h in rows]
+        if status == "ok":
+            await portfolio_cache.put(
+                session,
+                user_id,
+                portfolio_cache.holdings_key(asset_type.value),
+                {
+                    "asset_type": asset_type.value,
+                    "currency": CURRENCY,
+                    "holdings": serialized,
+                },
+                as_of=rows[0].as_of if rows else None,
+            )
+            if asset_type is AssetType.FD:
+                manual = await _manual_holdings(session, user_id)
+                if manual:
+                    serialized = [*serialized, *manual]
+        buckets[asset_type.value] = {
+            "asset_type": asset_type.value,
+            "status": status,
+            "holdings": serialized,
+            "retry_after": retry_after,
+        }
+    return {"buckets": [buckets[t.value] for t in ordered]}
+
+
 @router.get("/holdings")
 async def holdings(
     request: Request,

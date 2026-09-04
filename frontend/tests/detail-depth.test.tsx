@@ -25,6 +25,7 @@ vi.mock("@/lib/api", async () => {
     getPortfolioSummary: vi.fn(),
     getPortfolioHistory: vi.fn(),
     getPortfolioHoldings: vi.fn(),
+    getPortfolioHoldingsAll: vi.fn(),
     getPortfolioAllocation: vi.fn(),
     capturePortfolioSnapshot: vi.fn(),
     startAuthLogin: vi.fn(),
@@ -43,6 +44,7 @@ import {
 import {
   getPortfolioHistory,
   getPortfolioHoldings,
+  getPortfolioHoldingsAll,
   getPortfolioSummary,
 } from "@/lib/api";
 
@@ -127,10 +129,10 @@ beforeEach(() => {
     days: 365,
     currency: "INR",
   } as never);
-  vi.mocked(getPortfolioHoldings).mockResolvedValue({
-    asset_type: "MF",
-    currency: "INR",
-    holdings: [WITH_BASIS, NO_BASIS],
+  vi.mocked(getPortfolioHoldingsAll).mockResolvedValue({
+    buckets: [
+      { asset_type: "MF", status: "ok", holdings: [WITH_BASIS, NO_BASIS], retry_after: null },
+    ],
   } as never);
 });
 

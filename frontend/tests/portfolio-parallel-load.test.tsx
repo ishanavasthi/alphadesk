@@ -25,6 +25,7 @@ vi.mock("@/lib/api", async () => {
     getPortfolioSummary: vi.fn(),
     getPortfolioHistory: vi.fn(),
     getPortfolioHoldings: vi.fn(),
+    getPortfolioHoldingsAll: vi.fn(),
     getPortfolioAllocation: vi.fn(),
     capturePortfolioSnapshot: vi.fn(),
     startAuthLogin: vi.fn(),
@@ -37,7 +38,7 @@ import {
   resetPortfolioMemory,
   usePortfolio,
 } from "@/components/portfolio/PortfolioProvider";
-import { getPortfolioHistory, getPortfolioSummary } from "@/lib/api";
+import { getPortfolioHistory, getPortfolioHoldingsAll, getPortfolioSummary } from "@/lib/api";
 
 const summary = {
   user_id: "local",
@@ -58,11 +59,25 @@ const summary = {
   last_captured_at: null,
 };
 
+const sliceRow = (label: string, assetType: string, value: string) => ({
+  label,
+  asset_type: assetType,
+  asset_type_raw: assetType,
+  invested_amount: null,
+  current_value: value,
+  pnl: null,
+  pnl_pct: null,
+  weight_pct: "100.0",
+  us_exposure: false,
+  currency: "INR",
+});
+
 function Probe() {
-  const { summary: s, history } = usePortfolio();
+  const { summary: s, history, buckets } = usePortfolio();
   return (
     <div>
-      worth:{s.net_worth} points:{history.length}
+      worth:{s.net_worth} points:{history.length}{" "}
+      {buckets.map((b) => `${b.assetType}=${b.status}`).join(",")}
     </div>
   );
 }
@@ -104,5 +119,34 @@ describe("parallel first load", () => {
     summaryGate.resolve(summary);
     historyGate.resolve({ points: [], last_captured_at: null });
     await waitFor(() => expect(screen.getByText(/worth:1000000/)).toBeTruthy());
+  });
+
+  it("maps batch statuses onto buckets and errors unknown keys", async () => {
+    vi.mocked(getPortfolioSummary).mockResolvedValue({
+      ...summary,
+      by_asset_type: [
+        { ...sliceRow("MF", "MF", "600000.0"), asset_type: "MF" },
+        { ...sliceRow("FD", "FD", "400000.0"), asset_type: "FD" },
+      ],
+    } as never);
+    vi.mocked(getPortfolioHistory).mockResolvedValue({
+      points: [],
+      last_captured_at: null,
+    } as never);
+    vi.mocked(getPortfolioHoldingsAll).mockResolvedValue({
+      buckets: [
+        { asset_type: "MF", status: "ok", holdings: [], retry_after: null },
+        { asset_type: "FD", status: "unsupported", holdings: [], retry_after: null },
+      ],
+    } as never);
+
+    render(
+      <PortfolioProvider>
+        <Probe />
+      </PortfolioProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByText(/MF=ok/)).toBeTruthy());
+    expect(screen.getByText(/FD=unsupported/)).toBeTruthy();
   });
 });
