@@ -33,7 +33,14 @@ import db.models  # noqa: E402,F401  (import registers all three tables)
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # `disable_existing_loggers=False`: fileConfig's default (True) disables
+    # every logger not named in alembic.ini — i.e. all of the app's loggers —
+    # whenever migrations run in-process. The CLI is unaffected (its loggers
+    # are alembic's own), but the pytest DB fixture runs `upgrade head` in the
+    # suite's process, and any caplog-based test after the first DB test would
+    # go deaf. Migration output keeps its root/sqlalchemy/alembic loggers
+    # either way.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = SQLModel.metadata
 

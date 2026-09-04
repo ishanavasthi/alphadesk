@@ -63,3 +63,20 @@ def test_importing_the_app_introduces_no_dotfile() -> None:
     import api.main  # noqa: F401
 
     assert dict(os.environ) == before
+
+
+def test_alembic_does_not_disable_app_loggers() -> None:
+    """`alembic/env.py` must pass `disable_existing_loggers=False`.
+
+    `logging.config.fileConfig` defaults to disabling every logger not named
+    in the ini file — i.e. all of the app's loggers — whenever migrations run
+    in-process. The pytest DB fixture runs `upgrade head` in the suite's own
+    process, so the default silently deafens every `caplog`-based test after
+    the first DB test (found as an order-dependent
+    `test_breakdown_disagreement_is_logged_not_silenced` failure on the
+    overnight branch: green alone, red after `test_account_deletion.py`).
+    """
+    from pathlib import Path
+
+    env_py = Path(__file__).resolve().parents[1] / "alembic" / "env.py"
+    assert "disable_existing_loggers=False" in env_py.read_text()
