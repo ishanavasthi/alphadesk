@@ -51,7 +51,7 @@ scanner → research → analyst → risk_manager ─┬─(any PASS/FLAG)→ ex
 - **Human-in-the-loop:** compiled with `interrupt_before=["execution"]` + a `MemorySaver` checkpointer (the checkpointer is *required* for the interrupt to pause/resume). The graph runs to a pause **before** execution, returns recommendations + risk assessments, and only resumes once `human_approved=True` is set on the thread (`resume_after_approval`). Nothing reaches the watchlist without approval.
 - **Run identity:** each run's UUID is used as three things at once — the LangGraph `thread_id`, the LangSmith trace root `run_id`, and the app-level run handle reachable at `/a/<run_id>`.
 
-**LLM provider selection** is centralized in `backend/agents/llm.py`. Four providers are routable — `openai`, `groq`, `openrouter`, `compat` — and the two agent families are configured **independently, each by its own env vars**:
+**LLM provider selection** is centralized in `backend/agents/llm.py`. Six providers are routable — `openai`, `groq`, `openrouter`, `compat`, `nvidia` (NIM, `NVIDIA_API_KEY`), `bai` (B.ai, `BAI_API_KEY`, base overridable via `BAI_BASE_URL`) — and the two agent families are configured **independently, each by its own env vars** (Lab models additionally accept the deprecated bare `SCANNER_MODEL`-style aliases; the `LAB_`-prefixed name wins):
 
 | Family | Provider var | Model var(s) | Default with all unset |
 | --- | --- | --- | --- |

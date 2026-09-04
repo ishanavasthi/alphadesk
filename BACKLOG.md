@@ -95,7 +95,8 @@ database, refreshed on a schedule.
   `www.amfiindia.com` path 302s here). `200`, `text/plain`, **1.65 MB, 17,795
   lines, 14,274 scheme rows**. Columns:
   `Scheme Code;ISIN Div Payout/ISIN Growth;ISIN Div Reinvestment;Scheme Name;Net Asset Value;Date`,
-  with **category headers** (`Open Ended Schemes(Equity Scheme - Large Cap Fund)`)
+  with **category headers** (one section break per category, e.g. the large-cap
+  header)
   and **AMC headers** (`Axis Mutual Fund`) interleaved as section breaks —
   **51 AMCs, 92 distinct category headers**. This single free file carries
   sub-category, AMC, plan, ISIN and NAV at once.
@@ -121,14 +122,13 @@ ISIN and no symbol** on a holdings row — only `investment` (display name, empt
 1 of 14 rows) and `investment_code` (vendor id). AMFI keys on scheme code + ISIN.
 So unless something yields an ISIN or an AMFI scheme code, the join is **fuzzy
 name matching over 14k schemes whose names differ only by plan and option**
-("Axis Liquid Fund - Direct Plan - Growth Option" vs "- Direct Plan - Daily IDCW"),
+("- Direct Plan - Growth Option" vs "- Direct Plan - Daily IDCW"),
 and a mis-join silently attaches the wrong category, AMC and NAV to someone's real
 holding. Design for it: exact-match first, a confidence score, and **no badge and
 no group when the match is uncertain** — an unmatched row is an honest row.
 
-Evidence the join is *worth* attempting: the reference design's `Axis Liquid Fund
-GROWTH` shows **NAV 3146.98**, and AMFI scheme **120389** (Axis Liquid Fund -
-Direct Plan - Growth Option) was **3146.9887 on 16-Aug-2026**. Exact to the paisa —
+Evidence the join is *worth* attempting: the reference design's liquid-fund
+GROWTH row shows **NAV 3146.98**, and AMFI scheme **120389** was **3146.9887 on 16-Aug-2026**. Exact to the paisa —
 the two datasets do describe the same instrument, and the reference's badge
 convention is visible too: `REGULAR` is called out, **Direct is the unmarked
 default**. Once joined, plan is an *observation* (AMFI names it, and the ISIN
@@ -137,7 +137,7 @@ differs per plan), not the name-parsing inference B3 warns about.
 **Settle these before scoping:**
 
 - **The category vocabulary is dirty and must be normalized.** Among the 92
-  headers: `Equity Scheme - Contra Fund` **and** `Equity Schemes - Contra Fund`;
+  headers: singular/plural splits in the Contra headers (`Scheme` vs `Schemes`);
   `Sectoral/ Thematic` **and** `Sectoral Fund` **and** `Thematic Fund`; `ELSS`
   **and** `ELSS- Tax Saver Fund`. Grouping on the raw string produces duplicate
   buckets and splits a category average in half. Needs a maintained map onto
@@ -170,6 +170,14 @@ code, the join is exact and this card is a straightforward nightly ingest. If it
 does not, this becomes the **only** path to sub-category/AMC/plan and the
 fuzzy-match design above is the bulk of the work.
 
+**Spike done 2026-09-03 (#35, Addendum B): the join is exact and cheap — a
+holdings row's `investment_code` echoes as `fund_id`, no `lookup_ind_keys`
+needed, never join on names.** Sub-category resolves through
+`ind_ranking.ranking_sub_category` and AUM is verified present (`aum` + dated
+`aum_history`), so neither needs AMFI to unblock; AMC and plan have no vendor
+field, and AMFI stays the only path for those two plus ISIN. AMFI ingest is
+now redundancy for sub-category/AUM, sole source for AMC/plan/ISIN.
+
 ### Broker statement / CAS import
 Chosen over per-broker integrations as the coverage mechanism: one parser
 (NSDL/CDSL CAS, contract notes) covers Zerodha, Angel, Groww, and anything else,
@@ -185,7 +193,7 @@ Non-trivial parser + a "we may have mis-read your statement" review step.
 
 ### Manual investments
 "People can add their own investment too." Anything the connectors can't see:
-FDs, physical gold, unlisted equity, real estate, EPF held elsewhere.
+FDs, physical gold, unlisted shares, real estate, EPF held elsewhere.
 
 Design constraints already agreed: manual rows are first-class rows in the same
 normalized model (same aggregates, same AI metrics), which forces answers to
@@ -193,7 +201,7 @@ who computes their current value and how double-counting against a broker row is
 prevented.
 
 **First slice shipped as B10** (fixed deposits — see §"FD tracking" below).
-Everything else here — gold, unlisted equity, real estate, EPF elsewhere — is
+Everything else here — gold, unlisted shares, real estate, EPF elsewhere — is
 still parked: FDs were taken first precisely because their value is computable
 from their terms, and every other class needs a price the user would have to
 keep updating by hand.
@@ -209,7 +217,7 @@ bucket itself is still B9/#65.
 IND Money's MCP is unreliable for FDs — **verified 2026-08-21 with payloads, not
 just user-reported** (see B9 / #65: a ₹5,000 deposit valued at ₹162, a P&L frozen
 for five days, and the whole bucket dropping out of two daily snapshots). That
-evidence is the strongest argument yet for owning FD valuation ourselves.
+evidence is the most convincing argument yet for owning FD valuation ourselves.
 FDs are the clearest case
 for manual entry because their value is *computable*, not quoted: principal +
 rate + compounding + start/maturity date → accrued value, no price feed needed.
@@ -286,6 +294,9 @@ history worth keeping for something beyond a line that drifts.
   inventoried are the closest known thing. If real transactions are available,
   most of the inference above collapses into bookkeeping — a very different and
   much better card. **Do the spike first.**
+- **Spike done 2026-09-03 (#35, `docs/ind_money_payloads.md` Addendum B): no
+  transaction/cashflow/order-history tool in the 21-tool inventory; both SIP
+  tools still 0 rows.** This card stays inference, not bookkeeping.
 - **Gaps are unattributable, and cannot be backfilled** — S1's MCP is
   point-in-time by design. A missing day (or a bucket in `buckets_failed`) makes
   the Δ across that window ambiguous; it must be recorded as unattributed, never
@@ -385,7 +396,11 @@ up promotes that wrapper.
 **Pick up when:** B1's transaction-history spike returns dated cashflows. The
 benchmark half no longer waits on the vendor — take it from **B4** (AMFI) or from
 `get_mf_funds_details(category_tables)` / `get_mf_by_category`, whichever the
-spike shows is cleaner. Related: **B1** (the flow series is the shared
+spike shows is cleaner. **Spike done 2026-09-03 (#35, Addendum B): the vendor
+route is confirmed — `fund_performance` carries `category_returns` per horizon
+plus best/worst/rank per fund, `ind_ranking.ranking_sub_category` classifies,
+`get_mf_by_category` returns ranked member rows (no average). Cashflows remain
+the sole blocker.** Related: **B1** (the flow series is the shared
 prerequisite), **Tax-lot / capital-gains view** (same missing history), **MF
 screener** (the wrapper this needs), **B3 — Holdings table v2** (its
 sub-category / AMC / AUM group-by needs the same `get_mf_funds_details` spike).
@@ -456,7 +471,7 @@ exist beyond the trend line.
   bought after day A, sold before day B, or a bucket the source returned empty
   for (the FD bucket came back `{"rows": []}` on 2026-08-18 and 08-20 with
   `buckets_failed` NULL — an honest empty, not a failure) must render as
-  "opened" / "closed" / "not held", never as +100% or −100%.
+  "opened" / "closed" / "not held", never as a full doubling or wipeout.
 - **Framing holds** (`V2_PLAN.md` §8.3): descriptive arithmetic over the user's
   own captured history. It ranks what *did* happen; it does not rate, recommend
   or project.
@@ -526,7 +541,7 @@ share of the whole portfolio, or share of the visible group.
   and the two are different axes.
 - **`Sub-Category`** — **no such field on a holdings row.** This is the same "Large
   Cap" vocabulary **B2** needs for its benchmark, from the same unverified place.
-  `market_cap` is on the row and *might* serve for equity funds; do not assume it.
+  `market_cap` is on the row and *might* serve for stock funds; do not assume it.
 - **`Assets Management Company`** — **no AMC field.** `broker` is the source/broker
   code, not the AMC, and was an **empty string in 4 of 14 rows** (C2: never a safe
   grouping key). The AMC is inferable from the fund-name prefix ("Axis", "ICICI
@@ -555,6 +570,13 @@ live — enough to fill every blocked column above except AUM. It shifts the pro
 from "does the vendor expose this" to "can we join a holdings row to a scheme",
 which is the better problem to have. The two routes are complementary, not
 alternatives: the spike is what decides whether the join key comes for free.
+
+**Spike done 2026-09-03 (#35, Addendum B): sub-category and AUM resolve through
+the vendor — exact `investment_code`→`fund_id` join, `ranking_sub_category`
+classifies, `aum` + dated history present. AMC and plan have no vendor field
+anywhere, so plan badges and the AMC axis still wait on B4 (or stay unbuilt);
+AUM bands are still a product decision. Note the schema correction too:
+`fund_ids` is a *string* (one id per call), not an array — no batched call.**
 
 **Also settle:**
 

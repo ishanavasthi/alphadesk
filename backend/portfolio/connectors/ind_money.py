@@ -26,6 +26,7 @@ shape the code:
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Awaitable, Callable, ClassVar, Optional
@@ -62,6 +63,8 @@ from .base import LOCAL_USER_ID, PortfolioConnector
 Transport = Callable[[str, Optional[dict]], Awaitable[Any]]
 
 SOURCE = "ind_money"
+
+log = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
 # Vendor vocabulary — nothing below this comment may appear outside connectors/
@@ -111,6 +114,51 @@ _RL_LIMIT = "limit"
 _RL_CURRENT = "current"
 _RL_COST = "cost"
 _RL_RETRY_AFTER = "retry_after_seconds"
+
+#: Tolerance for the vendor's own total-vs-breakdown reconciliation (#65):
+#: a same-refresh breakdown should sum to the total to the paisa, so anything
+#: beyond max(₹1, 0.1%) means the breakdown omits (or duplicates) a bucket —
+#: exactly the 2026-08-20 shape, where FD sat inside `total_networth` but
+#: outside `assets` by ₹10,162.00.
+_BREAKDOWN_TOLERANCE_RUPEES = Decimal("1")
+_BREAKDOWN_TOLERANCE_RATIO = Decimal("0.001")
+
+
+def _check_breakdown_total(
+    gross_value: Decimal | None, slices: list[AllocationSlice]
+) -> None:
+    """Log when the vendor's gross total and its `assets` breakdown disagree.
+
+    Compares against `total_current_value`, not `total_networth` — the latter
+    subtracts liabilities (`net_worth == gross − liabilities`), so it can
+    never equal a holdings sum even on a clean day (issue #65; the C2 fixture
+    README states the reconciling identity). Records rather than
+    silently serving both figures: the raw payload is already persisted by the
+    capture path (`snapshot_raw`), and this warning names the two figures plus
+    the tolerance so the omission is attributable. Nothing is recomputed or
+    "fixed" — a recomputed total would present our arithmetic as the vendor's
+    reading.
+    """
+    if gross_value is None:
+        return
+    values = [s.current_value for s in slices if s.current_value is not None]
+    if not values:
+        return
+    breakdown = sum(values, Decimal("0"))
+    diff = abs(gross_value - breakdown)
+    tolerance = max(
+        _BREAKDOWN_TOLERANCE_RUPEES, abs(gross_value) * _BREAKDOWN_TOLERANCE_RATIO
+    )
+    if diff > tolerance:
+        log.warning(
+            "networth_snapshot gross %s differs from its assets-breakdown sum %s "
+            "by %s (tolerance %s) — the vendor breakdown omits a bucket; both "
+            "figures are served as-is",
+            gross_value,
+            breakdown,
+            diff,
+            tolerance,
+        )
 
 #: Discriminator key per breakdown slice.
 _BREAKDOWN_LABEL_KEY = {
@@ -320,15 +368,21 @@ class IndMoneyConnector(PortfolioConnector):
                 )
             ]
 
+        gross_value = _decimal_at(
+            _TOOL_SNAPSHOT, "total_current_value", payload.get("total_current_value")
+        )
+
+        # The vendor's own books should balance; when they do not, say so
+        # loudly rather than serving two contradictory figures (issue #65).
+        _check_breakdown_total(gross_value, sections["by_asset_class"])
+
         return PortfolioSnapshot(
             source=self.source,
             as_of=as_of,
             # Totals are the vendor's own numbers, passed straight through. They
             # do not reconcile with a holdings sum and must not be recomputed.
             net_worth=net_worth,
-            gross_value=_decimal_at(
-                _TOOL_SNAPSHOT, "total_current_value", payload.get("total_current_value")
-            ),
+            gross_value=gross_value,
             invested_total=_decimal_at(
                 _TOOL_SNAPSHOT, "total_invested", payload.get("total_invested")
             ),
@@ -576,6 +630,19 @@ class IndMoneyConnector(PortfolioConnector):
 
         name = row.get("investment")
         name = name.strip() if isinstance(name, str) else None
+        if (
+            not name
+            and asset_type is AssetType.FD
+            and row.get("holding_percent") in (100, 100.0)
+        ):
+            # The vendor sends the whole deposit book as one aggregate row:
+            # empty name, code FD_DEPOSITS, 100% of its bucket (issue #65).
+            # Rendering the raw external_id leaks vendor vocabulary into the
+            # UI, so the connector names what the row is — every deposit, not
+            # one instrument. A *named* row is untouched, and a nameless row
+            # that is not the whole bucket keeps its None (the UI placeholder
+            # handles it) rather than wearing an aggregate's label.
+            name = "All fixed deposits"
 
         return Holding(
             source=self.source,

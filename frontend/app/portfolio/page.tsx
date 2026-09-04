@@ -3,13 +3,14 @@
 import { AiOverview } from "@/components/portfolio/AiOverview";
 import { AllocationBars, AllocationBarsSkeleton } from "@/components/portfolio/AllocationBars";
 import { CapStrip } from "@/components/portfolio/CapStrip";
+import { Greeting } from "@/components/portfolio/Greeting";
 import { ManualFds } from "@/components/portfolio/ManualFds";
 import { NetWorthTrend } from "@/components/portfolio/NetWorthTrend";
 import { TopMovers } from "@/components/portfolio/TopMovers";
 import { usePortfolio } from "@/components/portfolio/PortfolioProvider";
 import { StalenessBanner } from "@/components/portfolio/StalenessBanner";
 import { StatCards } from "@/components/portfolio/StatCards";
-import { typeLabel } from "@/components/portfolio/format";
+import { num, typeLabel } from "@/components/portfolio/format";
 import { Badge, Button, Card, CardHead, PortfolioFooter } from "@/components/portfolio/ui";
 import { RateLimitedNotice } from "@/components/portfolio/states";
 
@@ -44,11 +45,7 @@ export default function PortfolioOverviewPage() {
 
   return (
     <>
-      <h1 className="text-xl font-semibold tracking-[-0.02em]">Portfolio</h1>
-      <div className="mb-5 text-[13px] text-muted-foreground">
-        {demo ? "Invented demo portfolio" : "Linked account snapshot"} · read{" "}
-        {new Date(summary.as_of).toLocaleString("en-IN")}
-      </div>
+      <Greeting asOf={summary.as_of} pnl={num(summary.pnl)} demo={demo} />
 
       {/* Above the numbers on purpose: if the history has stopped accruing, the
           reader needs to know that before they read a trend line drawn from it. */}

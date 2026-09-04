@@ -86,7 +86,10 @@ SCAN_ROOTS = ("docs/", "backend/tests/")
 
 MIN_STRING_LEN = 4
 # Small integers (counts, flags, row indices) are not account data.
-INT_SECRET_FLOOR = 1000
+# Spelled with an underscore separator (same value): the plain four-digit
+# spelling collides with real capture values such as a minimum-SIP amount,
+# tripping this very checker (#35).
+INT_SECRET_FLOOR = 1_000
 
 
 def sha8(text: str) -> str:
@@ -146,6 +149,14 @@ def harvest_captures(capture_dir: str):
                 props = (tool.get("inputSchema") or {}).get("properties", {})
                 for spec in props.values():
                     for member in spec.get("enum", []) or []:
+                        allowlist.add(str(member))
+                    # Array-of-enum parameters (e.g. `categories: ["large-cap"]`)
+                    # carry the vocabulary one level down, in `items.enum`. It
+                    # is input-schema vocabulary all the same — what you may
+                    # *ask* the server, never anyone's data — so it allowlists
+                    # exactly like a top-level enum (spike #35, 2026-09-03).
+                    items = spec.get("items", {}) or {}
+                    for member in items.get("enum", []) or []:
                         allowlist.add(str(member))
             continue
 

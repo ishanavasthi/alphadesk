@@ -41,8 +41,9 @@ In short: rerouting a family now takes that family's *own* variable, set
 deliberately. Ambient OpenAI vars still move nothing.
 
 Keys are read from the environment per provider: ``OPENAI_API_KEY`` (openai and
-compat), ``GROQ_API_KEY`` (groq), ``OPENROUTER_API_KEY`` (openrouter). Never
-construct a chat model directly in an agent — go through this helper.
+compat), ``GROQ_API_KEY`` (groq), ``OPENROUTER_API_KEY`` (openrouter),
+``NVIDIA_API_KEY`` (nvidia), ``BAI_API_KEY`` (bai). Never construct a chat
+model directly in an agent — go through this helper.
 """
 
 from __future__ import annotations
@@ -66,7 +67,15 @@ OPENROUTER_HEADERS = {
     "X-Title": "AlphaDesk",
 }
 
-Provider = Literal["openai", "groq", "compat", "openrouter"]
+#: NVIDIA NIM's OpenAI-compatible endpoint. Pinned for ``provider="nvidia"``
+#: for the same reason as OpenRouter, paired with its own key.
+NVIDIA_NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
+
+#: B.ai's OpenAI-compatible endpoint. Pinned default for ``provider="bai"``;
+#: overridable with ``BAI_BASE_URL`` if they ever move it.
+BAI_DEFAULT_BASE_URL = "https://api.b.ai/v1"
+
+Provider = Literal["openai", "groq", "compat", "openrouter", "nvidia", "bai"]
 
 #: Every accepted ``provider`` value, for validating env input.
 PROVIDERS: frozenset[str] = frozenset(get_args(Provider))
@@ -131,6 +140,37 @@ def _chat_openrouter(model: str, temperature: float, timeout: Optional[float]) -
     )
 
 
+def _chat_nvidia(model: str, temperature: float, timeout: Optional[float]) -> Any:
+    """NVIDIA NIM, pinned to its endpoint and its own key.
+
+    NIM is OpenAI-compatible, so this is the same shape as the OpenRouter
+    path — no new transport, no new dependency. Same key discipline: a missing
+    key raises rather than borrowing another provider's.
+    """
+    api_key = _env("NVIDIA_API_KEY")
+    if not api_key:
+        raise ValueError(
+            "provider='nvidia' needs NVIDIA_API_KEY set to a NIM API key (nvapi-...)."
+        )
+    return _chat_openai(model, temperature, NVIDIA_NIM_BASE_URL, timeout, api_key=api_key)
+
+
+def _chat_bai(model: str, temperature: float, timeout: Optional[float]) -> Any:
+    """B.ai, pinned to its endpoint and its own key.
+
+    OpenAI-compatible like the two above. The base URL defaults to the pinned
+    endpoint and is overridable with ``BAI_BASE_URL``; the key is required and
+    never borrowed.
+    """
+    api_key = _env("BAI_API_KEY")
+    if not api_key:
+        raise ValueError(
+            "provider='bai' needs BAI_API_KEY set to a B.ai API key."
+        )
+    base_url = _env("BAI_BASE_URL") or BAI_DEFAULT_BASE_URL
+    return _chat_openai(model, temperature, base_url, timeout, api_key=api_key)
+
+
 def get_chat_llm(
     default_model: str,
     *,
@@ -150,6 +190,10 @@ def get_chat_llm(
             - ``"groq"`` — Groq, regardless of env.
             - ``"openrouter"`` — OpenRouter (`openrouter.ai/api/v1`) on
               ``OPENROUTER_API_KEY``, regardless of env.
+            - ``"nvidia"`` — NVIDIA NIM (`integrate.api.nvidia.com/v1`) on
+              ``NVIDIA_API_KEY``, regardless of env.
+            - ``"bai"`` — B.ai (default `api.b.ai/v1`, overridable with
+              ``BAI_BASE_URL``) on ``BAI_API_KEY``, regardless of env.
             - ``"compat"`` — an OpenAI-compatible endpoint from
               ``OPENAI_BASE_URL`` (required) + ``OPENAI_COMPATIBLE_MODEL``.
             - ``None`` — env-selected default: compat **iff** ``OPENAI_BASE_URL``
@@ -170,6 +214,12 @@ def get_chat_llm(
 
     if provider == "openrouter":
         return _chat_openrouter(default_model, temperature, timeout)
+
+    if provider == "nvidia":
+        return _chat_nvidia(default_model, temperature, timeout)
+
+    if provider == "bai":
+        return _chat_bai(default_model, temperature, timeout)
 
     if provider == "compat":
         base_url = _env("OPENAI_BASE_URL")
@@ -254,15 +304,33 @@ def lab_provider() -> Optional[Provider]:
     return _provider_from_env("LAB_PROVIDER")
 
 
+#: Bare per-agent model vars (``SCANNER_MODEL`` …), kept as deprecated aliases
+#: for the ``LAB_<AGENT>_MODEL`` names BACKLOG.md §"Configurable model routing"
+#: was written against. The `LAB_`-prefixed name wins when both are set; when
+#: neither is, behaviour is exactly as before this alias existed.
+LAB_MODEL_ALIASES: dict[str, str] = {
+    "scanner": "SCANNER_MODEL",
+    "research": "RESEARCH_MODEL",
+    "analyst": "ANALYST_MODEL",
+    "risk": "RISK_MODEL",
+}
+
+
 def lab_model(agent: str, default: str) -> str:
     """The model for one Lab agent.
 
-    Precedence: ``LAB_<AGENT>_MODEL`` (per-agent) → ``LAB_MODEL`` (blanket) →
-    ``default`` (the agent's historical tier).
+    Precedence: ``LAB_<AGENT>_MODEL`` (per-agent) → the bare ``<AGENT>_MODEL``
+    alias (deprecated, same meaning) → ``LAB_MODEL`` (blanket) → ``default``
+    (the agent's historical tier).
     """
     if agent not in LAB_AGENTS:
         raise ValueError(f"unknown Lab agent {agent!r}; expected one of {LAB_AGENTS}.")
-    return _env(f"LAB_{agent.upper()}_MODEL") or _env("LAB_MODEL") or default
+    return (
+        _env(f"LAB_{agent.upper()}_MODEL")
+        or _env(LAB_MODEL_ALIASES[agent])
+        or _env("LAB_MODEL")
+        or default
+    )
 
 
 def get_lab_llm(agent: str, default_model: str, *, temperature: float = 0) -> Any:
@@ -293,7 +361,10 @@ def structured(llm: Any, schema: Any) -> Any:
 
 
 __all__ = [
+    "BAI_DEFAULT_BASE_URL",
     "LAB_AGENTS",
+    "LAB_MODEL_ALIASES",
+    "NVIDIA_NIM_BASE_URL",
     "OPENAI_OFFICIAL_BASE_URL",
     "OPENROUTER_BASE_URL",
     "OPENROUTER_HEADERS",

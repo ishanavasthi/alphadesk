@@ -163,6 +163,14 @@ export function HoldingsTable({
                   {row.symbol ? (
                     <div className="text-[11.5px] text-muted-foreground">{row.symbol}</div>
                   ) : null}
+                  {row.note ? (
+                    <div
+                      className="mt-0.5 cursor-help text-[11.5px] text-muted-foreground"
+                      title={row.note}
+                    >
+                      ⚠ source caveat
+                    </div>
+                  ) : null}
                 </td>
                 <td className="hidden border-b border-[var(--adp-hairline)] p-2.5 text-[13px] sm:table-cell">
                   <Badge variant="type">{typeLabel(row.asset_type, row.asset_type_raw)}</Badge>

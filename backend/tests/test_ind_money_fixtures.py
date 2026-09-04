@@ -42,6 +42,7 @@ ASSET_TYPES = {
 HOLDINGS_FIXTURES = [
     "networth_holdings__MF.json",
     "networth_holdings__US_STOCK.json",
+    "networth_holdings__FD.json",
     "networth_holdings__single_holding.json",
     "networth_holdings__empty_asset_type.json",
     "networth_holdings__IND_STOCK__empty.json",

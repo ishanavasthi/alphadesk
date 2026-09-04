@@ -25,6 +25,7 @@ vi.mock("@/lib/api", async () => {
     getPortfolioSummary: vi.fn(),
     getPortfolioHistory: vi.fn(),
     getPortfolioHoldings: vi.fn(),
+    getPortfolioHoldingsAll: vi.fn(),
     getPortfolioAllocation: vi.fn(),
     capturePortfolioSnapshot: vi.fn(),
     startAuthLogin: vi.fn(),
@@ -43,6 +44,7 @@ import {
 import {
   getPortfolioHistory,
   getPortfolioHoldings,
+  getPortfolioHoldingsAll,
   getPortfolioSummary,
 } from "@/lib/api";
 
@@ -127,10 +129,10 @@ beforeEach(() => {
     days: 365,
     currency: "INR",
   } as never);
-  vi.mocked(getPortfolioHoldings).mockResolvedValue({
-    asset_type: "MF",
-    currency: "INR",
-    holdings: [WITH_BASIS, NO_BASIS],
+  vi.mocked(getPortfolioHoldingsAll).mockResolvedValue({
+    buckets: [
+      { asset_type: "MF", status: "ok", holdings: [WITH_BASIS, NO_BASIS], retry_after: null },
+    ],
   } as never);
 });
 
@@ -217,6 +219,57 @@ describe("per-holding detail dialog", () => {
     });
 
     expect((await screen.findByRole("dialog")).textContent).toContain("Demo Growth Fund");
+  });
+
+  it("surfaces the backend's source caveat on a misreported row (issue #65)", async () => {
+    vi.mocked(getPortfolioSummary).mockResolvedValue({
+      ...SUMMARY,
+      by_asset_type: [
+        ...SUMMARY.by_asset_type,
+        {
+          label: "FD",
+          asset_type: "FD",
+          asset_type_raw: "FD",
+          invested_amount: "15000.0",
+          current_value: "10162.0",
+          pnl: "-4838.0",
+          pnl_pct: "-32.25",
+          weight_pct: "1.0",
+          us_exposure: false,
+          currency: "INR",
+        },
+      ],
+    } as never);
+    vi.mocked(getPortfolioHoldingsAll).mockResolvedValue({
+      buckets: [
+        {
+          asset_type: "FD",
+          status: "ok",
+          holdings: [
+            {
+              ...WITH_BASIS,
+              external_id: "FD:FD_DEPOSITS",
+              asset_type: "FD",
+              name: "All fixed deposits",
+              note: "The source reports this deposit book at a loss.",
+            },
+          ],
+          retry_after: null,
+        },
+      ],
+    } as never);
+
+    render(
+      <PortfolioProvider>
+        <PortfolioHoldingsPage />
+      </PortfolioProvider>,
+    );
+
+    // The aggregate renders under its honest label with the caveat attached —
+    // never as the vendor's raw external_id.
+    await screen.findByText("All fixed deposits");
+    expect(screen.getByText("⚠ source caveat")).toBeTruthy();
+    expect(screen.queryByText("FD:FD_DEPOSITS")).toBeNull();
   });
 });
 

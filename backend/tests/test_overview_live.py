@@ -14,7 +14,11 @@ import pytest
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
-load_dotenv()  # pick up backend/.env so a local OPENAI_API_KEY reaches this test
+if os.environ.get("RUN_OPENAI_LIVE") == "1":
+    # Only when actually running live (issue #31): an unconditional
+    # load_dotenv() here would leak the operator's backend/.env into every
+    # other test in the session at import time.
+    load_dotenv()  # pick up backend/.env so a local OPENAI_API_KEY reaches this test
 
 from agents.portfolio.agents import default_llm_factory, run_specialist
 from agents.portfolio.metrics import compute_metrics, metrics_by_key

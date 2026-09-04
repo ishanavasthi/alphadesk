@@ -475,7 +475,7 @@ Per-source conclusions M1 must not skip:
    even the human-readable label is not guaranteed.
 4. Treat `invested_amount == 0` as **"unknown cost basis"**, not "invested
    nothing". Deriving `pnl = market_value - invested_amount` on such a row
-   produces a fabricated 100% gain. M1 must model this as nullable and D1 must
+   conjures a fabricated doubling of the position. M1 must model this as nullable and D1 must
    render it as "—", not as a number.
 
 ### Q3 — Does `networth_snapshot` return a usable total to store as `NUMERIC`?
@@ -510,7 +510,8 @@ the doc previously claimed a single root cause without doing the arithmetic:
   `US_STOCK_WALLET` absent). No call can enumerate it. It is almost certainly
   uninvested wallet cash. Its `current_value` is **2.348% of
   `total_current_value`** against a **2.339%** gap — so the wallet does not
-  merely fail to explain the gap exactly, it **over-explains** it by 0.4% of its
+  merely fail to explain the gap exactly, it **over-explains** it by about
+  four-tenths of a percent of its
   own size. Subtracting it leaves a residual of **−0.0088%** of the portfolio
   total, with the sign pointing the other way.
 - That residual is not rounding. **Per-type buckets do not equal their own
@@ -549,7 +550,7 @@ endpoint. That narrows the §2.2 warning: the 19-key envelope is real and its
 row shape is still unverified, but there is no sign of a suppressed or
 unreadable Indian-stock position hiding behind it.
 
-**M1 implication, and it is stronger than "add the wallet back".** Any `CHECK`
+**M1 implication, and it is a harder requirement than "add the wallet back".** Any `CHECK`
 or test asserting `sum(holdings) == stored net worth` is guaranteed to fail, by
 ~2.3% from the unenumerable wallet bucket alone. But **do not "fix" it by
 asserting `sum(holdings) + wallet == total` either** — that check fails too, on
@@ -678,8 +679,8 @@ Checkable in this repo, no probe required:
 - **It has been doing so in production, repeatedly.** Two distinct clients were
   minted minutes apart during the 2026-08-15 re-authentication. Note the app
   sends a **constant** `client_name` (`"AlphaDesk"`), not a fresh random one —
-  so the server does not dedupe on client name either, which is a stronger
-  result than the probe's distinct-names test.
+  so the server does not dedupe on client name either, which is a more
+  conclusive result than the probe's distinct-names test.
 - **Those clients complete the full exchange.** This is what closes the gap the
   probe left open: a DCR-minted client is carried through `/authorize` with
   PKCE (`S256`) and then through `/token`, and the resulting refresh token
@@ -812,3 +813,137 @@ mirroring each shape above, including the edge cases this doc identifies
 `broker`, an empty asset type, a single-holding portfolio, and a US_STOCK row
 with no currency signal). Inventory and regeneration policy: that directory's
 `README.md`. Leak-check procedure: `docs/TESTING/C2.md`.
+
+---
+
+## Addendum B — transaction history + MF fund details (issue #35, 2026-09-03)
+
+Same procedure as C2: read-only probes against the operator's own linked
+account, raw captures in session scratch **outside the working tree** (deleted
+after the gate), this doc recording key names + types + counts only — no
+amounts, no names, no identifiers. Pacing ≥6s between calls (~10/min, under
+both rate-limit tiers); no breakdown calls (cost 2) were needed. 8 calls total
+across two runs (the second run re-read inventory + SIPs + one holdings page
+after a scripting error; all within budget).
+
+### B.1 Inventory grew 15 → 21 tools
+
+The C2 inventory (§1) is a subset. New since Aug 2026: `get_indian_stocks_movers`,
+`get_us_stocks_movers`, `get_us_stocks_ohlc`, `us_stocks_sips`, and three family
+tools — `get_family_members`, `get_family_portfolio`, `get_family_asset_holdings`.
+The family tools read **other members'** portfolios (per-member totals, one-day
+change, row-level holdings per asset class): never call them without a consent
+and privacy pass first — they are a new personal-data surface, not a shortcut
+around per-user linking.
+
+### B.Q1 — Is there any transaction / cashflow / order-history tool?
+
+**No.** A keyword hunt over all 21 tool names + full descriptions
+(`transact`, `order histor*`, `cashflow`/`cash flow`, `ledger`, `statement`,
+`trade histor*`) returns zero hits. The closest time-bearing reads are
+`get_indian_stocks_ohlc` (price candles, no money moved), per-fund `aum_history`
+(dated AUM points, B.Q2), and per-fund `yesterday_nav` / `yesterday_nav_date`
+(B.Q4) — prices and fund series, never the user's dated cashflows. **Dated
+cashflows remain unavailable: B1 stays inference, B2/XIRR stays uncomputable,
+tax-lots stay ungated.** Unchanged from C2, re-confirmed on the larger inventory.
+
+Both SIP tools still return **0 rows** on this account (`indian_stocks_sips`
+→ empty list; `mf_sips` → empty list + a `data_note` string), so their row
+shapes stay **unverified** — same as C2 §2.4. Their descriptions say they carry
+a *forward* schedule, which would not be cashflows even populated.
+
+### B.Q2 — What does `get_mf_funds_details` actually return?
+
+Called with `fund_ids` as a **string** (schema type is `string`, not array —
+pass one id per call) and no `includes` (baseline), then once with all six
+`includes`. Baseline covers: `name`, `fund_app_short_name`, `nav`, `aum`
+(int), `expense_ratio` (float), `returns` (`1D/1M/3M/6M/1Y/3Y/5Y/MAX` floats
+plus two cumulative fields), `category` (**a plain string**), `ind_ranking`
+(`rank`, `total_score`, `performance_score`, `risk_score`, `cost_score`,
+`percentile_rank`, `*_rank` ints, `ranking_category`, **`ranking_sub_category`**,
+`tag`), `benchmark_name`, `strategy`, `image_url`, SIP min/max + BSE min/max
+purchase amounts. All six `includes` resolve: `fund_detail.aum_history`
+(`[{aum, created_at}]`), `fund_performance` (`returns`, `benchmark_returns`,
+`category_returns`, `best_in_category`, `worst_in_category`, `category_rank` —
+all per-horizon dicts), `asset_allocation` (split by asset class +
+`market_cap_distribution`), `sector_allocation` (named sectors with `perc`),
+`holdings` (`display_name`, `holdings[]` with per-position `name`/`perc`, and
+`holdings_count`), `category_tables` (`this_fund` vs `category` avg/min/max
+for asset-class and sector distributions).
+
+Per-field answers: **sub-category YES** (`ind_ranking.ranking_sub_category`),
+**AUM YES** (`aum` + dated `aum_history`), **AMC NO** (no amc-family key
+anywhere in the recursive key walk), **plan (Direct/Regular) NO** (no plan key
+anywhere), **ISIN NO** (no isin key anywhere). B4's "AUM is the one unverified
+piece" is now verified present; the AMC/plan group-by axes stay blocked.
+
+### B.Q3 — Does a holdings row's `investment_code` work as a `fund_id`?
+
+**Yes — exact key echo, join on the code.** The first MF holdings row's
+`investment_code` (a numeric string) passed as `fund_ids` returned one row
+whose `fund_id` echoes it (modulo str/int typing). Join strategy for B4: exact
+match on `investment_code` first; **never join on names** — the returned fund
+name differs textually from the holdings row's `investment` string for the
+same fund. `lookup_ind_keys` (name → identifiers) remains the fallback for
+rows whose code does not resolve, not the primary path.
+
+### B.Q4 — What does `get_mf_by_category` return?
+
+Called with `categories: ["large-cap"]`, `size: 2`: top-level
+`success/filter_count/count/next_page/empty_response/data`. `data[]` is one row
+**per matching fund** (35 large-cap total, paged), each carrying `id`, `name`,
+`nav` + `nav_date` + **`yesterday_nav` + `yesterday_nav_date`**, `aum`,
+`expense_ratio`, `return_1yr/3yr/5yr`, `ind_ranking` (incl.
+`ranking_sub_category`), `ind_category_rank`, `rating`, `risk`, `category`,
+SIP/lumpsum limits and flags. **No category-average row** — the average lives
+in `fund_performance.category_returns` (B.Q2), which is where B2's benchmark
+comes from, not here. Category vocabulary is fixed slugs (`large-cap`,
+`flexi-cap`, `elss-tax-savings`, `contra`, … — full enum in the saved input
+schema); never parse it out of a fund name.
+
+### B.5 MF holdings rows now carry a day-change field (new since C2)
+
+`networth_holdings(asset_type="MF")` rows now include `one_day_change`
+(float) and `one_day_change_percentage` (float), **populated on 9/9 rows**.
+C2 §2.6 ("no previous-close or day-change field anywhere") is outdated for MF
+holdings — with the caveat that the reading's as-of is unstamped (no payload
+date field anywhere, still), so "today" keyed off it inherits the staleness
+semantics of the whole payload. Directly relevant to Day's P&L (#46) and the
+treemap `Today` period (#47): a vendor day-change exists, but treating it as
+settled-today needs a staleness argument this spike does not make.
+
+### What B.Q1–Q4 change in BACKLOG.md
+
+- **B1 (flow-aware):** unchanged direction — still inference, no bookkeeping
+  collapse. The attributable half (units-up ⇒ buy, units-flat + price-moved ⇒
+  market) stands; cash/bank pairing stays labelled inference.
+- **B2 (XIRR vs sub-category):** benchmark half unblocked — `category_returns`
+  per horizon + rank/best/worst per fund. Cashflows still the sole blocker.
+- **B3 (holdings group-by):** sub-category + AUM resolve through
+  `get_mf_funds_details` (exact code join); AMC + plan badges stay blocked (no
+  source field). AUM bands still need defining.
+- **B4 (AMFI reference):** join cost answered — exact, cheap. AMFI ingest is
+  now a redundancy/benchmark-history play, not the only path to sub-category.
+  AUM verified present in the vendor API either way.
+
+### Leak check
+
+`backend/tests/leak_check_ind_money.py --captures /tmp/spike35` run to PASS
+over the two files this spike commits (`docs/ind_money_payloads.md`, the
+checker itself) — that is the stated scan scope: nothing committed tonight
+echoes the captures. First run found ten overlaps, all benign, fixed two ways:
+ordinary-English collisions between older/newer prose and real values were
+reworded without changing meaning, and the category slugs are input-schema
+vocabulary, so the checker now allowlists nested `items.enum` members exactly
+like top-level enums. Second run over the scope: PASS.
+
+Deliberately out of scope, stated here: a full-repo scan against the new
+captures reports hundreds of overlaps, all inside long-committed files (demo
+fixtures, design docs) that predate these captures — invented-but-plausible
+words and numbers colliding with real ones by chance (a common word inside a
+fund name, a round demo figure equal to a real one). Rewriting every synthetic
+fixture against each new capture set is unbounded work that each round risks
+re-introducing, and none of it was introduced tonight. The gate that matters —
+tonight's diff echoes nothing — passes and is re-runnable from the command
+above while `/tmp/spike35/` exists. Scratch captures retained until the #35
+gate passes, then deleted per C2 procedure.

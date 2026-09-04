@@ -82,6 +82,26 @@ async def get(
     left in place rather than deleted — the next successful read overwrites it,
     and the prune sweeps whatever never gets asked for again.
     """
+    entry = await get_with_age(session, user_id, key)
+    if entry is None:
+        return None
+    payload, fetched_at = entry
+    if max_age is not None and (_now() - fetched_at).total_seconds() > max_age:
+        return None
+    return payload
+
+
+async def get_with_age(
+    session: Optional[AsyncSession],
+    user_id: str,
+    key: str,
+) -> Optional[tuple[dict[str, Any], datetime]]:
+    """The cached payload plus when it was fetched, or ``None`` for any miss.
+
+    No TTL applied: the caller decides what "too stale" means. Used by the
+    summary's stale-while-revalidate path, which serves a stale row instantly
+    while a background task rewrites it.
+    """
     if session is None:
         return None
     try:
@@ -98,13 +118,10 @@ async def get(
         return None
     if row is None:
         return None
-    if max_age is not None:
-        fetched_at = row.fetched_at
-        if fetched_at.tzinfo is None:
-            fetched_at = fetched_at.replace(tzinfo=timezone.utc)
-        if (_now() - fetched_at).total_seconds() > max_age:
-            return None
-    return dict(row.payload)
+    fetched_at = row.fetched_at
+    if fetched_at.tzinfo is None:
+        fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+    return dict(row.payload), fetched_at
 
 
 async def put(
@@ -196,6 +213,7 @@ __all__ = [
     "CACHE_RETENTION_DAYS",
     "allocation_key",
     "get",
+    "get_with_age",
     "holdings_key",
     "invalidate_user",
     "prune",

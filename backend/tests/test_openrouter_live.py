@@ -18,7 +18,11 @@ import pytest
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 
-load_dotenv()  # pick up backend/.env so a local OPENROUTER_API_KEY reaches this test
+if os.environ.get("RUN_OPENROUTER_LIVE") == "1":
+    # Only when actually running live (issue #31): an unconditional
+    # load_dotenv() here would leak the operator's backend/.env into every
+    # other test in the session at import time.
+    load_dotenv()  # pick up backend/.env so a local OPENROUTER_API_KEY reaches this test
 
 from agents.llm import OPENROUTER_BASE_URL, get_lab_llm, get_overview_llm
 from agents.portfolio.agents import run_specialist

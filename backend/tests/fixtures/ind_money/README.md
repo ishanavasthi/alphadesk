@@ -31,6 +31,7 @@ be tested.
 | `networth_snapshot__empty.json` | `networth_snapshot()` | Zero-value portfolio: all totals `0.0`, all arrays empty. |
 | `networth_holdings__MF.json` | `networth_holdings(asset_type="MF")` | The edge-case workhorse — 6 rows, see below. |
 | `networth_holdings__US_STOCK.json` | `networth_holdings(asset_type="US_STOCK")` | Foreign-denominated row. **Carries no currency field**, because the real payload carries none — the only signal is `asset_type`. |
+| `networth_holdings__FD.json` | `networth_holdings(asset_type="FD")` | The issue-#65 shape: one aggregate row, empty `investment`, code `FD_DEPOSITS`, `holding_percent` 100, vendor-reported negative P&L. Values invented, shape faithful. |
 | `networth_holdings__single_holding.json` | `networth_holdings(...)` | Single-row holdings response. |
 | `networth_holdings__empty_asset_type.json` | `networth_holdings(...)` | The exact response for an asset type the account holds nothing in: `{"holdings": []}`, one key, nothing else. |
 | `networth_holdings__IND_STOCK__empty.json` | `networth_holdings(asset_type="IND_STOCK")` | **Different envelope.** `IND_STOCK` returns a 19-key live-trading payload (positions, orders, pledge/MTF flags), not the 14-key aggregator shape. This mirrors the observed, empty one exactly. |
