@@ -14,9 +14,9 @@ const TRUST_BADGES = [
  * The hero: what AlphaDesk is, the two CTAs, the trust badges, and the
  * miniature dashboard beside them.
  *
- * `authEnabled` gates the waitlist CTA exactly as it always has. `/waitlist` is
- * a Clerk route that 404s with the flag off, so linking to it in that build
- * would be a knowingly broken link.
+ * `authEnabled` gates the sign-up CTA exactly as it gated the waitlist CTA
+ * before general availability. `/sign-up` is a Clerk route that 404s with the
+ * flag off, so linking to it in that build would be a knowingly broken link.
  */
 export function HeroSection({ authEnabled }: { authEnabled: boolean }) {
   return (
@@ -25,7 +25,7 @@ export function HeroSection({ authEnabled }: { authEnabled: boolean }) {
         <div>
           <span className="mb-5 inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">
             <span className="h-1.5 w-1.5 rounded-full bg-[var(--adp-accent)]" aria-hidden />
-            Portfolio analyzer · IND Money · waitlist
+            Portfolio analyzer · IND Money · open sign-up
           </span>
           <h1
             id="hero-h"
@@ -50,10 +50,10 @@ export function HeroSection({ authEnabled }: { authEnabled: boolean }) {
             </Link>
             {authEnabled ? (
               <Link
-                href="/waitlist"
+                href="/sign-up"
                 className="inline-flex items-center rounded-md border border-border bg-card px-4 py-2.5 text-sm font-medium transition-colors hover:bg-secondary"
               >
-                Join the waitlist
+                Create your account
               </Link>
             ) : null}
           </div>
