@@ -13,8 +13,8 @@ export function FinalCta({ authEnabled }: { authEnabled: boolean }) {
         See it on sample data.
       </h2>
       <p className="mx-auto mb-7 max-w-[52ch] text-[15px] text-muted-foreground">
-        Open the live demo, the full dashboard on sample data with no sign-in required, or join
-        the waitlist to see your own net worth this way.
+        Open the live demo, the full dashboard on sample data with no sign-in required, or
+        create an account to see your own net worth this way.
       </p>
       <div className="mb-[18px] flex flex-wrap justify-center gap-3">
         <Link
@@ -26,10 +26,10 @@ export function FinalCta({ authEnabled }: { authEnabled: boolean }) {
         </Link>
         {authEnabled ? (
           <Link
-            href="/waitlist"
+            href="/sign-up"
             className="inline-flex items-center rounded-md border border-border bg-card px-4 py-2.5 text-sm font-medium transition-colors hover:bg-secondary"
           >
-            Join the waitlist
+            Create your account
           </Link>
         ) : null}
       </div>

@@ -3,13 +3,13 @@ import { SectionHead } from "./primitives";
 const STEPS = [
   {
     no: "01",
-    title: "Join the waitlist",
-    body: "AlphaDesk is a public URL, gated by a waitlist. Register interest and you are approved in batches. No open sign-up at launch.",
+    title: "Create your account",
+    body: "Sign-up is open — email or a social login, no invitation and no waiting list. Your platform identity stays separate from your broker credential.",
   },
   {
     no: "02",
     title: "Sign in",
-    body: "A normal account sign-in. Your platform identity stays separate from your broker credential; linking comes later, and only with consent.",
+    body: "A normal account sign-in from then on. Linking your broker comes later, and only with consent.",
   },
   {
     no: "03",
@@ -36,7 +36,7 @@ export function HowItWorks() {
         id="how-h"
         kicker="How it works"
         title="Five steps. One consent."
-        sub="From waitlist to a nightly-verified net worth."
+        sub="From sign-up to a nightly-verified net worth."
       />
       <div className="grid max-w-[760px] gap-3 tabular-nums">
         {STEPS.map((step) => (

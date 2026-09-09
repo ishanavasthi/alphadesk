@@ -42,7 +42,7 @@ vi.mock("@clerk/nextjs", () => ({
   ),
   SignInButton: ({ children }: { children: ReactNode }) => <>{children}</>,
   SignIn: () => <div data-testid="clerk-sign-in" />,
-  Waitlist: () => <div data-testid="clerk-waitlist" />,
+  SignUp: () => <div data-testid="clerk-sign-up" />,
 }));
 
 /** Records what `next/dynamic` was asked to load, without loading it. */

@@ -1,11 +1,11 @@
 # AlphaDesk v2 — Handoff & Operator Runbook
 
-**Status (2026-08-16):** the v2 build is **complete** — all 14 plan cards
-(C0→L1) built, reviewed, merged, and deployed. `main` is clean at the latest
-commit; backend live on the HF Space; frontend live and deliberately gated to
-its **safe pre-launch state** until the operator runs go-live. Nothing is
-blocked on an agent — the only remaining work is the operator go-live steps in
-§2 and the optional follow-ups in §5.
+**Status (2026-09-09):** the v2 build is **complete** and the site is **live at
+general availability**. All 14 plan cards (C0→L1) built, reviewed, merged and
+deployed; backend live on the HF Space; frontend live with sign-in **on** and
+**sign-up open to anyone**. The go-live sequence in §2 is **done** — it is kept
+below as a record of what was wired, with each step marked. Remaining work is
+the optional follow-ups in §5.
 
 This file is the single handoff doc. A fresh agent with zero conversation
 history should be able to pick up any task from here plus `docs/STATUS.md` (the
@@ -21,33 +21,37 @@ are in this file — it is committed.
 | What it is | Multi-user Indian-equity **portfolio analyzer** (net worth / allocation / history / AI overview) + a labelled research **Lab** (simulation). FastAPI + LangGraph backend, Next.js frontend. **No real orders ever placed.** |
 | Plan of record | `V2_PLAN.md` (§0 protocol, §2 locked decisions). Card ledger: `docs/STATUS.md`. Per-card: `docs/SPECS/<card>.md`, `docs/TESTING/<card>.md`. |
 | SDD build ledger | `.superpowers/sdd/V2_PLAN/progress.md` (gitignored via `.git/info/exclude`; the overnight build record + every ruling). |
-| Live frontend | `https://alphadesk.ishanavasthi.in` (Vercel project `alphadesk`, alias `alphadesk-two.vercel.app`). Currently **flag-off** (public landing + `/demo`, no auth wall). |
+| Live frontend | `https://alphadesk.ishanavasthi.in` (Vercel project `alphadesk`, alias `alphadesk-two.vercel.app`). **Flag-on, sign-up open**: public landing + `/demo`, plus `/sign-in` and `/sign-up`. |
 | Live backend | HF Space `heyavasthi/alphadesk` → `https://heyavasthi-alphadesk.hf.space`. `/portfolio/*` is JWT-only (401 until sign-in). |
 | Database | Neon Postgres, **at head (migration 0005)**. Connection string is in local `backend/.env` and the Space `DATABASE_URL` secret. |
-| Identity | Clerk app `leading-sheepdog-6215` (instance `leading-sheepdog-6215.clerk.accounts.dev`). CLI authenticated locally. |
+| Identity | Clerk app **AlphaDesk** (`app_3HyCbeFIqcllyy74vvKvNdOOSa3`). **Production** instance `ins_3HyzjLvJv90WmloDptVGdNQWrGo` on the custom domain `clerk.alphadesk.ishanavasthi.in` (`pk_live_*`) — this is what the live site uses. The development instance `leading-sheepdog-6215.clerk.accounts.dev` (`pk_test_*`) is local-only, and is what the `clerk` CLI is linked to. |
 | Repo | Public GitHub `ishanavasthi/alphadesk`. `main` tracked by Vercel; the Space deploys from the binary-free `space-deploy` snapshot branch (see §6). |
 | Backend imports | resolve with `backend/` as root (`api.main`, `graph.*`, `tools.*`, `db.*`, `portfolio.*`) — **no `backend.` prefix**. Run from inside `backend/`. |
 | Venv | repo-root `.venv/` (Python 3.12). Tests: `pip install -r requirements.txt -r requirements-dev.txt`. |
 
 ---
 
-## 2. Go-live sequence (operator only — do IN ORDER to invite people)
+## 2. Go-live sequence — **DONE 2026-09-09**
 
-Nothing reaches a real user until all of these are done.
+Kept as the record of what was wired. Every step below is complete; the site is
+open to the public. Step 2 was **reversed** at general availability: Clerk is no
+longer in Waitlist mode, sign-up is open, and the `/waitlist` route is retired
+(it now 308s to `/sign-up`, so links in already-sent waitlist emails still land
+somewhere useful).
 
-1. **IND Money re-login.** Your broker link is revoked at the source again
+1. ✅ **IND Money re-login.** Your broker link is revoked at the source again
    (tokens die server-side within hours). Ask any agent for a login URL, or
    locally: run the backend with `ALPHADESK_SINGLE_TENANT=1`, `POST /auth/login`,
    open the returned URL. This also proves F3 end-to-end (see §5 "unverified").
-2. **Enable Clerk Waitlist mode** — Clerk Dashboard → Configure → Restrictions
+2. ❌ **REVERSED at GA — sign-up is now OPEN, not Waitlist.** ~~Enable Clerk Waitlist mode~~ — Clerk Dashboard → Configure → Restrictions
    → Sign-up mode → **Waitlist**. Not exposed via API; manual toggle. Without
    it, flipping the flag = open sign-up.
-3. **Set Clerk keys on Vercel** — the `alphadesk` project has only
+3. ✅ **Set Clerk keys on Vercel** — done (production instance, `pk_live_*`). — the `alphadesk` project has only
    `NEXT_PUBLIC_API_URL`. Add `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and
    `CLERK_SECRET_KEY` (Production; the real values are in your local
    `frontend/.env.local`). **With the flag on, placeholder/missing keys = a
    broken `host_invalid` site** — real keys are mandatory.
-4. **OpenAI budget cap** — set a hard monthly limit in the OpenAI dashboard
+4. ✅ **Budget cap / un-pause.** `OVERVIEW_DAILY_GLOBAL_MAX=500` on the Space (verified 2026-09-09); Lab + overview now run on B.ai (`bai`/`glm-5.3-flash`), not OpenAI. — set a hard monthly limit in the OpenAI dashboard
    (the one control an app bug can't bypass; app-side ceilings only degrade).
    Confirm the Space has `OPENAI_API_KEY` (set overnight).
    - ⚠️ **UN-PAUSE THE AI OVERVIEW — it is currently off on purpose.**
@@ -59,14 +63,14 @@ Nothing reaches a real user until all of these are done.
      **Set both back to `500`** (Space → Variables, and local `.env`). The value
      is re-read per request, but changing a Space variable restarts the Space.
      Verify by loading `/portfolio` and confirming a narrative renders.
-5. **Flip the site live** — in Vercel, change the `NEXT_PUBLIC_AUTH_ENABLED`
+5. ✅ **Flip the site live** — in Vercel, change the `NEXT_PUBLIC_AUTH_ENABLED`
    Production env var from `false` → `true`, redeploy. Site goes behind Clerk
    Waitlist. (This reverses the safe override from §4-decision below.)
-6. **Optional hygiene** — unset `ALPHADESK_ADMIN_SECRET` on the Space if still
+6. ⚠️ **Optional hygiene (still outstanding)** — `ALPHADESK_ADMIN_SECRET` is *still set* on the Space. The code that read it was deleted at L1, so it is dead, not dangerous; delete it when convenient. — unset `ALPHADESK_ADMIN_SECRET` on the Space if still
    set (the code that read it was deleted at L1; harmless, just dead). Delete
    the two throwaway Clerk test users `f3alpha+clerk_test@example.com` /
    `f3bravo+clerk_test@example.com`.
-7. **Approve your first users** from the Clerk Dashboard.
+7. ➖ **N/A — no approval step any more.** ~~Approve your first users~~ from the Clerk Dashboard.
 
 ---
 
@@ -92,7 +96,10 @@ Nothing reaches a real user until all of these are done.
 
 ## 4. Decisions made on the operator's behalf (review; undo if wrong)
 
-- **Vercel flag override → `false`.** L1 flips `NEXT_PUBLIC_AUTH_ENABLED` on via
+- ~~**Vercel flag override → `false`.**~~ **Superseded 2026-09-09:** the override
+  is gone, Clerk production keys are set, and the site is flag-on and public.
+  The note below is the historical reason it was ever set.
+- **Vercel flag override → `false`** (historical). L1 flips `NEXT_PUBLIC_AUTH_ENABLED` on via
   committed `frontend/.env.production`, so the merge auto-built the frontend
   flag-on — but Vercel has no Clerk keys, so the live site briefly became the
   broken `host_invalid` page (breaks the plan's "live site never breaks" rule).

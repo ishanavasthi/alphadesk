@@ -149,7 +149,7 @@ describe("every themed surface can read the stored choice", () => {
   const THEMED = sourcesScoping("data-adp");
 
   /**
-   * The one deliberate exception. `/sign-in` and `/waitlist` render a Clerk
+   * The one deliberate exception. `/sign-in` and `/sign-up` render a Clerk
    * form, and Clerk's default appearance is light; theming the shell around a
    * light card would look broken, not dark. It takes the palette for the footer
    * and stays light on purpose — see the component's own comment.

@@ -7,11 +7,11 @@ import "../../app/portfolio/portfolio.css";
 import { PortfolioFooter } from "@/components/portfolio/ui";
 
 /**
- * Wraps a bare auth route (`/sign-in`, `/waitlist`) so the site footer — and the
+ * Wraps a bare auth route (`/sign-in`, `/sign-up`) so the site footer — and the
  * Privacy/Terms links it carries — is reachable there too.
  *
  * These two routes sit **outside** the marketing group that renders the footer
- * on every other public page, yet one of them (`/waitlist`) collects an email.
+ * on every other public page, yet one of them (`/sign-up`) collects an email.
  * A page that asks for a person's data with no route to the privacy policy is
  * the exact gap this closes. `data-adp` scopes the light palette the footer's
  * tokens need and matches Clerk's default (light) form theme, so the card and

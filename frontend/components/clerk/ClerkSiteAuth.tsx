@@ -5,7 +5,7 @@ import { SignInButton, UserButton, useUser } from "@clerk/nextjs";
 
 /**
  * The shadcn site header's identity control — signed-in avatar + a Portfolio
- * link, or "Sign in" / "Join waitlist" when signed out.
+ * link, or "Sign in" / "Sign up" when signed out.
  *
  * Rendered only from `SiteAuthSlot`'s `AUTH_ENABLED` branch (a `next/dynamic`
  * gate), so with the flag off this module — and `@clerk/nextjs` with it — is
@@ -22,7 +22,7 @@ export function ClerkSiteAuth() {
 
   // `flex-none` + `whitespace-nowrap` throughout: this control is the last item
   // in the header's flex row, and without them a narrow phone row shrinks it
-  // until "Sign in" wraps mid-label and "Join waitlist" is clipped off the right
+  // until "Sign in" wraps mid-label and "Sign up" is clipped off the right
   // edge. It is the row's fixed anchor; the spacer beside it absorbs the slack.
   if (!isSignedIn) {
     return (
@@ -36,10 +36,10 @@ export function ClerkSiteAuth() {
           </button>
         </SignInButton>
         <Link
-          href="/waitlist"
+          href="/sign-up"
           className="whitespace-nowrap rounded-md bg-[var(--adp-accent)] px-2.5 py-1.5 text-white transition-colors hover:bg-[#1d4ed8] sm:px-3"
         >
-          Join waitlist
+          Sign up
         </Link>
       </div>
     );

@@ -9,9 +9,9 @@ import Link from "next/link";
  * screen at **every** scroll position, not just at the top of the page. The
  * amber treatment is the locked warn-banner palette (DECISION.md).
  *
- * The CTA points at `/` rather than `/waitlist` because the waitlist is a Clerk
+ * The CTA points at `/` rather than `/sign-up` because sign-up is a Clerk
  * route that 404s until L1 (F2); the landing is the entry point that always
- * resolves and carries the waitlist CTA itself when it is live.
+ * resolves and carries the sign-up CTA itself when it is live.
  */
 export function DemoBanner() {
   return (
