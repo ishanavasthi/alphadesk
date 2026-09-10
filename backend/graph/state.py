@@ -86,7 +86,28 @@ class AnalystRecommendation(BaseModel):
         ...,
         ge=0.0,
         le=1.0,
-        description="Confidence score in [0, 1]; must reach 0.70 to clear the RiskManager.",
+        description=(
+            "Probability in [0, 1] that the action is directionally right over the "
+            "stated horizon (for 'buy', that the stock outperforms NIFTY 50). Must "
+            "reach 0.70 to clear the RiskManager. This is a directional-conviction "
+            "number, deliberately separate from ``evidence_quality``."
+        ),
+    )
+    evidence_quality: Optional[float] = Field(
+        None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "How much of the view rests on real data vs. inference, in [0, 1]. With "
+            "only price + 52-week range and no earnings/valuation/filings (RAG is "
+            "dormant, C1), this is inherently low. Reported alongside confidence so "
+            "a strong opinion on thin data is distinguishable from a strong opinion "
+            "on good data; ``None`` when the model did not supply it (older runs)."
+        ),
+    )
+    data_gaps: List[str] = Field(
+        default_factory=list,
+        description="What the analyst would need to raise evidence_quality (e.g. 'earnings', 'valuation multiples').",
     )
     thesis: Optional[str] = Field(
         None, description="Optional one-paragraph synthesis of the bull and bear cases."
