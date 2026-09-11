@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import PrivacyPage from "@/app/(marketing)/privacy/page";
 import TermsPage from "@/app/(marketing)/terms/page";
-import { PortfolioFooter } from "@/components/portfolio/ui";
+import { SurfaceFooter } from "@/components/ui/adp";
 
 describe("privacy policy", () => {
   it("names every subprocessor the code actually calls", () => {
@@ -58,7 +58,7 @@ describe("terms", () => {
 
 describe("footer", () => {
   it("links Privacy and Terms", () => {
-    const { container } = render(<PortfolioFooter demo={false} />);
+    const { container } = render(<SurfaceFooter demo={false} />);
     const footer = within(container);
     expect(footer.getByText("Privacy").getAttribute("href")).toBe("/privacy");
     expect(footer.getByText("Terms").getAttribute("href")).toBe("/terms");

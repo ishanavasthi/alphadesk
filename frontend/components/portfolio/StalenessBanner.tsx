@@ -1,6 +1,6 @@
 "use client";
 
-import { WarnBanner } from "./ui";
+import { WarnBanner } from "@/components/ui/adp";
 import { staleness, stalenessMessage } from "./staleness";
 
 /**

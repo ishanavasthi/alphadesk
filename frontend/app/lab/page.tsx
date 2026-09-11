@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowRight, KeyRound, Loader2, Plug } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ArrowRight, KeyRound, Loader2 } from "lucide-react";
+
 import { useIndMoney } from "@/components/AuthProvider";
-import { ResultsDashboard } from "@/components/ResultsDashboard";
-import { ResumeRunCard } from "@/components/ResumeRunCard";
+import { ResultsDashboard } from "@/components/lab/ResultsDashboard";
+import { ResumeRunCard } from "@/components/lab/ResumeRunCard";
+import { Button, Card, EmptyCallout } from "@/components/ui/adp";
 
 const SAMPLES = [
   "find me momentum stocks in IT sector",
@@ -13,9 +14,10 @@ const SAMPLES = [
   "high implied-volatility option setups this week",
 ];
 
-const PIPELINE = ["SCAN", "RESEARCH", "ANALYSE", "RISK", "EXECUTE"];
+/** The agents, in the order they consume one another. */
+const PIPELINE = ["Scanner", "Research", "Analyst", "Risk Manager", "Execution"];
 
-export default function Home() {
+export default function LabHome() {
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState<string | null>(null);
   const { authed, busy, connect } = useIndMoney();
@@ -44,113 +46,111 @@ export default function Home() {
   }
 
   return (
-    <main className="hero-glow">
-      <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-3xl flex-col justify-center px-4 py-16 sm:px-6">
-        <div className="eyebrow mb-4">Multi-agent equity research</div>
-        <h1 className="text-4xl font-semibold leading-[1.05] tracking-tight sm:text-5xl">
-          Type a thesis.
-          <br />
-          <span className="text-primary">The desk does the legwork.</span>
-        </h1>
-        <p className="mt-4 max-w-xl text-sm leading-relaxed text-muted-foreground">
-          Five agents scan the NSE, research each candidate, write the call, and
-          enforce risk guardrails. Nothing reaches your watchlist without your sign-off.
-        </p>
+    <main className="mt-8 max-w-2xl">
+      <h1 className="text-xl font-semibold tracking-[-0.02em]">
+        Type a thesis. The desk does the legwork.
+      </h1>
+      <p className="mt-1.5 text-[13px] text-muted-foreground">
+        Five agents read live NSE data, research each candidate, write the call and enforce the
+        risk guardrails. Nothing reaches your watchlist without your sign-off.
+      </p>
 
-        {/* Command-line search */}
+      <Card className="mt-5">
         <form
           onSubmit={(e) => {
             e.preventDefault();
             run(query);
           }}
-          className="mt-8"
+          className="flex flex-wrap gap-2"
         >
-          <div className="flex items-center gap-2 border border-border bg-card px-3 py-3 focus-within:border-primary/60 focus-within:ring-1 focus-within:ring-primary/30">
-            <span className="select-none font-mono text-sm font-semibold text-primary">
-              query{">"}
-            </span>
-            <input
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              disabled={!connected}
-              placeholder={
-                connected
-                  ? "describe what you're hunting for…"
-                  : "connect IND Money to run a query…"
-              }
-              className="min-w-0 flex-1 bg-transparent font-mono text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none"
-            />
-            <Button type="submit" size="sm" disabled={!query.trim() || !connected}>
-              Run
-              <ArrowRight />
-            </Button>
-          </div>
+          <label htmlFor="lab-query" className="sr-only">
+            What are you hunting for?
+          </label>
+          <input
+            id="lab-query"
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            disabled={!connected}
+            placeholder={
+              connected
+                ? "describe what you’re hunting for…"
+                : "connect IND Money to run a query…"
+            }
+            className="min-w-[12rem] flex-1 rounded-md border border-border bg-card px-3 py-2 text-[13px] text-foreground transition-colors placeholder:text-[var(--adp-faint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+          />
+          <Button type="submit" variant="primary" disabled={!query.trim() || !connected}>
+            Run
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Button>
         </form>
 
-        {/* Re-attach: a run started in this session survives a trip to /portfolio */}
-        <ResumeRunCard />
-
-        {/* Connection gate — the desk has no market data until IND Money is linked */}
-        {!connected && (
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border border-border border-l-2 border-l-flag bg-card p-3">
-            <div className="flex items-start gap-2.5">
-              <span className="text-flag">
-                {checking ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Plug className="h-4 w-4" />
-                )}
-              </span>
-              <div>
-                <div className="eyebrow text-flag">
-                  {checking ? "Checking IND Money connection" : "IND Money not connected"}
-                </div>
-                <div className="mt-0.5 text-[0.8rem] text-muted-foreground">
-                  {checking
-                    ? "Confirming the backend still holds a valid session…"
-                    : "Every agent reads NSE data through the IND Money MCP. Connect it first, or the scan returns 0 candidates."}
-                </div>
-              </div>
-            </div>
-            {!checking && (
-              <Button size="sm" onClick={connect} disabled={busy}>
-                {busy ? <Loader2 className="animate-spin" /> : <KeyRound />}
-                Connect IND Money
-              </Button>
-            )}
-          </div>
-        )}
-
-        {/* Sample queries */}
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-3 flex flex-wrap gap-1.5">
           {SAMPLES.map((s) => (
             <button
               key={s}
+              type="button"
               onClick={() => run(s)}
               disabled={!connected}
-              className="rounded-sm border border-border bg-secondary/40 px-2.5 py-1 text-left font-mono text-[0.7rem] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border disabled:hover:text-muted-foreground"
+              className="rounded-full border border-border bg-card px-3 py-1 text-left text-xs text-muted-foreground transition-colors hover:border-[var(--adp-accent-ring)] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border disabled:hover:text-muted-foreground"
             >
               {s}
             </button>
           ))}
         </div>
 
-        {/* Static pipeline preview tape */}
-        <div className="mt-12 flex items-center gap-2 border-t border-border pt-5">
-          <span className="eyebrow mr-1">Pipeline</span>
+        {/* The pipeline, before there is a run to show in it. Order is the real
+            dependency chain, so it previews what the strip will say. */}
+        <div className="mt-5 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-[var(--adp-hairline)] pt-3.5 text-xs text-muted-foreground">
+          <span className="text-[var(--adp-faint)]">Pipeline</span>
           {PIPELINE.map((p, i) => (
             <span key={p} className="flex items-center gap-2">
-              <span className="font-mono text-[0.7rem] tracking-[0.1em] text-muted-foreground">
-                {p}
-              </span>
-              {i < PIPELINE.length - 1 && (
-                <span className="text-border">▸</span>
-              )}
+              {p}
+              {i < PIPELINE.length - 1 ? (
+                <span className="text-[var(--adp-faint)]" aria-hidden>
+                  →
+                </span>
+              ) : null}
             </span>
           ))}
         </div>
-      </div>
+      </Card>
+
+      {/* Re-attach: a run started in this session survives a trip to /portfolio */}
+      <ResumeRunCard />
+
+      {/* Connection gate — the desk has no market data until IND Money is linked */}
+      {!connected ? (
+        <div className="mt-4 flex flex-col gap-3">
+          <EmptyCallout icon={checking ? "◌" : "⚿"}>
+            {checking ? (
+              <>
+                <b className="font-semibold text-foreground">
+                  Checking your IND Money connection.
+                </b>{" "}
+                Confirming the backend still holds a valid session…
+              </>
+            ) : (
+              <>
+                <b className="font-semibold text-foreground">IND Money isn’t connected.</b> Every
+                agent reads NSE data through it — without a link the scan returns 0 candidates.
+              </>
+            )}
+          </EmptyCallout>
+          {!checking ? (
+            <div>
+              <Button variant="accent" onClick={connect} disabled={busy}>
+                {busy ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <KeyRound className="h-3.5 w-3.5" />
+                )}
+                Connect IND Money
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </main>
   );
 }

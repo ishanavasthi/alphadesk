@@ -3,7 +3,7 @@
 import { HoldingsTable } from "@/components/portfolio/HoldingsTable";
 import { usePortfolio } from "@/components/portfolio/PortfolioProvider";
 import { inr, num } from "@/components/portfolio/format";
-import { Badge, Card, CardHead, PortfolioFooter } from "@/components/portfolio/ui";
+import { Badge, Card, CardHead, SurfaceFooter } from "@/components/ui/adp";
 import {
   RateLimitedNotice,
   SourceEmptyNotice,
@@ -98,7 +98,7 @@ export default function PortfolioHoldingsPage() {
         ) : null}
       </Card>
 
-      <PortfolioFooter demo={demo} />
+      <SurfaceFooter demo={demo} />
     </>
   );
 }

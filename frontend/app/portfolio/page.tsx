@@ -11,7 +11,7 @@ import { usePortfolio } from "@/components/portfolio/PortfolioProvider";
 import { StalenessBanner } from "@/components/portfolio/StalenessBanner";
 import { StatCards } from "@/components/portfolio/StatCards";
 import { num, typeLabel } from "@/components/portfolio/format";
-import { Badge, Button, Card, CardHead, PortfolioFooter } from "@/components/portfolio/ui";
+import { Badge, Button, Card, CardHead, SurfaceFooter } from "@/components/ui/adp";
 import { RateLimitedNotice } from "@/components/portfolio/states";
 
 /**
@@ -152,7 +152,7 @@ export default function PortfolioOverviewPage() {
         </div>
       ) : null}
 
-      <PortfolioFooter demo={demo} />
+      <SurfaceFooter demo={demo} />
     </>
   );
 }

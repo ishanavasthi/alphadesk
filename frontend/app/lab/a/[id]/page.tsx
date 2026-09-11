@@ -3,12 +3,14 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { Loader2 } from "lucide-react";
-import { getAnalysis, getRunStatus, type AnalysisPayload, type RunStatusPayload } from "@/lib/api";
-import { AnalysisView } from "@/components/AnalysisView";
-import { forgetLabRun, readLabRun } from "@/components/ResumeRunCard";
+import { ArrowLeft } from "lucide-react";
 
-const PIPELINE = ["SCAN", "RESEARCH", "ANALYSE", "RISK", "EXECUTE"];
+import { AnalysisView } from "@/components/lab/AnalysisView";
+import { PipelineStrip, type Stage } from "@/components/lab/PipelineStrip";
+import { forgetLabRun, readLabRun } from "@/components/lab/ResumeRunCard";
+import { RunHeader } from "@/components/lab/RunHeader";
+import { Button, EmptyCallout } from "@/components/ui/adp";
+import { getAnalysis, getRunStatus, type AnalysisPayload, type RunStatusPayload } from "@/lib/api";
 
 /** How often to re-ask while the run is still working. */
 const POLL_MS = 3000;
@@ -71,22 +73,26 @@ export default function AnalysisPage() {
 
   if (data === undefined) {
     return (
-      <div className="flex h-[60vh] items-center justify-center">
-        <span className="eyebrow caret">Loading analysis</span>
+      <div className="mt-8">
+        <EmptyCallout icon="◌">Loading this analysis…</EmptyCallout>
       </div>
     );
   }
 
   if (!data) {
     return (
-      <div className="mx-auto flex h-[60vh] max-w-md flex-col items-center justify-center gap-3 px-4 text-center">
-        <p className="text-sm text-muted-foreground">
-          This analysis isn&apos;t available. It may still be running, or the backend
-          restarted (runs are kept in memory).
-        </p>
-        <Link href="/lab" className="font-mono text-xs uppercase tracking-[0.1em] text-primary hover:underline">
-          ← Start a new query
-        </Link>
+      <div className="mt-8 flex max-w-xl flex-col items-start gap-4">
+        <EmptyCallout icon="⤫">
+          <b className="font-semibold text-foreground">This analysis isn’t available.</b> It may
+          still be running, or the backend restarted — Lab runs are held in memory, so a restart
+          clears them. Your paper watchlist is unaffected.
+        </EmptyCallout>
+        <Button variant="outline" asChild>
+          <Link href="/lab">
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Start a new query
+          </Link>
+        </Button>
       </div>
     );
   }
@@ -94,52 +100,44 @@ export default function AnalysisPage() {
   return <AnalysisView payload={data} />;
 }
 
-/** The in-flight view: everything known about a run that has not finished. */
+/**
+ * The in-flight view: everything known about a run that has not finished.
+ *
+ * The strip is drawn honestly — this page polls a status endpoint and cannot
+ * know which agent is mid-sentence, so it says the run is working rather than
+ * animating a timeline it does not have.
+ */
 function RunningView({ run }: { run: RunStatusPayload }) {
-  return (
-    <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
-        <div className="min-w-0">
-          <div className="font-mono text-sm">
-            <span className="text-primary">query{">"}</span>{" "}
-            <span className="text-foreground">{run.query}</span>
-          </div>
-          <div className="mt-1 flex items-center gap-3 eyebrow">
-            <span>RUN {run.run_id.slice(0, 8)}</span>
-            <span className="pill pill-flag">running</span>
-          </div>
-        </div>
-        <Link
-          href="/lab"
-          className="font-mono text-xs uppercase tracking-[0.1em] text-primary hover:underline"
-        >
-          ← New query
-        </Link>
-      </div>
+  const stages: Stage[] = [
+    { key: "scanner", name: "Scanner", status: "active" },
+    { key: "research", name: "Research", status: "pending" },
+    { key: "analyst", name: "Analyst", status: "pending" },
+    { key: "risk_manager", name: "Risk Manager", status: "pending" },
+    { key: "execution", name: "Execution", status: "pending" },
+  ];
 
-      <div className="mt-5 border border-border border-l-2 border-l-flag bg-card p-3">
-        <div className="flex items-start gap-2.5">
-          <Loader2 className="mt-0.5 h-4 w-4 animate-spin text-flag" />
-          <div>
-            <div className="eyebrow text-flag">Run in progress</div>
-            <div className="mt-0.5 text-[0.8rem] text-muted-foreground">
-              The desk is still working. The step-by-step timeline streams to the
-              view that started the run; this page checks every few seconds and
-              renders the result as soon as it lands.
-            </div>
-          </div>
-        </div>
-        <div className="mt-4 flex items-center gap-2 border-t border-border pt-3">
-          <span className="eyebrow mr-1">Pipeline</span>
-          {PIPELINE.map((p, i) => (
-            <span key={p} className="flex items-center gap-2">
-              <span className="font-mono text-[0.7rem] tracking-[0.1em] text-muted-foreground">
-                {p}
-              </span>
-              {i < PIPELINE.length - 1 && <span className="text-border">▸</span>}
-            </span>
-          ))}
-        </div>
+  return (
+    <div className="pb-2">
+      <RunHeader
+        query={run.query}
+        runId={run.run_id}
+        status="running"
+        actions={
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/lab">
+              <ArrowLeft className="h-3.5 w-3.5" />
+              New query
+            </Link>
+          </Button>
+        }
+      />
+      <div className="mt-5 flex flex-col gap-4">
+        <PipelineStrip stages={stages} />
+        <EmptyCallout icon="◌">
+          <b className="font-semibold text-foreground">The desk is still working.</b> The
+          step-by-step timeline streams to the view that started the run; this page re-checks every
+          few seconds and renders the result as soon as it lands.
+        </EmptyCallout>
       </div>
     </div>
   );

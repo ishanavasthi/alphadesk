@@ -40,7 +40,17 @@ export default function PortfolioLayout({ children }: { children: ReactNode }) {
   return (
     // `id` is how `ThemeBootstrap` and `ThemeToggle` reach this element: both
     // run outside React, before and after hydration respectively.
-    <div id="adp-root" data-adp className="min-h-screen bg-background text-foreground">
+    // `suppressHydrationWarning`: the bootstrap's inline script stamps
+    // `data-adp-theme` here before React hydrates — that is the point of it, and
+    // it is by construction an attribute the server HTML does not have. This
+    // keeps the intended mismatch silent and a real one audible; it covers this
+    // element only, not its children.
+    <div
+      id="adp-root"
+      suppressHydrationWarning
+      data-adp
+      className="min-h-screen bg-background text-foreground"
+    >
       <ThemeBootstrap />
       <div className="mx-auto max-w-[1120px] px-4 pb-16 sm:px-6">
         <PortfolioProvider>

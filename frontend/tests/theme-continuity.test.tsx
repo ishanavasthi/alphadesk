@@ -161,6 +161,9 @@ describe("every themed surface can read the stored choice", () => {
     expect(THEMED.map(([file]) => file).sort()).toEqual([
       "app/(marketing)/layout.tsx",
       "app/demo/layout.tsx",
+      // The Lab joined the token set at issue #18, which is what makes
+      // Portfolio → Lab → Portfolio one theme instead of two.
+      "app/lab/layout.tsx",
       "app/portfolio/layout.tsx",
       "components/shell/AuthFooterShell.tsx",
     ]);

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { getMovers, type MoverRow, type MoversResponse } from "@/lib/api";
-import { Badge, Button, Card, CardHead, EmptyCallout } from "@/components/portfolio/ui";
+import { Badge, Button, Card, CardHead, EmptyCallout } from "@/components/ui/adp";
 import { inrSigned, num, pctSigned, toneClass } from "@/components/portfolio/format";
 import { useAmountsHidden } from "@/components/portfolio/privacy";
 import { addDays, attributedDay } from "@/components/portfolio/staleness";

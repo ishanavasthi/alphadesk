@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlphaDesk Lab — E · Research Brief</title>
+<link rel="stylesheet" href="../shadcn.css">
+<link rel="stylesheet" href="lab.css">
+<style>
+  /* E — Research Brief.
+     The run produces a document. Borrows the AI-overview language the reader
+     already trusts on the dashboard (a2-overview.html): a narrative whose every
+     claim carries an inline metric chip, an agent rail showing the fan-out, and
+     a rail listing every figure the narrative is allowed to cite. */
+  .simstrip{display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+    border:1px solid var(--lab-bd);background:var(--lab-bg);color:var(--lab-ink);
+    border-radius:var(--radius);padding:9px 14px;font-size:12.5px;margin-bottom:22px}
+
+  .agent.paused .st{background:var(--warn-mark);animation:none}
+  .doc{max-width:820px}
+  .docmeta{display:flex;gap:9px;align-items:center;flex-wrap:wrap;font-size:12px;
+    color:var(--faint);border-bottom:1px solid var(--border);padding-bottom:14px;margin-bottom:18px}
+  .docmeta .id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted)}
+  .docmeta .spacer{flex:1}
+
+  .lede{font-size:19px;line-height:1.5;font-weight:500;letter-spacing:-.015em;
+    color:var(--ink);max-width:34ch;margin-bottom:16px;text-wrap:balance}
+
+  .narr{font-size:14px;line-height:1.72;color:var(--prose);max-width:66ch}
+  .narr p+p{margin-top:11px}
+
+  .rail{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:1px;
+    background:var(--border);border:1px solid var(--border);border-radius:6px;overflow:hidden;
+    margin:18px 0}
+  .rail div{background:var(--card);padding:10px 12px}
+  .rail .k{font-size:11px;color:var(--muted)}
+  .rail .v{font-size:15px;font-weight:600;letter-spacing:-.01em;
+    font-variant-numeric:tabular-nums;margin-top:2px}
+  .railcap{font-size:11.5px;color:var(--faint);margin-top:-10px;margin-bottom:20px}
+
+  .gate{display:flex;gap:12px;align-items:center;border:1px solid var(--warn-bd);
+    background:var(--warn-bg);color:var(--warn-ink);border-radius:var(--radius);
+    padding:13px 16px;margin:22px 0;flex-wrap:wrap}
+  .gate .g{flex:1;min-width:220px}
+  .gate .t{font-size:13.5px;font-weight:600;margin-bottom:1px}
+  .gate .d{font-size:12.5px;opacity:.9}
+
+  /* A candidate section. The number is the sector slot it took — three exist,
+     so a rejected name gets a dash rather than a rank. */
+  .entry{border-top:1px solid var(--border);padding-top:22px;margin-top:26px}
+  .entry .eh{display:grid;grid-template-columns:46px 1fr auto;gap:14px;align-items:start;margin-bottom:12px}
+  @media (max-width:560px){.entry .eh{grid-template-columns:34px 1fr;gap:10px}
+    .entry .eh .bd{grid-column:2}}
+  .entry .slot{font-size:24px;font-weight:600;letter-spacing:-.03em;color:var(--accent);
+    line-height:1;font-variant-numeric:tabular-nums;padding-top:2px}
+  .entry.out .slot{color:var(--faint)}
+  .entry .ttl h2{font-size:19px;font-weight:600;letter-spacing:-.02em;line-height:1.2}
+  .entry .ttl .co{font-size:12.5px;color:var(--muted);margin-top:2px}
+  .entry .bd{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+  .entry.out{opacity:.78}
+
+  .stat{display:flex;gap:22px;flex-wrap:wrap;margin-bottom:14px;
+    border-left:2px solid var(--border);padding-left:14px}
+  .stat div .k{font-size:11px;color:var(--muted)}
+  .stat div .v{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;
+    letter-spacing:-.01em;margin-top:1px}
+
+  .cases{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-bottom:14px}
+  @media (max-width:640px){.cases{grid-template-columns:1fr;gap:14px}}
+  .cases .h{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;margin-bottom:5px}
+  .cases .bull .h{color:var(--good)}
+  .cases .bear .h{color:var(--bad)}
+  .cases p{font-size:13px;line-height:1.65;color:var(--prose)}
+
+  .tags{display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+  .tags .lb{font-size:11px;color:var(--muted);margin-right:2px}
+  .tags .t{font-size:11.5px;border:1px solid var(--border);background:var(--card);
+    color:var(--muted);border-radius:999px;padding:2px 9px}
+
+  .verdict{border-left:2px solid var(--good);padding:2px 0 2px 14px;
+    font-size:12.5px;line-height:1.6;color:var(--muted);max-width:64ch}
+  .verdict.flag{border-left-color:var(--warn-ink)}
+  .verdict.rej{border-left-color:var(--bad)}
+  .verdict b{color:var(--ink);font-weight:600}
+
+  .degraded{border:1px dashed var(--border);border-radius:var(--radius);padding:14px 16px;
+    font-size:12.5px;color:var(--muted);line-height:1.6;max-width:66ch}
+  .degraded b{color:var(--ink)}
+
+  .scrim{border:1px solid var(--border);border-radius:10px;background:var(--bg);padding:26px;
+    display:grid;place-items:center}
+  .dlg{width:100%;max-width:430px;background:var(--card);border:1px solid var(--border);
+    border-radius:var(--radius);box-shadow:0 10px 34px rgba(0,0,0,.16);padding:20px}
+  .dlg h3{font-size:15px;font-weight:600;letter-spacing:-.01em;margin:8px 0 5px}
+  .dlg .d{font-size:12.5px;color:var(--muted);line-height:1.55;margin-bottom:14px}
+  .dlg ul{list-style:none;display:grid;gap:6px;margin-bottom:16px}
+  .dlg li{display:flex;align-items:center;gap:9px;border:1px solid var(--border);
+    border-radius:6px;padding:8px 11px;font-size:13px}
+  .dlg li .s{font-weight:600}
+  .dlg li .x{margin-left:auto;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .dlg .ftr{display:flex;gap:8px;justify-content:flex-end}
+
+  .queryrow{display:flex;gap:8px}
+  .queryrow input{flex:1;border:1px solid var(--border);border-radius:6px;padding:8px 11px;
+    font:13px inherit;color:var(--ink);background:var(--card)}
+  .queryrow input::placeholder{color:var(--faint)}
+  .samples{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+  .samples span{font-size:12px;border:1px solid var(--border);background:var(--card);
+    color:var(--muted);border-radius:999px;padding:4px 11px}
+</style></head>
+<body>
+<div class="shell">
+  <header class="top">
+    <span class="logo">alpha<b>Desk</b></span>
+    <nav><a href="#">Portfolio</a><a href="#" aria-current="page">Lab</a></nav>
+    <span class="spacer"></span>
+    <button class="tgl" type="button"><span class="moon">◑</span><span class="sun">◐</span> Theme</button>
+    <span class="chip">E · Research Brief — static mock</span>
+  </header>
+
+  <div class="simstrip">
+    <span class="badge lab">Lab · simulation</span>
+    <span><b>A live simulation.</b> This brief is generated, not advice. Runs aren’t saved and
+      no orders are placed — approving writes to a paper watchlist only.</span>
+  </div>
+
+  <div class="doc">
+    <h1>Run brief</h1>
+    <div class="sub">oversold pharma large-caps with a catalyst</div>
+
+    <div class="docmeta">
+      <span class="id">run a7f3c1d9</span><span>·</span>
+      <span>11 Sep 2026, 10:42 IST</span><span>·</span><span>38.4s</span>
+      <span class="spacer"></span>
+      <span class="badge warn">Awaiting your approval</span>
+    </div>
+
+    <div class="agents" style="margin-bottom:18px">
+      <span class="agent"><span class="st"></span>Scanner · 18 movers</span>
+      <span class="agent"><span class="st"></span>Research · 6 reports</span>
+      <span class="agent"><span class="st"></span>Analyst · 5 calls</span>
+      <span class="agent"><span class="st"></span>Risk Manager · 3 cleared</span>
+      <span class="agent paused"><span class="st"></span>Execution · paused at the gate</span>
+    </div>
+
+    <div class="lede">Three of five pharma names cleared the desk’s guardrails.</div>
+
+    <div class="narr">
+      <p>The scan returned <span class="mchip">18</span> NSE movers against the query; six were
+      worth a full read and five came back with a call. Every name that survived is
+      <b>Pharmaceuticals</b>, which matters — the sector cap allows <span class="mchip">3</span>
+      positions, and it bound.</p>
+
+      <p><b>SUNPHARMA</b> is the strongest of them at confidence <span class="mchip">0.82</span>,
+      clear of the <span class="mchip">0.75</span> pass line, with <span class="mchip">+13.3%</span>
+      to the analyst’s target. <b>CIPLA</b> follows at <span class="mchip">0.76</span>.
+      <b>DRREDDY</b> cleared at <span class="mchip">0.73</span> but sits in the caution band between
+      the <span class="mchip">0.70</span> floor and the pass line, so it carries a FLAG rather than a
+      PASS — approvable, with the bear case read first.</p>
+
+      <p>Two were stopped. <b>LUPIN</b> scored <span class="mchip">0.79</span> — higher than two names
+      that cleared — and was still rejected, because the three Pharmaceuticals slots were already
+      taken. <b>AUROPHARMA</b> came in at <span class="mchip">0.68</span>, below the floor, and issued
+      no target; the figure reads “—” rather than a computed number.</p>
+    </div>
+
+    <div class="rail">
+      <div><div class="k">Scanned</div><div class="v">18</div></div>
+      <div><div class="k">Researched</div><div class="v">6</div></div>
+      <div><div class="k">Calls written</div><div class="v">5</div></div>
+      <div><div class="k">Cleared</div><div class="v up">3</div></div>
+      <div><div class="k">Rejected</div><div class="v down">2</div></div>
+      <div><div class="k">Median confidence</div><div class="v">0.76</div></div>
+    </div>
+    <div class="railcap">Every figure the narrative above may cite. Nothing in the prose is a number
+      that isn’t on this rail. Synthetic in this mock.</div>
+
+    <div class="gate">
+      <div class="g">
+        <div class="t">3 candidates are waiting on you</div>
+        <div class="d">The desk stopped before staging anything. Approving adds them to the paper watchlist.</div>
+      </div>
+      <span class="btnrow"><span class="btn ghost">Discard</span><span class="btn primary">Review &amp; approve</span></span>
+    </div>
+
+    <article class="entry">
+      <div class="eh">
+        <div class="slot">1</div>
+        <div class="ttl"><h2>SUNPHARMA</h2><div class="co">Sun Pharmaceutical Industries · large cap</div></div>
+        <div class="bd"><span class="badge good">Buy</span><span class="badge good">PASS</span></div>
+      </div>
+      <div class="stat">
+        <div><div class="k">Last</div><div class="v">₹1,712</div></div>
+        <div><div class="k">Target</div><div class="v">₹1,940</div></div>
+        <div><div class="k">To target</div><div class="v up">+13.3%</div></div>
+        <div><div class="k">Confidence</div><div class="v">0.82</div></div>
+        <div><div class="k">Horizon</div><div class="v">3–6 months</div></div>
+      </div>
+      <div class="cases">
+        <div class="bull"><div class="h">Bull</div><p>Three US generic approvals are pending and Halol is clear of its last FDA observation; the specialty book — Ilumya, Winlevi — is compounding off a small base.</p></div>
+        <div class="bear"><div class="h">Bear</div><p>Specialty is ramping slower than guided and US base-price erosion has not stopped. A single fresh 483 at Halol resets the whole thesis.</p></div>
+      </div>
+      <div class="tags"><span class="lb">Catalysts</span><span class="t">Halol clearance</span>
+        <span class="t">Ilumya EU launch</span><span class="t">Q2 specialty revenue</span>
+        <span class="lb" style="margin-left:8px">Risks</span><span class="t">US price erosion</span>
+        <span class="t">Litigation provision</span><span class="t">USD/INR</span></div>
+      <div class="verdict"><b>Risk Manager · PASS.</b> Cleared every guardrail; confidence is above the
+        0.75 pass line and this took sector slot 1 of 3.</div>
+    </article>
+
+    <article class="entry">
+      <div class="eh">
+        <div class="slot">2</div>
+        <div class="ttl"><h2>CIPLA</h2><div class="co">Cipla Ltd · large cap</div></div>
+        <div class="bd"><span class="badge good">Buy</span><span class="badge good">PASS</span></div>
+      </div>
+      <div class="stat">
+        <div><div class="k">Last</div><div class="v">₹1,466</div></div>
+        <div><div class="k">Target</div><div class="v">₹1,585</div></div>
+        <div><div class="k">To target</div><div class="v up">+8.1%</div></div>
+        <div><div class="k">Confidence</div><div class="v">0.76</div></div>
+        <div><div class="k">Horizon</div><div class="v">6–12 months</div></div>
+      </div>
+      <div class="cases">
+        <div class="bull"><div class="h">Bull</div><p>US inhaler share keeps stepping up quarter on quarter, and the India branded book grows at roughly sector rate on better margins.</p></div>
+        <div class="bear"><div class="h">Bear</div><p>The gRevlimid tail fades from FY27 and nothing filed today replaces that profit pool.</p></div>
+      </div>
+      <div class="tags"><span class="lb">Catalysts</span><span class="t">Albuterol share</span>
+        <span class="t">India price revision</span><span class="t">Lanreotide launch</span>
+        <span class="lb" style="margin-left:8px">Risks</span><span class="t">gRevlimid cliff</span>
+        <span class="t">Goa plant status</span><span class="t">NLEM price control</span></div>
+      <div class="verdict"><b>Risk Manager · PASS.</b> Cleared every guardrail. Sector slot 2 of 3.</div>
+    </article>
+
+    <article class="entry">
+      <div class="eh">
+        <div class="slot">3</div>
+        <div class="ttl"><h2>DRREDDY</h2><div class="co">Dr. Reddy’s Laboratories · large cap</div></div>
+        <div class="bd"><span class="badge good">Buy</span><span class="badge warn">FLAG</span></div>
+      </div>
+      <div class="stat">
+        <div><div class="k">Last</div><div class="v">₹5,884</div></div>
+        <div><div class="k">Target</div><div class="v">₹6,420</div></div>
+        <div><div class="k">To target</div><div class="v up">+9.1%</div></div>
+        <div><div class="k">Confidence</div><div class="v">0.73</div></div>
+        <div><div class="k">Horizon</div><div class="v">6–12 months</div></div>
+      </div>
+      <div class="cases">
+        <div class="bull"><div class="h">Bull</div><p>gRevlimid cash has funded a biosimilar pipeline into a net-cash balance sheet, and the stock trades below its own five-year multiple.</p></div>
+        <div class="bear"><div class="h">Bear</div><p>That same gRevlimid revenue steps down sharply in FY27 while the biosimilar launches are back-end loaded. The gap year is real.</p></div>
+      </div>
+      <div class="tags"><span class="lb">Catalysts</span><span class="t">Semaglutide Canada filing</span>
+        <span class="t">Rituximab biosimilar</span>
+        <span class="lb" style="margin-left:8px">Risks</span><span class="t">gRevlimid step-down</span>
+        <span class="t">FDA inspections</span><span class="t">Brand integration</span></div>
+      <div class="verdict flag"><b>Risk Manager · FLAG.</b> Confidence 0.73 lands between the 0.70 floor
+        and the 0.75 pass line. Approvable, but the caution is the point — read the bear case.
+        Sector slot 3 of 3.</div>
+    </article>
+
+    <article class="entry out">
+      <div class="eh">
+        <div class="slot">—</div>
+        <div class="ttl"><h2>LUPIN</h2><div class="co">Lupin Ltd · large cap · not staged</div></div>
+        <div class="bd"><span class="badge good">Buy</span><span class="badge bad">REJECT</span></div>
+      </div>
+      <div class="stat">
+        <div><div class="k">Last</div><div class="v">₹2,088</div></div>
+        <div><div class="k">Target</div><div class="v">₹2,310</div></div>
+        <div><div class="k">To target</div><div class="v">+10.6%</div></div>
+        <div><div class="k">Confidence</div><div class="v">0.79</div></div>
+      </div>
+      <div class="cases">
+        <div class="bull"><div class="h">Bull</div><p>Albuterol and Tiotropium share gains on a cleaner cost base have re-rated the US book.</p></div>
+        <div class="bear"><div class="h">Bear</div><p>The re-rating already assumes flawless execution; at this price nothing pays you for a miss.</p></div>
+      </div>
+      <div class="verdict rej"><b>Risk Manager · REJECT.</b> Sector cap — Pharmaceuticals already holds
+        three cleared names in this run. The call itself would have passed on its own merits, which is
+        why it still appears here.</div>
+    </article>
+
+    <article class="entry out">
+      <div class="eh">
+        <div class="slot">—</div>
+        <div class="ttl"><h2>AUROPHARMA</h2><div class="co">Aurobindo Pharma · large cap · not staged</div></div>
+        <div class="bd"><span class="badge type">Hold</span><span class="badge bad">REJECT</span></div>
+      </div>
+      <div class="stat">
+        <div><div class="k">Last</div><div class="v">₹1,131</div></div>
+        <div><div class="k">Target</div><div class="v na">—</div></div>
+        <div><div class="k">To target</div><div class="v na">—</div></div>
+        <div><div class="k">Confidence</div><div class="v">0.68</div></div>
+      </div>
+      <div class="cases">
+        <div class="bear" style="grid-column:1/-1"><div class="h">Bear</div><p>Unit-1 injectable remediation is unfinished and Vizag carries an open observation. Too much of the case depends on regulatory timing nobody can call.</p></div>
+      </div>
+      <div class="verdict rej"><b>Risk Manager · REJECT.</b> Confidence 0.68 is below the 0.70 floor.
+        No target was issued, so the target reads “—” rather than a computed number.</div>
+    </article>
+
+    <div class="secthead"><h2>When the summary can’t be written</h2>
+      <span class="hint">The degraded state is part of the brief</span></div>
+    <div class="degraded">
+      <b>Run summary unavailable.</b> The narrative above is generated and the model didn’t answer this
+      time. Every candidate, figure and risk verdict below it is computed by the pipeline and still
+      renders — the brief loses its opening paragraph, not its contents.
+    </div>
+  </div>
+
+  <div class="secthead"><h2>Approval gate</h2><span class="hint">The dialog behind “Review &amp; approve”</span></div>
+  <div class="scrim">
+    <div class="dlg">
+      <span class="badge warn">Human approval required</span>
+      <h3>Add 3 stocks to the paper watchlist?</h3>
+      <div class="d">These cleared the risk guardrails. Approving stages them into your paper
+        watchlist. No real order is placed — the broker layer is a stub.</div>
+      <ul>
+        <li><span class="s">SUNPHARMA</span><span class="badge good">PASS</span><span class="x">0.82</span></li>
+        <li><span class="s">CIPLA</span><span class="badge good">PASS</span><span class="x">0.76</span></li>
+        <li><span class="s">DRREDDY</span><span class="badge warn">FLAG</span><span class="x">0.73</span></li>
+      </ul>
+      <div class="ftr"><span class="btn destructive">Reject run</span><span class="btn primary">Approve 3</span></div>
+    </div>
+  </div>
+
+  <div class="secthead"><h2>The rest of the surface</h2><span class="hint">Same language, every state</span></div>
+  <div class="frames">
+
+    <div class="frame">
+      <div class="cap">Query desk <span class="route">/lab</span></div>
+      <div class="body">
+        <div style="font-size:15px;font-weight:600;letter-spacing:-.02em;margin-bottom:4px">Ask the desk a question. Get a brief.</div>
+        <div style="font-size:12.5px;color:var(--muted);margin-bottom:13px">Every claim in it carries the figure it rests on.</div>
+        <div class="queryrow"><input placeholder="describe what you’re hunting for…"><span class="btn primary">Run</span></div>
+        <div class="samples"><span>momentum in IT large-caps</span><span>oversold pharma with a catalyst</span></div>
+      </div>
+    </div>
+
+    <div class="frame">
+      <div class="cap">Run in flight <span class="route">/lab/a/a7f3c1d9</span></div>
+      <div class="body">
+        <div class="agents" style="margin-bottom:12px">
+          <span class="agent"><span class="st"></span>Scanner</span>
+          <span class="agent run"><span class="st"></span>Research 3 of 6</span>
+          <span class="agent idle"><span class="st"></span>Analyst</span>
+          <span class="agent idle"><span class="st"></span>Risk</span>
+        </div>
+        <div class="skel" style="width:90%;margin-bottom:7px"></div>
+        <div class="skel" style="width:72%;margin-bottom:7px"></div>
+        <div class="skel" style="width:58%"></div>
+      </div>
+    </div>
+
+    <div class="frame">
+      <div class="cap">Not connected <span class="route">409</span></div>
+      <div class="body">
+        <div class="empty" style="margin-bottom:12px"><span class="ico">⚿</span>
+          <span><b>IND Money isn’t connected.</b> Every agent reads NSE data through it — without a link the scan returns 0 candidates.</span></div>
+        <span class="btn accent">Connect IND Money</span>
+      </div>
+    </div>
+
+    <div class="frame">
+      <div class="cap">Nothing cleared <span class="route">all REJECT</span></div>
+      <div class="body">
+        <div class="empty"><span class="ico">◌</span>
+          <span><b>No candidate cleared the guardrails.</b> The brief still writes itself — it just
+          reports five rejections and why each one happened.</span></div>
+      </div>
+    </div>
+
+    <div class="frame">
+      <div class="cap">Approved <span class="route">paper watchlist</span></div>
+      <div class="body">
+        <div style="display:flex;gap:9px;align-items:center;border:1px solid var(--good-bd);
+          background:var(--good-bg);color:var(--good-ink);border-radius:var(--radius);padding:10px 13px;font-size:12.5px">
+          <span>✓</span><span><b>3 added to your paper watchlist.</b> SUNPHARMA · CIPLA · DRREDDY</span></div>
+        <div style="font-size:12px;color:var(--muted);margin-top:10px">The watchlist persists to your account. The brief does not.</div>
+      </div>
+    </div>
+
+    <div class="frame">
+      <div class="cap">Run gone <span class="route">backend restarted</span></div>
+      <div class="body">
+        <div class="empty"><span class="ico">⤫</span>
+          <span><b>This brief isn’t available.</b> Lab runs are held in memory, so a backend restart clears them. The paper watchlist is unaffected.</span></div>
+        <div style="margin-top:12px"><span class="btn outline">← Start a new query</span></div>
+      </div>
+    </div>
+
+  </div>
+
+  <footer class="foot">
+    <span class="dot"></span>
+    <span>Synthetic demo data · descriptive analytics only · not investment advice</span>
+    <a href="#">Privacy</a><a href="#">Terms</a>
+  </footer>
+</div>
+<script>
+  document.querySelector('.tgl').addEventListener('click', function () {
+    var r = document.documentElement;
+    var osDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    var cur = r.dataset.theme || (osDark ? 'dark' : 'light');
+    r.dataset.theme = cur === 'dark' ? 'light' : 'dark';
+  });
+</script>
+</body></html>

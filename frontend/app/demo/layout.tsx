@@ -31,7 +31,14 @@ export const metadata: Metadata = {
  */
 export default function DemoLayout({ children }: { children: ReactNode }) {
   return (
-    <div id="adp-root" data-adp className="min-h-screen bg-background text-foreground">
+    // `suppressHydrationWarning`: the bootstrap stamps `data-adp-theme` here
+    // before React hydrates, so the server HTML is meant to differ.
+    <div
+      id="adp-root"
+      suppressHydrationWarning
+      data-adp
+      className="min-h-screen bg-background text-foreground"
+    >
       <ThemeBootstrap />
       <DemoBanner />
       <main className="mx-auto max-w-[1120px] px-4 pb-16 pt-6 sm:px-6">{children}</main>

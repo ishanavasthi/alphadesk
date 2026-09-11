@@ -24,7 +24,7 @@ const { startAuthLogin, getAuthStatus, wakeBackend, logoutAuth } = vi.hoisted(()
 vi.mock("@/lib/api", () => ({ startAuthLogin, getAuthStatus, wakeBackend, logoutAuth }));
 
 import { AuthProvider } from "@/components/AuthProvider";
-import { AuthButton } from "@/components/AuthButton";
+import { LabTopBar } from "@/components/lab/LabTopBar";
 import {
   CONSENT_NEVER,
   CONSENT_READS,
@@ -44,10 +44,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/**
+ * The Lab's Connect entry point.
+ *
+ * It was the standalone `AuthButton` until issue #18 folded it into `LabTopBar`
+ * as the bar's one call to action. What is under test is unchanged — the path
+ * from a Connect button to `/auth/login` — so this renders the bar that now
+ * holds it rather than a component kept alive only for the test.
+ */
 function renderButton() {
   return render(
     <AuthProvider>
-      <AuthButton />
+      <LabTopBar />
     </AuthProvider>,
   );
 }

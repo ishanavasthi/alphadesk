@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 // footer's colours are defined here, exactly as the marketing and portfolio
 // shells pull it in.
 import "../../app/portfolio/portfolio.css";
-import { PortfolioFooter } from "@/components/portfolio/ui";
+import { SurfaceFooter } from "@/components/ui/adp";
 
 /**
  * Wraps a bare auth route (`/sign-in`, `/sign-up`) so the site footer — and the
@@ -22,7 +22,7 @@ export function AuthFooterShell({ children }: { children: ReactNode }) {
     <div data-adp className="flex min-h-screen flex-col bg-background text-foreground">
       <div className="flex-1">{children}</div>
       <div className="mx-auto w-full max-w-[1120px] px-4 pb-10 sm:px-6">
-        <PortfolioFooter demo={false} />
+        <SurfaceFooter demo={false} />
       </div>
     </div>
   );

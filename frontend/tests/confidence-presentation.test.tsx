@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 
-import { RecommendationCard } from "@/components/RecommendationCard";
+import { RecommendationCard } from "@/components/lab/RecommendationCard";
 import type { AnalystRecommendation, RiskAssessment } from "@/lib/api";
 
 /**

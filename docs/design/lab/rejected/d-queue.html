@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlphaDesk Lab — D · Approval Queue</title>
+<link rel="stylesheet" href="../shadcn.css">
+<link rel="stylesheet" href="lab.css">
+<style>
+  /* D — Approval Queue.
+     Designed around the only thing the Lab asks of a human: sign-off. Master
+     list left, full brief right, a standing approval bar that always says what
+     will happen and to how many names. The pipeline shrinks to a status line
+     because by the time you are reading, it is already done. */
+  .simstrip{display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+    border:1px solid var(--lab-bd);background:var(--lab-bg);color:var(--lab-ink);
+    border-radius:var(--radius);padding:9px 14px;font-size:12.5px;margin-bottom:22px}
+
+  .runstrip{display:flex;gap:16px;align-items:center;flex-wrap:wrap;background:var(--card);
+    border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 1px 2px var(--shadow);
+    padding:13px 16px;margin-bottom:18px}
+  .runstrip .q{flex:1;min-width:220px}
+  .runstrip .q .lbl{font-size:11px;color:var(--muted);margin-bottom:2px}
+  .runstrip .q .txt{font-size:15px;font-weight:600;letter-spacing:-.015em;line-height:1.3}
+  .runstrip .dots{display:flex;gap:7px;align-items:center;font-size:11.5px;color:var(--muted)}
+  .runstrip .dots span{display:inline-flex;align-items:center;gap:5px}
+  .runstrip .dots i{width:7px;height:7px;border-radius:99px;background:var(--good);display:block}
+  .runstrip .dots .wait i{background:var(--warn-mark);animation:pulse 1.3s infinite}
+  .runstrip .dots .wait{color:var(--warn-ink);font-weight:500}
+  .runstrip .id{font-size:11.5px;color:var(--faint);
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+  .split{display:grid;grid-template-columns:302px 1fr;gap:0;
+    border:1px solid var(--border);border-radius:var(--radius);background:var(--card);
+    box-shadow:0 1px 2px var(--shadow);overflow:hidden}
+  @media (max-width:880px){.split{grid-template-columns:1fr}}
+
+  .qlist{border-right:1px solid var(--border);display:flex;flex-direction:column;background:var(--bg)}
+  @media (max-width:880px){.qlist{border-right:0;border-bottom:1px solid var(--border)}}
+  .qlist .lh{display:flex;align-items:center;gap:8px;padding:12px 14px;
+    border-bottom:1px solid var(--border);font-size:12px;color:var(--muted)}
+  .qlist .lh b{color:var(--ink);font-weight:600;font-size:13px}
+  .qlist .lh .all{margin-left:auto;color:var(--accent);font-size:12px}
+  .qi{display:grid;grid-template-columns:18px 1fr;gap:10px;padding:12px 14px;
+    border-bottom:1px solid var(--hairline);border-left:3px solid transparent;position:relative}
+  .qi:last-child{border-bottom:0}
+  .qi{background:var(--card)}
+  .qi.sel{background:var(--accent-soft);border-left-color:var(--accent)}
+  .qi.off{opacity:.62}
+  .qi .box{width:16px;height:16px;border-radius:4px;border:1.5px solid var(--border);
+    background:var(--card);display:grid;place-items:center;font-size:10px;color:#fff;margin-top:2px}
+  .qi .box.on{background:var(--accent);border-color:var(--accent)}
+  .qi .box.lock{background:var(--secondary);border-style:dashed;color:var(--faint)}
+  .qi .sym{font-size:13.5px;font-weight:600;letter-spacing:-.01em}
+  .qi .ln{display:flex;align-items:center;gap:7px;margin-top:4px;flex-wrap:wrap}
+  .qi .cf{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;margin-left:auto}
+  .qi .why{font-size:11.5px;color:var(--muted);margin-top:4px;line-height:1.4}
+
+  /* Detail pane */
+  .detail{padding:20px 22px;display:grid;gap:16px;align-content:start}
+  .detail .dh{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+  .detail .dh .nm{flex:1;min-width:180px}
+  .detail .dh h2{font-size:20px;font-weight:600;letter-spacing:-.02em;line-height:1.15}
+  .detail .dh .co{font-size:12.5px;color:var(--muted);margin-top:2px}
+  .detail .dh .bd{display:flex;gap:6px;flex-wrap:wrap}
+
+  .figrow{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);
+    border:1px solid var(--border);border-radius:6px;overflow:hidden}
+  @media (max-width:560px){.figrow{grid-template-columns:repeat(2,1fr)}}
+  .figrow div{background:var(--card);padding:9px 11px}
+  .figrow .k{font-size:11px;color:var(--muted)}
+  .figrow .v{font-size:15px;font-weight:600;letter-spacing:-.01em;
+    font-variant-numeric:tabular-nums;margin-top:2px}
+
+  .sd .h{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;margin-bottom:4px}
+  .sd.bull .h{color:var(--good)}
+  .sd.bear .h{color:var(--bad)}
+  .sd p{font-size:13px;line-height:1.6;color:var(--prose);max-width:62ch}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media (max-width:680px){.two{grid-template-columns:1fr;gap:13px}}
+
+  .findings{border:1px solid var(--border);border-radius:6px;padding:13px 15px;background:var(--bg)}
+  .findings .fh{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--muted);margin-bottom:8px}
+  .findings ul{list-style:none;display:grid;gap:6px}
+  .findings li{font-size:12.5px;color:var(--prose);display:flex;gap:9px;line-height:1.5}
+  .findings li::before{content:"—";color:var(--faint);flex:none}
+  .findings .src{font-size:11.5px;color:var(--faint);margin-top:9px}
+
+  .tags{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+  .tags .lb{font-size:11px;color:var(--muted);margin-right:2px}
+  .tags .t{font-size:11.5px;border:1px solid var(--border);background:var(--secondary);
+    color:var(--muted);border-radius:999px;padding:2px 9px}
+
+  .verdictbox{display:flex;gap:11px;align-items:flex-start;border:1px solid var(--good-bd);
+    background:var(--good-bg);color:var(--good-ink);border-radius:6px;padding:12px 14px}
+  .verdictbox .vt{font-size:12.5px;font-weight:600;margin-bottom:2px}
+  .verdictbox .vd{font-size:12.5px;opacity:.92;line-height:1.5}
+
+  /* The bar that is always there, always saying what happens next. */
+  .approvebar{position:sticky;bottom:0;display:flex;gap:14px;align-items:center;flex-wrap:wrap;
+    background:var(--card);border-top:1px solid var(--border);padding:13px 18px;
+    box-shadow:0 -4px 14px var(--shadow);grid-column:1/-1}
+  .approvebar .sum{flex:1;min-width:230px}
+  .approvebar .st{font-size:13.5px;font-weight:600}
+  .approvebar .sn{font-size:12px;color:var(--muted);margin-top:1px}
+  .approvebar .names{font-variant-numeric:tabular-nums}
+
+  .scrim{border:1px solid var(--border);border-radius:10px;background:var(--bg);padding:26px;
+    display:grid;place-items:center}
+  .dlg{width:100%;max-width:430px;background:var(--card);border:1px solid var(--border);
+    border-radius:var(--radius);box-shadow:0 10px 34px rgba(0,0,0,.16);padding:20px}
+  .dlg h3{font-size:15px;font-weight:600;letter-spacing:-.01em;margin:8px 0 5px}
+  .dlg .d{font-size:12.5px;color:var(--muted);line-height:1.55;margin-bottom:14px}
+  .dlg ul{list-style:none;display:grid;gap:6px;margin-bottom:16px}
+  .dlg li{display:flex;align-items:center;gap:9px;border:1px solid var(--border);
+    border-radius:6px;padding:8px 11px;font-size:13px}
+  .dlg li .s{font-weight:600}
+  .dlg li .x{margin-left:auto;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .dlg .ftr{display:flex;gap:8px;justify-content:flex-end}
+
+  .queryrow{display:flex;gap:8px}
+  .queryrow input{flex:1;border:1px solid var(--border);border-radius:6px;padding:8px 11px;
+    font:13px inherit;color:var(--ink);background:var(--card)}
+  .queryrow input::placeholder{color:var(--faint)}
+  .samples{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+  .samples span{font-size:12px;border:1px solid var(--border);background:var(--card);
+    color:var(--muted);border-radius:999px;padding:4px 11px}
+</style></head>
+<body>
+<div class="shell">
+  <header class="top">
+    <span class="logo">alpha<b>Desk</b></span>
+    <nav><a href="#">Portfolio</a><a href="#" aria-current="page">Lab</a></nav>
+    <span class="spacer"></span>
+    <button class="tgl" type="button"><span class="moon">◑</span><span class="sun">◐</span> Theme</button>
+    <span class="chip">D · Approval Queue — static mock</span>
+  </header>
+
+  <div class="simstrip">
+    <span class="badge lab">Lab · simulation</span>
+    <span><b>A live simulation.</b> Runs aren’t saved. Not investment advice; no orders are placed.
+      Approving adds names to a <b>paper</b> watchlist.</span>
+  </div>
+
+  <h1>Review queue</h1>
+  <div class="sub">The desk has finished. Three calls are waiting on you. Figures are synthetic.</div>
+
+  <div class="runstrip">
+    <div class="q"><div class="lbl">Query</div><div class="txt">oversold pharma large-caps with a catalyst</div></div>
+    <div class="dots">
+      <span><i></i>Scanner 18</span><span><i></i>Research 6</span><span><i></i>Analyst 5</span>
+      <span><i></i>Risk 3/5</span><span class="wait"><i></i>Execution paused</span>
+    </div>
+    <span class="id">a7f3c1d9 · 38.4s</span>
+    <span class="btn outline sm">← New query</span>
+  </div>
+
+  <div class="split">
+
+    <div class="qlist">
+      <div class="lh"><b>Candidates</b><span>5 assessed</span><span class="all">Select all cleared</span></div>
+
+      <div class="qi sel">
+        <span class="box on">✓</span>
+        <div>
+          <div class="sym">SUNPHARMA</div>
+          <div class="ln"><span class="badge good">PASS</span><span class="badge good">Buy</span><span class="cf">0.82</span></div>
+        </div>
+      </div>
+
+      <div class="qi">
+        <span class="box on">✓</span>
+        <div>
+          <div class="sym">CIPLA</div>
+          <div class="ln"><span class="badge good">PASS</span><span class="badge good">Buy</span><span class="cf">0.76</span></div>
+        </div>
+      </div>
+
+      <div class="qi">
+        <span class="box on">✓</span>
+        <div>
+          <div class="sym">DRREDDY</div>
+          <div class="ln"><span class="badge warn">FLAG</span><span class="badge good">Buy</span><span class="cf">0.73</span></div>
+          <div class="why">Caution band — confidence between the 0.70 floor and the 0.75 pass line.</div>
+        </div>
+      </div>
+
+      <div class="qi off">
+        <span class="box lock">✕</span>
+        <div>
+          <div class="sym">LUPIN</div>
+          <div class="ln"><span class="badge bad">REJECT</span><span class="badge good">Buy</span><span class="cf">0.79</span></div>
+          <div class="why">Sector cap — Pharmaceuticals already holds 3 cleared names in this run.</div>
+        </div>
+      </div>
+
+      <div class="qi off">
+        <span class="box lock">✕</span>
+        <div>
+          <div class="sym">AUROPHARMA</div>
+          <div class="ln"><span class="badge bad">REJECT</span><span class="badge type">Hold</span><span class="cf">0.68</span></div>
+          <div class="why">Below the 0.70 confidence floor.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail">
+      <div class="dh">
+        <div class="nm">
+          <h2>SUNPHARMA</h2>
+          <div class="co">Sun Pharmaceutical Industries · Pharmaceuticals · large cap</div>
+        </div>
+        <div class="bd"><span class="badge good">Buy</span><span class="badge good">PASS</span>
+          <span class="badge type">3–6 months</span></div>
+      </div>
+
+      <div class="figrow">
+        <div><div class="k">Last price</div><div class="v">₹1,712</div></div>
+        <div><div class="k">Target</div><div class="v">₹1,940</div></div>
+        <div><div class="k">To target</div><div class="v up">+13.3%</div></div>
+        <div><div class="k">Confidence</div><div class="v">0.82</div></div>
+      </div>
+
+      <div class="two">
+        <div class="sd bull"><div class="h">Bull case</div><p>Three US generic approvals are pending and Halol is clear of its last FDA observation; the specialty book (Ilumya, Winlevi) is compounding off a small base.</p></div>
+        <div class="sd bear"><div class="h">Bear case</div><p>Specialty is ramping slower than guided and US base-price erosion has not stopped. A single fresh 483 at Halol resets the whole thesis.</p></div>
+      </div>
+
+      <div class="findings">
+        <div class="fh">What Research found</div>
+        <ul>
+          <li>Halol (Gujarat) closed its last FDA inspection with zero 483 observations.</li>
+          <li>Specialty revenue ₹2,140 Cr in the quarter, up 18% year on year off a small base.</li>
+          <li>US generics price erosion running mid-single-digit, unchanged from the prior quarter.</li>
+          <li>Net cash ₹12,400 Cr with no debt maturity inside 24 months.</li>
+        </ul>
+        <div class="src">4 sources via the IND Money MCP · synthetic figures in this mock</div>
+      </div>
+
+      <div class="tags"><span class="lb">Catalysts</span>
+        <span class="t">Halol clearance</span><span class="t">Ilumya EU launch</span><span class="t">Q2 specialty revenue</span></div>
+      <div class="tags"><span class="lb">Key risks</span>
+        <span class="t">US price erosion</span><span class="t">Litigation provision</span><span class="t">USD/INR</span></div>
+
+      <div class="verdictbox">
+        <div><div class="vt">Risk Manager · PASS</div>
+          <div class="vd">Cleared every guardrail. Confidence 0.82 is above the 0.75 pass line, the
+            Analyst’s call is <b>buy</b>, and this took sector slot 1 of 3 for Pharmaceuticals.</div></div>
+      </div>
+    </div>
+
+    <div class="approvebar">
+      <div class="sum">
+        <div class="st">3 of 5 selected — <span class="names">SUNPHARMA · CIPLA · DRREDDY</span></div>
+        <div class="sn">Two are locked out by the guardrails and can’t be approved from here.</div>
+      </div>
+      <span class="btnrow">
+        <span class="btn destructive">Reject run</span>
+        <span class="btn outline">Save without approving</span>
+        <span class="btn primary">Add 3 to paper watchlist</span>
+      </span>
+    </div>
+
+  </div>
+
+  <div class="secthead"><h2>Confirmation</h2><span class="hint">One last honest sentence before anything is written</span></div>
+  <div class="scrim">
+    <div class="dlg">
+      <span class="badge warn">Human approval required</span>
+      <h3>Add 3 stocks to the paper watchlist?</h3>
+      <div class="d">These cleared the risk guardrails. The watchlist is a paper record kept on your
+        account — no real order is placed, and these names never appear beside your holdings.</div>
+      <ul>
+        <li><span class="s">SUNPHARMA</span><span class="badge good">PASS</span><span class="x">0.82</span></li>
+        <li><span class="s">CIPLA</span><span class="badge good">PASS</span><span class="x">0.76</span></li>
+        <li><span class="s">DRREDDY</span><span class="badge warn">FLAG</span><span class="x">0.73</span></li>
+      </ul>
+      <div class="ftr"><span class="btn ghost">Back</span><span class="btn primary">Approve 3</span></div>
+    </div>
+  </div>
+
+  <div class="secthead"><h2>The rest of the surface</h2><span class="hint">Same language, every state</span></div>
+  <div class="frames">
+
+    <div class="frame">
+      <div class="cap">Query desk <span class="route">/lab</span></div>
+      <div class="body">
+        <div style="font-size:15px;font-weight:600;letter-spacing:-.02em;margin-bottom:4px">Type a thesis. The desk does the legwork.</div>
+        <div style="font-size:12.5px;color:var(--muted);margin-bottom:13px">You get a queue to sign off, not a wall of text.</div>
+        <div class="queryrow"><input placeholder="describe what you’re hunting for…"><span class="btn primary">Run</span></div>
+        <div class="samples"><span>momentum in IT large-caps</span><span>oversold pharma with a catalyst</span></div>
+      </div>
+    </div>
+
+    <div class="frame">
+      <div class="cap">Run in flight <span class="route">/lab/a/a7f3c1d9</span></div>
+      <div class="body">
+        <div class="dots" style="display:flex;gap:9px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin-bottom:12px">
+          <span style="color:var(--good)">● Scanner 18</span><span style="color:var(--accent)">◐ Research 3 of 6</span>
+          <span style="color:var(--faint)">○ Analyst</span><span style="color:var(--faint)">○ Risk</span><span style="color:var(--faint)">○ Execution</span>
+        </div>
+        <div class="skel" style="width:86%;margin-bottom:7px"></div>
+        <div class="skel" style="width:60%"></div>
+        <div style="font-size:12px;color:var(--muted);margin-top:12px">The queue fills in as calls are written. Nothing is approvable yet.</div>
+      </div>
+    </div>
+
+    <div class="frame">
+      <div class="cap">Not connected <span class="route">409</span></div>
+      <div class="body">
+        <div class="empty" style="margin-bottom:12px"><span class="ico">⚿</span>
+          <span><b>IND Money isn’t connected.</b> Every agent reads NSE data through it — without a link the scan returns 0 candidates.</span></div>
+        <span class="btn accent">Connect IND Money</span>
+      </div>
+    </div>
+
+    <div class="frame">
+      <div class="cap">Nothing to approve <span class="route">all REJECT</span></div>
+      <div class="body">
+        <div class="empty"><span class="ico">◌</span>
+          <span><b>Nothing reached the queue.</b> All five failed a guardrail. The list still shows each
+          name with its reason — the approval bar is simply empty.</span></div>
+      </div>
+    </div>
+
+    <div class="frame">
+      <div class="cap">Approved <span class="route">paper watchlist</span></div>
+      <div class="body">
+        <div style="display:flex;gap:9px;align-items:center;border:1px solid var(--good-bd);
+          background:var(--good-bg);color:var(--good-ink);border-radius:var(--radius);padding:10px 13px;font-size:12.5px">
+          <span>✓</span><span><b>3 added to your paper watchlist.</b> SUNPHARMA · CIPLA · DRREDDY</span></div>
+        <div style="font-size:12px;color:var(--muted);margin-top:10px">The watchlist persists to your account. The run itself does not.</div>
+      </div>
+    </div>
+
+    <div class="frame">
+      <div class="cap">Run gone <span class="route">backend restarted</span></div>
+      <div class="body">
+        <div class="empty"><span class="ico">⤫</span>
+          <span><b>This analysis isn’t available.</b> Lab runs are held in memory, so a backend restart clears them. The paper watchlist is unaffected.</span></div>
+        <div style="margin-top:12px"><span class="btn outline">← Start a new query</span></div>
+      </div>
+    </div>
+
+  </div>
+
+  <footer class="foot">
+    <span class="dot"></span>
+    <span>Synthetic demo data · descriptive analytics only · not investment advice</span>
+    <a href="#">Privacy</a><a href="#">Terms</a>
+  </footer>
+</div>
+<script>
+  document.querySelector('.tgl').addEventListener('click', function () {
+    var r = document.documentElement;
+    var osDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    var cur = r.dataset.theme || (osDark ? 'dark' : 'light');
+    r.dataset.theme = cur === 'dark' ? 'light' : 'dark';
+  });
+</script>
+</body></html>

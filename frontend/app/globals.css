@@ -2,32 +2,45 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The app-wide floor.
+ *
+ * Until issue #18 this file carried a whole second design system — the dark
+ * Bloomberg terminal the Lab was built in: an amber `--primary`, 0.25rem radii,
+ * `--term-up/down/flag/cyan`, and a `@layer components` of `.eyebrow`, `.pill-*`,
+ * `.hero-glow`, `.caret` and `.bg-up-soft`. The Lab moved onto the DECISION
+ * tokens, which left that system with no consumers, so it is gone.
+ *
+ * What remains is the floor every surface stands on. The real token values live
+ * in `app/portfolio/portfolio.css` on `[data-adp]`, which every layout wraps
+ * itself in; these defaults exist so that anything *outside* such a wrapper —
+ * the body behind a short page, the scrollbars, the overscroll gutter — is the
+ * DECISION ground rather than an unstyled white or a leftover near-black.
+ *
+ * They deliberately mirror the light half of the `[data-adp]` set. A surface
+ * that wants dark opts in with `data-adp-theme`, and `color-scheme` follows it
+ * there; nothing here should ever be the reason a page looks right.
+ */
 :root {
-  --background: 222 16% 5%;
-  --foreground: 220 16% 90%;
-  --card: 222 15% 7%;
-  --card-foreground: 220 16% 90%;
-  --popover: 222 16% 6%;
-  --popover-foreground: 220 16% 90%;
-  --primary: 37 92% 55%;
-  --primary-foreground: 224 30% 6%;
-  --secondary: 220 12% 13%;
-  --secondary-foreground: 220 14% 88%;
-  --muted: 220 12% 12%;
-  --muted-foreground: 220 8% 58%;
-  --accent: 220 12% 15%;
-  --accent-foreground: 220 16% 92%;
-  --destructive: 3 80% 57%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 220 12% 14%;
-  --input: 220 12% 16%;
-  --ring: 37 92% 55%;
-  --radius: 0.25rem;
-
-  --term-up: #16c784;
-  --term-down: #e5484d;
-  --term-flag: #f5a623;
-  --term-cyan: #3dd6f5;
+  --background: 0 0% 98%; /* #fafafa */
+  --foreground: 240 10% 4%; /* #09090b */
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 4%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 4%;
+  --primary: 240 6% 10%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 5% 96%;
+  --secondary-foreground: 240 10% 4%;
+  --muted: 240 5% 96%;
+  --muted-foreground: 240 4% 46%;
+  --accent: 240 5% 96%;
+  --accent-foreground: 240 10% 4%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 6% 90%;
+  --input: 240 6% 90%;
+  --ring: 221 83% 53%;
+  --radius: 0.5rem;
 }
 
 @layer base {
@@ -36,10 +49,9 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-feature-settings: "ss01", "cv01";
   }
   ::selection {
-    background: hsl(var(--primary) / 0.25);
+    background: hsl(var(--ring) / 0.2);
   }
   ::-webkit-scrollbar {
     width: 10px;
@@ -52,116 +64,6 @@
   }
   ::-webkit-scrollbar-thumb:hover {
     background: hsl(var(--muted-foreground) / 0.4);
-  }
-}
-
-@layer components {
-  /* Uppercase mono micro-label used throughout the terminal */
-  .eyebrow {
-    @apply font-mono text-[0.65rem] uppercase tracking-[0.18em] text-muted-foreground;
-  }
-
-  /* Status pills — colored by semantic meaning */
-  .pill {
-    @apply inline-flex items-center gap-1.5 rounded-sm border px-1.5 py-0.5 font-mono
-      text-[0.62rem] font-medium uppercase tracking-[0.1em] leading-tight;
-  }
-  .pill-pass {
-    color: var(--term-up);
-    background: color-mix(in srgb, var(--term-up) 12%, transparent);
-    border-color: color-mix(in srgb, var(--term-up) 35%, transparent);
-  }
-  .pill-flag {
-    color: var(--term-flag);
-    background: color-mix(in srgb, var(--term-flag) 12%, transparent);
-    border-color: color-mix(in srgb, var(--term-flag) 35%, transparent);
-  }
-  .pill-reject {
-    color: var(--term-down);
-    background: color-mix(in srgb, var(--term-down) 12%, transparent);
-    border-color: color-mix(in srgb, var(--term-down) 35%, transparent);
-  }
-  .pill-muted {
-    @apply text-muted-foreground;
-    border-color: hsl(var(--border));
-    background: hsl(var(--muted) / 0.4);
-  }
-
-  /* Soft tints for terminal semantic colors (opacity modifiers don't work on
-     raw CSS-var colors, only on hsl() tokens) */
-  .bg-up-soft {
-    background: color-mix(in srgb, var(--term-up) 6%, transparent);
-  }
-  .bg-down-soft {
-    background: color-mix(in srgb, var(--term-down) 6%, transparent);
-  }
-
-  /* Hover/focus tooltip (see components/Hint.tsx) */
-  .hint {
-    position: absolute;
-    bottom: calc(100% + 6px);
-    right: 0;
-    z-index: 50;
-    min-width: 13rem;
-    max-width: 18rem;
-    padding: 0.5rem 0.6rem;
-    border: 1px solid hsl(var(--border));
-    background: hsl(var(--popover));
-    border-radius: var(--radius);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-    font-size: 0.72rem;
-    line-height: 1.35;
-    color: hsl(var(--foreground));
-    text-align: left;
-    text-transform: none;
-    letter-spacing: normal;
-    white-space: normal;
-    opacity: 0;
-    visibility: hidden;
-    transform: translateY(2px);
-    transition: opacity 0.12s ease, transform 0.12s ease;
-    pointer-events: none;
-  }
-  .group:hover > .hint,
-  .group:focus-visible > .hint,
-  .group:focus-within > .hint {
-    opacity: 1;
-    visibility: visible;
-    transform: translateY(0);
-  }
-  .hint-head {
-    display: block;
-    margin-bottom: 0.25rem;
-    font-family: var(--font-mono);
-    font-size: 0.6rem;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: hsl(var(--muted-foreground));
-  }
-  .hint-body {
-    display: block;
-  }
-  .hint-body strong {
-    color: hsl(var(--primary));
-    font-weight: 600;
-  }
-
-  /* Blinking command-line caret */
-  .caret::after {
-    content: "▋";
-    margin-left: 1px;
-    color: hsl(var(--primary));
-    animation: blink 1s step-end infinite;
-  }
-
-  /* Hero ambient glow, used once */
-  .hero-glow {
-    background:
-      radial-gradient(
-        60rem 28rem at 50% -8rem,
-        hsl(var(--primary) / 0.08),
-        transparent 70%
-      );
   }
 }
 
