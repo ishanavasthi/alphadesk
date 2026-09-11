@@ -1,16 +1,18 @@
 /**
- * The shadcn primitives for the portfolio surface, tuned to the DECISION tokens.
+ * The app's shadcn primitives, tuned to the DECISION tokens.
  *
- * `components/ui/*` already holds this app's shadcn set, but it was tuned for
- * the Bloomberg terminal — uppercase mono buttons, 4px radii. Editing those in
- * place would restyle `/` and `/a/[id]`, so the D1 surface carries its own copy
- * with the same cva/`cn` construction shadcn generates. That is how shadcn is
- * meant to be used: the components live in the repo and get edited.
+ * It lived at `components/portfolio/ui.tsx` because the rest of
+ * `components/ui/*` was tuned for the Bloomberg terminal — uppercase mono
+ * buttons, 4px radii — and editing those in place would have restyled the Lab.
+ * Issue #18 moved the Lab onto these tokens too, so the terminal set is gone and
+ * this is simply the primitive set. That is how shadcn is meant to be used: the
+ * components live in the repo and get edited.
  *
  * Every measurement here traces to `docs/design/DECISION.md` and the reference
- * pages `a-shadcn.html` / `shadcn.css`.
+ * pages `a-shadcn.html` / `shadcn.css` / `lab/a-console.html`.
  */
 import type { ReactNode } from "react";
+import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
@@ -53,6 +55,8 @@ const badgeVariants = cva(
         good: "border border-[var(--adp-good-bd)] bg-[var(--adp-good-bg)] text-[var(--adp-good-ink)]",
         warn: "border border-[var(--adp-warn-bd)] bg-[var(--adp-warn-bg)] text-[var(--adp-warn-ink)]",
         lab: "border border-[var(--adp-lab-bd)] bg-[var(--adp-lab-bg)] text-[var(--adp-lab-ink)]",
+        // Amendment, issue #18 — a risk verdict of REJECT had nowhere to go.
+        bad: "border border-[var(--adp-bad-bd)] bg-[var(--adp-bad-bg)] text-[var(--adp-bad-ink)]",
         soon: "border border-dashed border-border bg-secondary text-[var(--adp-faint)]",
       },
     },
@@ -93,9 +97,15 @@ export function Button({
   className,
   variant,
   size,
+  asChild = false,
   ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & VariantProps<typeof buttonVariants>) {
-  return <button className={cn(buttonVariants({ variant, size }), className)} {...props} />;
+}: React.ButtonHTMLAttributes<HTMLButtonElement> &
+  VariantProps<typeof buttonVariants> & {
+    /** Render the child element with these classes — a `<Link>` as a button. */
+    asChild?: boolean;
+  }) {
+  const Comp = asChild ? Slot : "button";
+  return <Comp className={cn(buttonVariants({ variant, size }), className)} {...props} />;
 }
 
 /** Pill chip used in the top bar. `tone="ok"` prefixes the green link dot. */
@@ -174,13 +184,18 @@ export function WarnBanner({ children }: { children: ReactNode }) {
  * asking for account access owes the reader, so they ship now even though the
  * pages themselves are a later card's work — a missing link is easier to notice
  * (and to route) than a promise nobody made.
+ *
+ * `note` is where a surface adds its own binding line ahead of the shared one —
+ * the Lab uses it to say runs are not saved (issue #18).
  */
-export function PortfolioFooter({ demo }: { demo: boolean }) {
+export function SurfaceFooter({ demo, note }: { demo?: boolean; note?: ReactNode }) {
   return (
     <footer className="mt-7 flex flex-wrap items-center gap-3.5 text-xs text-[var(--adp-faint)]">
       <span className="h-2.5 w-2.5 rounded-[3px] bg-[var(--adp-accent)]" aria-hidden />
       <span>
-        {demo ? "Synthetic demo data · " : ""}descriptive analytics only · not investment advice
+        {demo ? "Synthetic demo data · " : ""}
+        {note ? <>{note} · </> : null}
+        descriptive analytics only · not investment advice
       </span>
       <span className="flex items-center gap-3.5">
         <a className="hover:text-foreground hover:underline" href="/privacy">

@@ -11,7 +11,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Card, CardHead, EmptyCallout } from "./ui";
+import { Card, CardHead, EmptyCallout } from "@/components/ui/adp";
 import { inr, lakh, num } from "./format";
 import { attributedDay } from "./staleness";
 import type { HistoryPoint } from "@/lib/api";

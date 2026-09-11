@@ -1,6 +1,6 @@
 import { ExternalLink, Link2 } from "lucide-react";
 
-import { Badge } from "@/components/portfolio/ui";
+import { Badge } from "@/components/ui/adp";
 
 import { IconTile, SectionHead } from "./primitives";
 

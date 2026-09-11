@@ -39,11 +39,10 @@ const config: Config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
-        // Terminal semantic colors
-        up: "var(--term-up)",
-        down: "var(--term-down)",
-        flag: "var(--term-flag)",
-        cyan: "var(--term-cyan)",
+        // Status colours are DECISION tokens read directly as
+        // `text-[var(--adp-good)]` etc., not Tailwind names: they are a fixed,
+        // small set and naming them here invited `bg-up`/`text-flag` to spread
+        // into places status had no business being (issue #18).
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -59,16 +58,9 @@ const config: Config = {
           from: { opacity: "0", transform: "translateY(6px)" },
           to: { opacity: "1", transform: "translateY(0)" },
         },
-        blink: { "50%": { opacity: "0" } },
-        "pulse-ring": {
-          "0%, 100%": { opacity: "1" },
-          "50%": { opacity: "0.35" },
-        },
       },
       animation: {
         "fade-in-up": "fade-in-up 0.35s ease-out both",
-        blink: "blink 1s step-end infinite",
-        "pulse-ring": "pulse-ring 1.4s ease-in-out infinite",
       },
     },
   },

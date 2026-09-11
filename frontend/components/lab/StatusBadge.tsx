@@ -1,17 +1,28 @@
-import { cn } from "@/lib/utils";
-import { Hint } from "@/components/Hint";
+import { Hint, HintHead } from "@/components/lab/Hint";
+import { Badge } from "@/components/ui/adp";
 import type { AnalystAction, RiskDecision } from "@/lib/api";
 
-const RISK_CLASS: Record<RiskDecision, string> = {
-  PASS: "pill-pass",
-  FLAG: "pill-flag",
-  REJECT: "pill-reject",
+/**
+ * The two verdicts every candidate carries: what the Analyst called, and what
+ * the Risk Manager did with it.
+ *
+ * Both are DECISION badges now (issue #18) rather than the terminal's mono
+ * `.pill-*`. The mapping is the point: a verdict is *status*, so it takes the
+ * status tints — `good` for cleared, `warn` for the caution band, `bad` for a
+ * rejection — and never the accent, which belongs to charts and emphasis.
+ */
+
+const RISK_VARIANT: Record<RiskDecision, "good" | "warn" | "bad"> = {
+  PASS: "good",
+  FLAG: "warn",
+  REJECT: "bad",
 };
 
 const RISK_DESC: Record<RiskDecision, string> = {
-  PASS: "Cleared all guardrails (confidence >= 0.75).",
-  FLAG: "Cleared the guardrails but confidence is borderline (0.70-0.75). Review before approving.",
-  REJECT: "Failed a guardrail - confidence < 0.70, sector full, or the analyst said avoid.",
+  PASS: "Cleared every guardrail — confidence at or above 0.75.",
+  FLAG: "Cleared the guardrails, but confidence sits in the caution band (0.70–0.75). Read the bear case before approving.",
+  REJECT:
+    "Failed a guardrail — confidence below 0.70, the sector cap already full, or the Analyst said avoid.",
 };
 
 export function RiskBadge({ decision }: { decision: RiskDecision }) {
@@ -19,28 +30,34 @@ export function RiskBadge({ decision }: { decision: RiskDecision }) {
     <Hint
       content={
         <>
-          <span className="hint-head">Risk Manager · verdict</span>
-          <span className="hint-body">
-            <strong>{decision}</strong> - {RISK_DESC[decision]}
+          <HintHead>Risk Manager · verdict</HintHead>
+          <span>
+            <b>{decision}</b> — {RISK_DESC[decision]}
           </span>
         </>
       }
     >
-      <span className={cn("pill", RISK_CLASS[decision])}>{decision}</span>
+      <Badge variant={RISK_VARIANT[decision]}>{decision}</Badge>
     </Hint>
   );
 }
 
-const ACTION_CLASS: Record<AnalystAction, string> = {
-  buy: "pill-pass",
-  hold: "pill-flag",
-  avoid: "pill-reject",
+const ACTION_VARIANT: Record<AnalystAction, "good" | "warn" | "bad"> = {
+  buy: "good",
+  hold: "warn",
+  avoid: "bad",
 };
 
 const ACTION_DESC: Record<AnalystAction, string> = {
-  buy: "Thesis favors upside.",
-  hold: "Roughly balanced - no strong edge either way.",
-  avoid: "Thesis is negative; better left alone.",
+  buy: "The thesis favours upside.",
+  hold: "Roughly balanced — no strong edge either way.",
+  avoid: "The thesis is negative; better left alone.",
+};
+
+const ACTION_LABEL: Record<AnalystAction, string> = {
+  buy: "Buy",
+  hold: "Hold",
+  avoid: "Avoid",
 };
 
 export function ActionBadge({ action }: { action: AnalystAction }) {
@@ -48,14 +65,14 @@ export function ActionBadge({ action }: { action: AnalystAction }) {
     <Hint
       content={
         <>
-          <span className="hint-head">Analyst · call</span>
-          <span className="hint-body">
-            <strong>{action.toUpperCase()}</strong> - {ACTION_DESC[action]}
+          <HintHead>Analyst · call</HintHead>
+          <span>
+            <b>{ACTION_LABEL[action]}</b> — {ACTION_DESC[action]}
           </span>
         </>
       }
     >
-      <span className={cn("pill", ACTION_CLASS[action])}>{action}</span>
+      <Badge variant={ACTION_VARIANT[action]}>{ACTION_LABEL[action]}</Badge>
     </Hint>
   );
 }

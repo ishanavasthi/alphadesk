@@ -1,13 +1,23 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, AlertTriangle, CheckCircle2, ShieldCheck } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { RecommendationCard } from "@/components/RecommendationCard";
-import { ApprovalModal } from "@/components/ApprovalModal";
+import { ArrowLeft } from "lucide-react";
+
+import { ApprovalModal } from "@/components/lab/ApprovalModal";
+import { CandidateSections } from "@/components/lab/CandidateSections";
+import { LabBanner } from "@/components/lab/LabBanner";
+import { RunHeader, type RunStatus } from "@/components/lab/RunHeader";
+import { Button } from "@/components/ui/adp";
 import type { AnalysisPayload, ApproveResult, RiskAssessment } from "@/lib/api";
 
+/**
+ * A stored run, reopened at `/lab/a/<id>`.
+ *
+ * The same view as the live one minus the pipeline strip: the step timeline
+ * belongs to the SSE stream in the tab that started the run and cannot be
+ * rebuilt from a stored analysis, so this does not draw a fake one.
+ */
 export function AnalysisView({ payload }: { payload: AnalysisPayload }) {
   const [status, setStatus] = useState(payload.status);
   const [awaiting, setAwaiting] = useState(payload.awaiting_approval);
@@ -35,69 +45,53 @@ export function AnalysisView({ payload }: { payload: AnalysisPayload }) {
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
-        <div className="min-w-0">
-          <div className="font-mono text-sm">
-            <span className="text-primary">query{">"}</span>{" "}
-            <span className="text-foreground">{payload.query}</span>
-          </div>
-          <div className="mt-1 flex items-center gap-3 eyebrow">
-            <span>RUN {payload.run_id.slice(0, 8)}</span>
-            <span className={`pill ${statusPill(status)}`}>{status.replace("_", " ")}</span>
-            {payload.created_at && (
-              <span>{new Date(payload.created_at).toLocaleString()}</span>
-            )}
-          </div>
-        </div>
-        <Button variant="outline" size="sm" asChild>
-          <Link href="/lab">
-            <ArrowLeft />
-            New query
-          </Link>
-        </Button>
-      </div>
+    <div className="pb-2">
+      <RunHeader
+        query={payload.query}
+        runId={payload.run_id}
+        status={runStatus(status, awaiting)}
+        createdAt={payload.created_at ? new Date(payload.created_at).toLocaleString() : undefined}
+        actions={
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/lab">
+              <ArrowLeft className="h-3.5 w-3.5" />
+              New query
+            </Link>
+          </Button>
+        }
+      />
 
-      <div className="mt-5 space-y-4">
-        {awaiting && (
-          <Banner
-            tone="flag"
-            icon={<ShieldCheck className="h-4 w-4" />}
-            title={`${passItems.length} stock${passItems.length === 1 ? "" : "s"} awaiting approval`}
+      <div className="mt-5 flex flex-col gap-4">
+        {awaiting ? (
+          <LabBanner
+            tone="warn"
+            title={`${passItems.length} candidate${passItems.length === 1 ? "" : "s"} cleared the guardrails`}
             action={
-              <Button size="sm" onClick={() => setModalOpen(true)}>
+              <Button variant="primary" size="sm" onClick={() => setModalOpen(true)}>
                 Review &amp; approve
               </Button>
             }
           >
-            Cleared the risk guardrails — approve to add to the paper watchlist.
-          </Banner>
-        )}
+            Nothing is staged until you approve. Approving adds them to the paper watchlist — no
+            order is placed.
+          </LabBanner>
+        ) : null}
 
-        {status === "completed" && watchlist.length > 0 && (
-          <Banner tone="up" icon={<CheckCircle2 className="h-4 w-4" />} title="In the paper watchlist">
-            <span className="font-mono">{watchlist.join("  ·  ")}</span>
-          </Banner>
-        )}
+        {status === "completed" && watchlist.length > 0 ? (
+          <LabBanner tone="good" title={`${watchlist.length} in your paper watchlist`}>
+            {watchlist.join(" · ")} — the watchlist persists to your account. The run itself does
+            not.
+          </LabBanner>
+        ) : null}
 
-        {status === "rejected" && rejection && (
-          <Banner tone="down" icon={<AlertTriangle className="h-4 w-4" />} title="No stocks cleared">
+        {status === "rejected" && rejection ? (
+          <LabBanner tone="bad" title="Nothing cleared the guardrails">
             {rejection}
-          </Banner>
-        )}
-
-        {recs.length > 0 ? (
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            {recs.map((rec) => (
-              <RecommendationCard key={rec.symbol} rec={rec} risk={risks[rec.symbol]} />
-            ))}
-          </div>
-        ) : (
-          <div className="flex h-40 items-center justify-center border border-dashed border-border">
-            <span className="eyebrow">No recommendations in this run</span>
-          </div>
-        )}
+          </LabBanner>
+        ) : null}
       </div>
+
+      <CandidateSections recs={recs} risks={risks} />
 
       <ApprovalModal
         open={modalOpen}
@@ -110,37 +104,10 @@ export function AnalysisView({ payload }: { payload: AnalysisPayload }) {
   );
 }
 
-function statusPill(status: string): string {
-  if (status === "completed") return "pill-pass";
-  if (status === "rejected" || status === "error") return "pill-reject";
-  return "pill-flag";
-}
-
-function Banner({
-  tone,
-  icon,
-  title,
-  children,
-  action,
-}: {
-  tone: "up" | "down" | "flag";
-  icon: ReactNode;
-  title: string;
-  children?: ReactNode;
-  action?: ReactNode;
-}) {
-  const border = { up: "border-l-up", down: "border-l-down", flag: "border-l-flag" }[tone];
-  const text = { up: "text-up", down: "text-down", flag: "text-flag" }[tone];
-  return (
-    <div className={`flex items-center justify-between gap-3 border border-border border-l-2 ${border} bg-card p-3`}>
-      <div className="flex items-start gap-2.5">
-        <span className={text}>{icon}</span>
-        <div>
-          <div className={`eyebrow ${text}`}>{title}</div>
-          {children && <div className="mt-0.5 text-[0.8rem] text-muted-foreground">{children}</div>}
-        </div>
-      </div>
-      {action}
-    </div>
-  );
+function runStatus(status: string, awaiting: boolean): RunStatus {
+  if (awaiting) return "awaiting_approval";
+  if (status === "completed") return "completed";
+  if (status === "rejected") return "rejected";
+  if (status === "error") return "error";
+  return "running";
 }

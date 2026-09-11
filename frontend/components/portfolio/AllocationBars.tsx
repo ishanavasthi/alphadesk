@@ -2,7 +2,7 @@
 
 import type { AllocationSlice } from "@/lib/api";
 import { inr, num, pct, shortLabel, typeLabel } from "./format";
-import { Badge } from "./ui";
+import { Badge } from "@/components/ui/adp";
 
 /**
  * Sorted, single-hue horizontal bars — the locked treatment for every

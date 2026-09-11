@@ -8,7 +8,7 @@ import {
   type OverviewParagraph,
   type OverviewSegment,
 } from "@/lib/api";
-import { Badge, Button, Card } from "@/components/portfolio/ui";
+import { Badge, Button, Card } from "@/components/ui/adp";
 import { MASK, useAmountsHidden } from "@/components/portfolio/privacy";
 
 /**
