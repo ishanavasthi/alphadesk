@@ -6,9 +6,9 @@ import type { AnalystAction, RiskDecision } from "@/lib/api";
  * The two verdicts every candidate carries: what the Analyst called, and what
  * the Risk Manager did with it.
  *
- * Both are DECISION badges now (issue #18) rather than the terminal's mono
+ * Both are DECISION badges (issue #18) rather than the terminal's mono
  * `.pill-*`. The mapping is the point: a verdict is *status*, so it takes the
- * status tints — `good` for cleared, `warn` for the caution band, `bad` for a
+ * status tints — `good` for cleared, `warn` for a caution, `bad` for a
  * rejection — and never the accent, which belongs to charts and emphasis.
  */
 
@@ -19,13 +19,30 @@ const RISK_VARIANT: Record<RiskDecision, "good" | "warn" | "bad"> = {
 };
 
 const RISK_DESC: Record<RiskDecision, string> = {
-  PASS: "Cleared every guardrail — confidence at or above 0.75.",
-  FLAG: "Cleared the guardrails, but confidence sits in the caution band (0.70–0.75). Read the bear case before approving.",
+  PASS: "Cleared every guardrail with nothing flagged.",
+  FLAG: "Cleared the guardrails, but with a caution — borderline conviction or thin evidence. Approvable; look before you do.",
   REJECT:
-    "Failed a guardrail — confidence below 0.70, the sector cap already full, or the Analyst said avoid.",
+    "Failed a guardrail — conviction below the floor, the sector already full, or the Analyst said avoid.",
 };
 
-export function RiskBadge({ decision }: { decision: RiskDecision }) {
+/** Human wording for the non-fatal `flags` behind a FLAG verdict (B11). */
+const FLAG_DESC: Record<string, string> = {
+  borderline_confidence: "conviction sits just above the floor",
+  thin_evidence: "the call rests on very little data",
+};
+
+export function flagLabel(flag: string): string {
+  return FLAG_DESC[flag] ?? flag.replace(/_/g, " ");
+}
+
+export function RiskBadge({
+  decision,
+  flags,
+}: {
+  decision: RiskDecision;
+  flags?: string[];
+}) {
+  const why = flags?.length ? ` (${flags.map(flagLabel).join("; ")})` : "";
   return (
     <Hint
       content={
@@ -33,6 +50,7 @@ export function RiskBadge({ decision }: { decision: RiskDecision }) {
           <HintHead>Risk Manager · verdict</HintHead>
           <span>
             <b>{decision}</b> — {RISK_DESC[decision]}
+            {why}
           </span>
         </>
       }

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Check, Loader2, X } from "lucide-react";
 
+import { Hint, HintHead } from "@/components/lab/Hint";
 import { ActionBadge, RiskBadge } from "@/components/lab/StatusBadge";
 import {
   Dialog,
@@ -88,11 +89,32 @@ export function ApprovalModal({
                 <span className="text-xs text-muted-foreground">{risk.sector}</span>
               ) : null}
               <span className="flex-1" />
+              {/* Conviction and evidence together, as on the card (B11): the
+                  first number alone reads as a quality score it is not. */}
+              <Hint
+                content={
+                  <>
+                    <HintHead>Conviction · evidence</HintHead>
+                    <span>
+                      The model&apos;s own confidence that this call is directionally
+                      right, then how much real data it rested on. Both are
+                      self-assessments; neither is calibrated against outcomes.
+                    </span>
+                  </>
+                }
+              >
+                <span className="adp-num text-xs text-muted-foreground">
+                  {Math.round(rec.confidence * 100)}%
+                  {rec.evidence_quality != null ? (
+                    <span className="text-[var(--adp-faint)]">
+                      {" · "}
+                      {Math.round(rec.evidence_quality * 100)}% ev
+                    </span>
+                  ) : null}
+                </span>
+              </Hint>
               <ActionBadge action={rec.action} />
-              {risk ? <RiskBadge decision={risk.decision} /> : null}
-              <span className="adp-num w-8 text-right text-xs text-muted-foreground">
-                {rec.confidence.toFixed(2)}
-              </span>
+              {risk ? <RiskBadge decision={risk.decision} flags={risk.flags} /> : null}
             </li>
           ))}
         </ul>

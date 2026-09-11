@@ -1,3 +1,6 @@
+import type { ReactNode } from "react";
+
+import { Hint, HintHead } from "@/components/lab/Hint";
 import { ActionBadge, RiskBadge } from "@/components/lab/StatusBadge";
 import { Card } from "@/components/ui/adp";
 import { cn } from "@/lib/utils";
@@ -5,49 +8,100 @@ import type { AnalystRecommendation, RiskAssessment } from "@/lib/api";
 
 const inr = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 });
 
-/** The two lines `backend/agents/risk_manager.py` actually enforces. */
-const FLOOR = 0.7;
-const PASS = 0.75;
-
 /**
- * Analyst confidence, drawn against the guardrails rather than on its own.
+ * A magnitude bar, drawn in one hue.
  *
- * 0.82 and 0.68 are the same bar without the ticks — and the difference between
- * them is the whole verdict. The fill's tone says which side of the floor the
- * call landed on; the ticks say where the floor is. Colour is status here, not
- * series (DECISION chart rules), so the three tones are the three outcomes.
+ * **No threshold ticks.** The design mock (`docs/design/lab/a-console.html`)
+ * drew conviction against the 0.70 floor and the 0.75 pass line, and B11 then
+ * measured the model and found rerun noise larger than the between-stock
+ * spread: there is no cut point, and the thresholds that remain are a collapse
+ * detector, not a quality bar. Drawing a line the number cannot meaningfully sit
+ * either side of would be the most confident-looking thing on the card and the
+ * least true. The verdict is the badge's job.
  */
-function ConfidenceMeter({ value, tone }: { value: number; tone: "accent" | "warn" | "bad" }) {
-  const clamped = Math.max(0, Math.min(1, value));
+function MeterBar({ value, muted }: { value: number; muted?: boolean }) {
+  const pct = Math.round(Math.max(0, Math.min(1, value)) * 100);
   return (
-    <div>
-      <div className="flex items-baseline justify-between">
-        <span className="text-xs text-muted-foreground">Analyst confidence</span>
-        <span className="adp-num text-[13px] font-semibold">{clamped.toFixed(2)}</span>
-      </div>
-      <div className="adp-meter mt-1.5">
+    <div className="flex items-center gap-2">
+      <div className="adp-meter flex-1">
         <div
           className="adp-meter-fill"
-          data-tone={tone === "accent" ? undefined : tone}
-          style={{ width: `${clamped * 100}%` }}
+          style={{
+            width: `${pct}%`,
+            background: muted ? "hsl(var(--muted-foreground))" : undefined,
+          }}
         />
-        <span className="adp-meter-tick" style={{ left: `${FLOOR * 100}%` }} aria-hidden />
-        <span className="adp-meter-tick" style={{ left: `${PASS * 100}%` }} aria-hidden />
       </div>
-      <div className="adp-num mt-1 flex justify-between text-[10.5px] text-[var(--adp-faint)]">
-        <span>0.00</span>
-        <span>floor 0.70 · pass 0.75</span>
-        <span>1.00</span>
-      </div>
+      <span
+        className={cn(
+          "adp-num w-9 text-right text-xs font-semibold",
+          muted ? "text-muted-foreground" : "text-foreground",
+        )}
+      >
+        {pct}%
+      </span>
     </div>
   );
 }
 
-/** Which side of the guardrails a call landed on, as a meter tone. */
-function toneFor(rec: AnalystRecommendation, risk?: RiskAssessment): "accent" | "warn" | "bad" {
-  if (rec.confidence < FLOOR) return "bad";
-  if (risk?.decision === "FLAG") return "warn";
-  return "accent";
+/** A meter's label, carrying the caveat that makes the number readable. */
+function MeterLabel({ text, head, hint }: { text: string; head: string; hint: ReactNode }) {
+  return (
+    <Hint
+      content={
+        <>
+          <HintHead>{head}</HintHead>
+          <span>{hint}</span>
+        </>
+      }
+    >
+      <span className="border-b border-dotted border-muted-foreground/50 text-xs text-muted-foreground">
+        {text}
+      </span>
+    </Hint>
+  );
+}
+
+const CONVICTION_HINT = (
+  <>
+    The model&apos;s own estimate that this call is directionally right over the horizon —
+    for a buy, that it beats the NIFTY 50. It is a{" "}
+    <b>self-assessment, not a calibrated probability</b>, and has not been scored against
+    outcomes.
+  </>
+);
+
+const EVIDENCE_HINT = (
+  <>
+    How much of that view rests on real data rather than inference. The desk reads live
+    price and the 52-week range only — no earnings, valuation or filings — so this is{" "}
+    <b>low by construction</b>. A high conviction on a low evidence base is an opinion,
+    not a finding.
+  </>
+);
+
+/**
+ * Conviction and evidence, always together (B11 phase 4).
+ *
+ * Conviction alone reads as a quality score; next to an evidence bar that is
+ * honestly low it reads as what it is — a strong-ish opinion formed on very
+ * little data. Never draw one without the other when both exist.
+ */
+function Meters({ rec }: { rec: AnalystRecommendation }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-1">
+        <MeterLabel text="Conviction" head="Analyst · conviction" hint={CONVICTION_HINT} />
+        <MeterBar value={rec.confidence} />
+      </div>
+      {rec.evidence_quality != null ? (
+        <div className="flex flex-col gap-1">
+          <MeterLabel text="Evidence" head="Analyst · evidence" hint={EVIDENCE_HINT} />
+          <MeterBar value={rec.evidence_quality} muted />
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function Figure({ label, value }: { label: string; value: string | null }) {
@@ -110,7 +164,7 @@ function Tags({ label, items }: { label: string; items: string[] }) {
  * A candidate that cleared the guardrails — the full brief.
  *
  * Three of these fill a row, which is not a coincidence: the sector cap allows
- * three positions, so a full row *is* a full sector.
+ * three positions, so a full row is a full sector.
  */
 export function RecommendationCard({
   rec,
@@ -130,11 +184,11 @@ export function RecommendationCard({
         </div>
         <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
           <ActionBadge action={rec.action} />
-          {risk ? <RiskBadge decision={risk.decision} /> : null}
+          {risk ? <RiskBadge decision={risk.decision} flags={risk.flags} /> : null}
         </div>
       </div>
 
-      <ConfidenceMeter value={rec.confidence} tone={toneFor(rec, risk)} />
+      <Meters rec={rec} />
 
       {/* One hairline grid, so the two figures read as one object. Unknown is
           "—" and never a computed zero (DECISION, null states). */}
@@ -153,6 +207,7 @@ export function RecommendationCard({
 
       <Tags label="Catalysts" items={rec.catalysts} />
       <Tags label="Key risks" items={rec.key_risks} />
+      <Tags label="Data gaps" items={rec.data_gaps ?? []} />
 
       {risk?.notes ? (
         <p className="border-t border-[var(--adp-hairline)] pt-2.5 text-xs text-muted-foreground">
@@ -167,9 +222,9 @@ export function RecommendationCard({
  * A candidate the guardrails stopped.
  *
  * Shown, never hidden: a rejection is a result, and the reason is the
- * interesting part — a name can outscore two that cleared and still be stopped
- * by the sector cap. It gets less room than a cleared call, not less honesty,
- * so the thesis is dropped and the violations are not.
+ * interesting part — after B11 the rejecting guardrails are `action: avoid` and
+ * the sector cap, so a name can be stopped with nothing wrong with its numbers.
+ * It gets less room than a cleared call, not less honesty.
  */
 export function RejectedCard({
   rec,
@@ -190,23 +245,22 @@ export function RejectedCard({
         </div>
         <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
           <ActionBadge action={rec.action} />
-          {risk ? <RiskBadge decision={risk.decision} /> : null}
+          {risk ? <RiskBadge decision={risk.decision} flags={risk.flags} /> : null}
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2.5 text-xs text-muted-foreground">
-        <span>Confidence</span>
-        <span className="adp-meter min-w-[5rem] flex-1">
-          <span
-            className="adp-meter-fill"
-            data-tone={rec.confidence < FLOOR ? "bad" : undefined}
-            style={{ width: `${Math.max(0, Math.min(1, rec.confidence)) * 100}%` }}
-          />
-          <span className="adp-meter-tick" style={{ left: `${FLOOR * 100}%` }} aria-hidden />
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
+        <span className="adp-num">
+          Conviction{" "}
+          <b className="font-semibold text-foreground">
+            {Math.round(rec.confidence * 100)}%
+          </b>
         </span>
-        <b className="adp-num text-[13px] font-semibold text-foreground">
-          {rec.confidence.toFixed(2)}
-        </b>
+        {rec.evidence_quality != null ? (
+          <span className="adp-num">
+            Evidence <b className="font-semibold">{Math.round(rec.evidence_quality * 100)}%</b>
+          </span>
+        ) : null}
         <span>
           {rec.target_price != null ? `Target ₹${inr.format(rec.target_price)}` : "No target issued"}
         </span>

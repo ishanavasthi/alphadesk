@@ -87,6 +87,12 @@ amendments rather than letting inline hexes back into the code.
   dark — the missing step of the same family. It is a **mark only**: it never
   sets text, which stays `--warn-ink`.
 
+> **Superseded in part.** B11 (merged 2026-09-11, between this bake-off and the
+> port) measured the confidence number and found it carries no ranking signal.
+> The shipped Lab therefore draws **no threshold ticks** and labels the bar
+> *Conviction* beside an *Evidence* bar. The note below describes the mocks as
+> built; `../DECISION.md` carries what shipped.
+
 ## A position worth noticing
 
 Every candidate draws the analyst's confidence against the two lines the Risk

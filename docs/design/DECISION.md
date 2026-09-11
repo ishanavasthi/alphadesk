@@ -148,9 +148,20 @@ for the dashboard. What it locks:
   three-up card grid (the three sector slots), **Not staged** as a two-up
   compact card carrying only the verdict and the reason. A rejection is a
   result, so it is shown, never hidden.
-- **Confidence** is drawn against the two lines `risk_manager.py` enforces — the
-  **0.70 floor** and the **0.75 pass line** — as ticks on the meter, with the
-  figure beside it. A bare percentage hides the verdict.
+- **Conviction and evidence, always together, never against a threshold.**
+  The bake-off mock drew confidence against a 0.70 floor and a 0.75 pass line;
+  **B11 landed between the mock and the port and removed that reading.** It
+  measured the model and found rerun noise larger than the between-stock spread
+  — there is no cut point, the surviving thresholds are a collapse detector, and
+  the number is a self-assessment of *direction*, not a quality score. So the
+  meter carries no ticks: threshold marks would be the most confident-looking
+  thing on the card and the least true. Conviction is labelled as a
+  self-assessment and drawn beside `evidence_quality`, which is low by
+  construction while RAG is dormant — one without the other is the presentation
+  B11 exists to stop. The verdict is the badge's job, and `data_gaps` says what
+  would have made the call better. See `docs/SPECS/B11.md`.
+  *(`lab/a-console.html` predates this and still shows the ticks. Per the usual
+  rule, where the demo and the shipped Lab disagree, the shipped Lab wins.)*
 - **The gate.** The human-approval banner sits on the warn tokens above the
   candidates and is the loudest element on the view; approval itself is the
   standard dialog.
