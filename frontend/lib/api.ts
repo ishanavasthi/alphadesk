@@ -34,7 +34,17 @@ export type AnalystAction = "buy" | "hold" | "avoid";
 export interface AnalystRecommendation {
   symbol: string;
   action: AnalystAction;
+  /**
+   * The analyst's *directional* conviction: its self-reported probability that
+   * the action is right over the horizon (for "buy", that the stock beats NIFTY
+   * 50). A model self-assessment, not a calibrated probability, and deliberately
+   * separate from `evidence_quality` — see docs/SPECS/B11.md.
+   */
   confidence: number;
+  /** How much of that view rests on real data. Null on runs before B11. */
+  evidence_quality?: number | null;
+  /** What the analyst would have needed to be more sure. */
+  data_gaps?: string[];
   thesis?: string | null;
   bull_thesis: string;
   bear_thesis: string;
@@ -51,7 +61,11 @@ export interface RiskAssessment {
   approved: boolean;
   decision: RiskDecision;
   confidence: number;
+  evidence_quality?: number | null;
+  /** Guardrails breached. Non-empty means REJECT. */
   violations: string[];
+  /** Non-fatal cautions behind a FLAG, e.g. "thin_evidence". Never blocks approval. */
+  flags?: string[];
   notes?: string | null;
 }
 
