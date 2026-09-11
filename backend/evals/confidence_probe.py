@@ -303,7 +303,13 @@ def _render(
 
     between = (max(means) - min(means)) if len(means) >= 2 else None
     twin_gap = abs(twin_means[0] - twin_means[1]) if len(twin_means) == 2 else None
-    rerun = statistics.fmean([o.spread for o in contrast.values() if o.spread is not None]) or 0.0
+    # A run in which every call failed (a dead key, an exhausted balance, a
+    # decommissioned model id) must still report — the whole point of the probe
+    # is to surface what the Lab hides. `fmean` raises on an empty sequence, so
+    # a total wipeout used to crash here *after* printing the failure table and
+    # before writing the JSON.
+    spreads = [o.spread for o in contrast.values() if o.spread is not None]
+    rerun = statistics.fmean(spreads) if spreads else 0.0
     bands = {b: sum(1 for c in all_conf if _band(c) == b) for b in ("REJECT", "FLAG", "PASS")}
 
     print("  Signal vs noise")

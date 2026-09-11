@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ActionBadge, RiskBadge } from "@/components/StatusBadge";
+import { Hint } from "@/components/Hint";
 import { approve, type AnalystRecommendation, type ApproveResult, type RiskAssessment } from "@/lib/api";
 
 interface ApprovalModalProps {
@@ -73,11 +74,30 @@ export function ApprovalModal({
                 {risk?.sector && <span className="eyebrow">{risk.sector}</span>}
               </div>
               <div className="flex items-center gap-1.5">
-                <span className="font-mono text-xs tabular-nums text-muted-foreground">
-                  {Math.round(rec.confidence * 100)}%
-                </span>
+                <Hint
+                  content={
+                    <>
+                      <span className="hint-head">Conviction · evidence</span>
+                      <span className="hint-body">
+                        The model&apos;s own confidence that this call is directionally
+                        right, then how much real data it rested on. Both are
+                        self-assessments, neither is calibrated against outcomes.
+                      </span>
+                    </>
+                  }
+                >
+                  <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                    {Math.round(rec.confidence * 100)}%
+                    {rec.evidence_quality != null && (
+                      <span className="text-muted-foreground/60">
+                        {" · "}
+                        {Math.round(rec.evidence_quality * 100)}% ev
+                      </span>
+                    )}
+                  </span>
+                </Hint>
                 <ActionBadge action={rec.action} />
-                {risk && <RiskBadge decision={risk.decision} />}
+                {risk && <RiskBadge decision={risk.decision} flags={risk.flags} />}
               </div>
             </div>
           ))}

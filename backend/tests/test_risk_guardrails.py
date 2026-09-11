@@ -6,13 +6,15 @@ LLM)."* Until this file existed nothing tested it — ``MIN_CONFIDENCE``,
 ``_FLAG_BAND`` and ``MAX_PER_SECTOR`` appeared in no test in the suite, so every
 threshold boundary and the sector cap's tie-breaking were free to move silently.
 
-These tests pin **current** behaviour, deliberately, before B11 phases 2-3 change
-the meaning of ``confidence``. They are the regression net for that work, not a
-statement that the current thresholds are right.
-
-Each boundary is tested on both sides (0.699/0.70, 0.749/0.75) because an
+Each boundary is tested on both sides (0.399/0.40, 0.6999/0.70) because an
 off-by-one in a comparison operator is exactly the mutation a coarser test
 would miss.
+
+The literal values are the **measured** phase-3 defaults (docs/SPECS/B11.md §6),
+not arbitrary ones, and they are pinned as literals on purpose: a threshold that
+drifts silently is the failure this card exists to fix, so a change to any of
+them must break a test and be argued for. The env-override mechanism that lets an
+operator retune them without touching source is covered separately below.
 """
 
 from __future__ import annotations
@@ -29,12 +31,19 @@ def _rec(
     symbol: str = "RELIANCE",
     confidence: float = 0.9,
     action: str = "buy",
+    evidence_quality: Optional[float] = 1.0,
 ) -> AnalystRecommendation:
-    """A recommendation that clears every guardrail unless a field is overridden."""
+    """A recommendation that clears every guardrail unless a field is overridden.
+
+    ``evidence_quality`` defaults to 1.0 rather than ``None`` so the baseline
+    recommendation is a clean PASS: the fixture's job is to isolate whichever
+    field a test overrides.
+    """
     return AnalystRecommendation(
         symbol=symbol,
         action=action,
         confidence=confidence,
+        evidence_quality=evidence_quality,
         bull_thesis="Bull case.",
         bear_thesis="Bear case.",
     )
@@ -55,11 +64,12 @@ def _assess_one(
     ("confidence", "decision", "approved"),
     [
         (0.0, "REJECT", False),
-        (0.69, "REJECT", False),
-        (0.6999, "REJECT", False),
-        (0.70, "FLAG", True),  # MIN_CONFIDENCE is inclusive: >= 0.70 proceeds
-        (0.7499, "FLAG", True),
-        (0.75, "PASS", True),  # _FLAG_BAND is exclusive: >= 0.75 is a clean PASS
+        (0.39, "REJECT", False),
+        (0.3999, "REJECT", False),
+        (0.40, "FLAG", True),  # MIN_CONFIDENCE is inclusive: >= 0.40 proceeds
+        (0.55, "FLAG", True),  # the current model's modal score
+        (0.6999, "FLAG", True),
+        (0.70, "PASS", True),  # _FLAG_BAND is exclusive: >= 0.70 is a clean PASS
         (1.0, "PASS", True),
     ],
 )
@@ -70,7 +80,10 @@ def test_confidence_boundaries(confidence: float, decision: str, approved: bool)
 
 
 def test_below_threshold_names_the_violation() -> None:
-    out = _assess_one(_rec(confidence=0.5))
+    # 0.20 is below anything the current model has been observed to emit
+    # (measured floor 0.44), i.e. the collapsed-model case the floor now exists
+    # to catch — see the MIN_CONFIDENCE comment in risk_manager.
+    out = _assess_one(_rec(confidence=0.20))
     assert out.violations == ["confidence_below_threshold"]
 
 
@@ -292,3 +305,171 @@ async def test_notes_are_attached_by_symbol_not_by_position(
 
     assert by_symbol["B"].notes == "only B gets a note"
     assert by_symbol["A"].notes is None
+
+
+# --------------------------------------------------------------------------- #
+# Evidence quality — flags, never rejects (B11 phase 3)
+# --------------------------------------------------------------------------- #
+# The whole point of the phase-3 change: `confidence` measured how sure the model
+# felt, and a 0.70 floor on it emptied the book. `evidence_quality` measures how
+# thin the data was — which on this desk is *always* thin (price + 52-week range,
+# RAG dormant). So it must be able to caution and must never be able to block, or
+# the same bug reappears wearing a different field name.
+def test_thin_evidence_flags_but_does_not_reject() -> None:
+    out = _assess_one(_rec(confidence=0.99, evidence_quality=0.0))
+    assert out.decision == "FLAG"
+    assert out.approved is True
+    assert out.violations == []
+    assert "thin_evidence" in out.flags
+
+
+def test_thin_evidence_is_never_a_violation_at_any_value() -> None:
+    """No evidence value may put a symbol in `violations` — that would REJECT it."""
+    for evidence in (0.0, 0.01, 0.1, 0.25, 0.5, 1.0):
+        out = _assess_one(_rec(confidence=0.99, evidence_quality=evidence))
+        assert out.violations == [], f"evidence_quality={evidence} produced a violation"
+        assert out.approved is True
+
+
+@pytest.mark.parametrize(
+    ("evidence", "flagged"),
+    [
+        (0.0, True),
+        (rm.MIN_EVIDENCE - 0.01, True),
+        (rm.MIN_EVIDENCE, False),  # the floor is inclusive: at it, not below it
+        (rm.MIN_EVIDENCE + 0.01, False),
+        (1.0, False),
+    ],
+)
+def test_evidence_floor_boundary(evidence: float, flagged: bool) -> None:
+    out = _assess_one(_rec(confidence=0.99, evidence_quality=evidence))
+    assert ("thin_evidence" in out.flags) is flagged
+    assert out.decision == ("FLAG" if flagged else "PASS")
+
+
+def test_missing_evidence_is_not_treated_as_thin() -> None:
+    """`None` means the model omitted the field, not that the data was bad.
+
+    Older runs and weaker models leave it unset; inferring "thin" from silence
+    would flag every one of them for a reason that was never measured.
+    """
+    out = _assess_one(_rec(confidence=0.99, evidence_quality=None))
+    assert out.flags == []
+    assert out.decision == "PASS"
+    assert out.evidence_quality is None
+
+
+def test_evidence_quality_is_echoed_onto_the_assessment() -> None:
+    out = _assess_one(_rec(confidence=0.99, evidence_quality=0.42))
+    assert out.evidence_quality == 0.42
+
+
+# --------------------------------------------------------------------------- #
+# Flags — the reason a FLAG is a FLAG
+# --------------------------------------------------------------------------- #
+def test_borderline_confidence_is_named_as_a_flag() -> None:
+    out = _assess_one(_rec(confidence=rm.MIN_CONFIDENCE))
+    assert out.decision == "FLAG"
+    assert "borderline_confidence" in out.flags
+
+
+def test_both_cautions_can_apply_at_once() -> None:
+    out = _assess_one(_rec(confidence=rm.MIN_CONFIDENCE, evidence_quality=0.0))
+    assert out.decision == "FLAG"
+    assert set(out.flags) == {"borderline_confidence", "thin_evidence"}
+
+
+def test_a_clean_pass_carries_no_flags() -> None:
+    out = _assess_one(_rec(confidence=1.0, evidence_quality=1.0))
+    assert out.decision == "PASS"
+    assert out.flags == []
+
+
+def test_a_rejected_stock_is_not_also_flagged() -> None:
+    """Flags describe approvable stock. A REJECT has violations, not cautions."""
+    out = _assess_one(_rec(confidence=0.0, evidence_quality=0.0))
+    assert out.decision == "REJECT"
+    assert out.flags == []
+    assert out.violations == ["confidence_below_threshold"]
+
+
+# --------------------------------------------------------------------------- #
+# Thresholds come from the environment
+# --------------------------------------------------------------------------- #
+def test_env_float_accepts_a_valid_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LAB_MIN_CONFIDENCE", "0.42")
+    assert rm._env_float("LAB_MIN_CONFIDENCE", 0.55) == 0.42
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "abc", "1.5", "-0.1", "nan-ish"])
+def test_env_float_falls_back_on_junk(raw: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A malformed threshold must not silently reshape the gate."""
+    monkeypatch.setenv("LAB_MIN_CONFIDENCE", raw)
+    assert rm._env_float("LAB_MIN_CONFIDENCE", 0.55) == 0.55
+
+
+def test_env_float_is_unset_safe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LAB_MIN_CONFIDENCE", raising=False)
+    assert rm._env_float("LAB_MIN_CONFIDENCE", 0.55) == 0.55
+
+
+def test_env_int_accepts_a_valid_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LAB_MAX_PER_SECTOR", "5")
+    assert rm._env_int("LAB_MAX_PER_SECTOR", 3) == 5
+
+
+@pytest.mark.parametrize("raw", ["", "abc", "0", "-2", "2.5"])
+def test_env_int_falls_back_on_junk(raw: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LAB_MAX_PER_SECTOR", raw)
+    assert rm._env_int("LAB_MAX_PER_SECTOR", 3) == 3
+
+
+def test_the_bands_are_ordered() -> None:
+    """REJECT below MIN_CONFIDENCE, FLAG up to _FLAG_BAND, PASS above.
+
+    A config that inverts these would make the FLAG band unreachable and every
+    cleared stock a silent PASS.
+    """
+    assert 0.0 <= rm.MIN_CONFIDENCE <= rm._FLAG_BAND <= 1.0
+    assert 0.0 <= rm.MIN_EVIDENCE <= 1.0
+
+
+# --------------------------------------------------------------------------- #
+# The rejection diagnostic
+# --------------------------------------------------------------------------- #
+@pytest.mark.usefixtures("_no_llm_notes")
+async def test_an_all_confidence_wipeout_says_the_gate_may_be_mis_set() -> None:
+    """The B11 phase-0 failure, made legible.
+
+    When nothing failed for a *reason* — no 'avoid', no full sector — and the
+    entire book just scored under the floor, that is the signature of a
+    threshold mis-set for the current model, not of a bad set of candidates.
+    Without this the UI said only "rejected", which is what sent the operator
+    looking for a bug in the analyst.
+    """
+    recs = [
+        _rec(symbol="A", confidence=rm.MIN_CONFIDENCE - 0.10),
+        _rec(symbol="B", confidence=rm.MIN_CONFIDENCE - 0.05),
+    ]
+    out = await rm.risk_manager(_state(recs, {"A": "IT", "B": "BANKING"}))
+
+    assert out.rejection_reason is not None
+    assert "confidence alone" in out.rejection_reason
+    assert "LAB_MIN_CONFIDENCE" in out.rejection_reason
+    # It quotes the best score seen against the floor, so the size of the
+    # mismatch is visible without re-running anything.
+    assert f"{rm.MIN_CONFIDENCE - 0.05:.2f}" in out.rejection_reason
+
+
+@pytest.mark.usefixtures("_no_llm_notes")
+async def test_a_mixed_wipeout_does_not_blame_the_threshold() -> None:
+    """One 'avoid' means the book really was rejected on its merits."""
+    recs = [
+        _rec(symbol="A", confidence=rm.MIN_CONFIDENCE - 0.10),
+        _rec(symbol="B", action="avoid"),
+    ]
+    out = await rm.risk_manager(_state(recs, {"A": "IT", "B": "BANKING"}))
+
+    assert out.rejection_reason is not None
+    assert "confidence alone" not in out.rejection_reason
+    assert "LAB_MIN_CONFIDENCE" not in out.rejection_reason

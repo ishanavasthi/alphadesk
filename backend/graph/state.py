@@ -158,11 +158,33 @@ class RiskAssessment(BaseModel):
         ...,
         ge=0.0,
         le=1.0,
-        description="Confidence carried over from the recommendation (checked against 0.70).",
+        description=(
+            "Confidence carried over from the recommendation, checked against the "
+            "RiskManager's ``MIN_CONFIDENCE``. That threshold is model-relative and "
+            "configurable (B11 phase 3) — it is not a fixed 0.70 any more."
+        ),
+    )
+    evidence_quality: Optional[float] = Field(
+        None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Evidence quality carried over from the recommendation, echoed here so a "
+            "verdict can be read without re-joining to the recommendation. ``None`` "
+            "when the model did not supply it."
+        ),
     )
     violations: List[str] = Field(
         default_factory=list,
         description="Guardrails breached, e.g. ['confidence_below_threshold', 'sector_limit'].",
+    )
+    flags: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Non-fatal cautions that make a verdict FLAG rather than REJECT, e.g. "
+            "['borderline_confidence', 'thin_evidence']. A flag never blocks approval; "
+            "it is the reason the human is being asked to look (B11 phase 3)."
+        ),
     )
     notes: Optional[str] = Field(
         None, description="Human-readable explanation of the verdict."

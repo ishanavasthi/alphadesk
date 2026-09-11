@@ -9,12 +9,29 @@ const RISK_CLASS: Record<RiskDecision, string> = {
 };
 
 const RISK_DESC: Record<RiskDecision, string> = {
-  PASS: "Cleared all guardrails (confidence >= 0.75).",
-  FLAG: "Cleared the guardrails but confidence is borderline (0.70-0.75). Review before approving.",
-  REJECT: "Failed a guardrail - confidence < 0.70, sector full, or the analyst said avoid.",
+  PASS: "Cleared every guardrail with nothing flagged.",
+  FLAG: "Cleared the guardrails, but with a caution - borderline conviction or thin evidence. Approvable; look before you do.",
+  REJECT: "Failed a guardrail - conviction below the floor, sector already full, or the analyst said avoid.",
 };
 
-export function RiskBadge({ decision }: { decision: RiskDecision }) {
+/** Human wording for the non-fatal `flags` behind a FLAG verdict. */
+const FLAG_DESC: Record<string, string> = {
+  borderline_confidence: "conviction sits just above the floor",
+  thin_evidence: "the call rests on very little data",
+};
+
+export function flagLabel(flag: string): string {
+  return FLAG_DESC[flag] ?? flag.replace(/_/g, " ");
+}
+
+export function RiskBadge({
+  decision,
+  flags,
+}: {
+  decision: RiskDecision;
+  flags?: string[];
+}) {
+  const why = flags?.length ? ` (${flags.map(flagLabel).join("; ")})` : "";
   return (
     <Hint
       content={
@@ -22,6 +39,7 @@ export function RiskBadge({ decision }: { decision: RiskDecision }) {
           <span className="hint-head">Risk Manager · verdict</span>
           <span className="hint-body">
             <strong>{decision}</strong> - {RISK_DESC[decision]}
+            {why}
           </span>
         </>
       }
