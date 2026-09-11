@@ -1,9 +1,9 @@
 /**
  * The footer — and the Privacy/Terms links it carries — must be reachable from
- * the two bare auth routes, `/sign-in` and `/waitlist` (card L1).
+ * the two bare auth routes, `/sign-in` and `/sign-up` (card L1).
  *
  * Both sit outside the marketing group that renders the footer everywhere else,
- * and `/waitlist` collects an email, so a missing policy link there is a real
+ * and `/sign-up` collects an email, so a missing policy link there is a real
  * gap. Each route now has a layout that wraps its page in the shared footer;
  * these render that layout and assert the links resolve.
  */
@@ -13,12 +13,12 @@ import type { ComponentType, ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 
 import SignInLayout from "@/app/sign-in/layout";
-import WaitlistLayout from "@/app/waitlist/layout";
+import SignUpLayout from "@/app/sign-up/layout";
 
 describe("global footer on the bare auth routes", () => {
   it.each<[string, ComponentType<{ children: ReactNode }>]>([
     ["/sign-in", SignInLayout],
-    ["/waitlist", WaitlistLayout],
+    ["/sign-up", SignUpLayout],
   ])("renders the footer with Privacy + Terms on %s", (_route, Layout) => {
     const { container } = render(<Layout>
       <div>the form</div>

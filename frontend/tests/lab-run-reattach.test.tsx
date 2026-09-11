@@ -19,7 +19,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ResumeRunCard, readLabRun, rememberLabRun } from "@/components/ResumeRunCard";
+import { ResumeRunCard, readLabRun, rememberLabRun } from "@/components/lab/ResumeRunCard";
 
 const getRunStatus = vi.fn();
 

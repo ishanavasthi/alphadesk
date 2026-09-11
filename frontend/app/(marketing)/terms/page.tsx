@@ -12,8 +12,8 @@ export default function TermsPage() {
   return (
     <LegalPage
       title="Terms of Use"
-      updated="16 August 2026"
-      summary="AlphaDesk is a portfolio-analytics and research tool. It is descriptive only and is not investment advice; the research desk is a paper simulation and no real orders are ever placed. Access is waitlist-gated and the code is open source. By using AlphaDesk you agree to these terms."
+      updated="9 September 2026"
+      summary="AlphaDesk is a portfolio-analytics and research tool. It is descriptive only and is not investment advice; the research desk is a paper simulation and no real orders are ever placed. Sign-up is open to anyone and the code is open source. By using AlphaDesk you agree to these terms."
     >
       <section>
         <h2>What AlphaDesk is</h2>
@@ -28,10 +28,10 @@ export default function TermsPage() {
       <section>
         <h2>Who can use it</h2>
         <p>
-          Access is <b className="font-semibold text-foreground">waitlist-gated</b>. Joining the
-          waitlist does not create an account or entitle you to access; the operator approves
-          invitations individually and may decline or withdraw access at any time, for any reason,
-          without notice. You must be at least 18 and use AlphaDesk only for your own accounts.
+          Sign-up is <b className="font-semibold text-foreground">open</b> — anyone can create an
+          account. Access is offered as is and the operator may decline or withdraw it at any
+          time, for any reason, without notice. You must be at least 18 and use AlphaDesk only for
+          your own accounts.
         </p>
       </section>
 

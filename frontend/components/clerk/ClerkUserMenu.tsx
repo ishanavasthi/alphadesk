@@ -32,7 +32,7 @@ export function ClerkUserMenu() {
       <SignInButton mode="redirect">
         <button
           type="button"
-          className="eyebrow text-muted-foreground transition-colors hover:text-foreground"
+          className="text-[13px] text-muted-foreground transition-colors hover:text-foreground"
         >
           Sign in
         </button>

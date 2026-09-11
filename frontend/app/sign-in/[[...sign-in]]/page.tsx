@@ -15,9 +15,9 @@ import { AUTH_ENABLED } from "@/lib/auth";
  * should still. A server component owns that decision so the Clerk chunk is
  * never sent to a visitor who cannot use it.
  *
- * In Waitlist mode this page is reachable, but only an approved account can get
- * through it; everyone else is pointed at `/waitlist` by the card's own link
- * (that link exists because `<ClerkProvider waitlistUrl>` is set).
+ * Sign-up is open, so a visitor with no account is pointed at `/sign-up` by the
+ * card's own link (that link exists because `<ClerkProvider signUpUrl>` is
+ * set). Before general availability that link pointed at `/waitlist` instead.
  */
 export default function SignInPage() {
   if (!AUTH_ENABLED) notFound();

@@ -35,7 +35,7 @@ export function SiteHeader() {
         </Link>
         {/* Below `sm` the row cannot hold the link cluster *and* the identity
             actions: at 360px the two together overflow, which is what pushed
-            "Join waitlist" off the right edge and wrapped "Sign in" onto two
+            "Sign up" off the right edge and wrapped "Sign in" onto two
             lines. So the cluster steps aside on phones and the row keeps the
             wordmark, the theme toggle and the identity actions — the things a
             visitor has to be able to reach — on one line. Nothing is stranded:

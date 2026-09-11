@@ -14,13 +14,16 @@ import { MarketingFooter } from "@/components/landing/MarketingFooter";
  * the theme toggle) and the marketing footer (disclaimers, source link,
  * Privacy/Terms) on every page. `data-adp` scopes the token set as `/portfolio`
  * and `/demo` do, and `id="adp-root"` is what `ThemeBootstrap` and
- * `ThemeToggle` reach for; `min-h-screen bg-background` covers the root body's terminal
- * near-black.
+ * `ThemeToggle` reach for; `min-h-screen bg-background` is what paints the
+ * ground rather than leaving the root body's default showing through.
  */
 export default function MarketingLayout({ children }: { children: ReactNode }) {
   return (
+    // `suppressHydrationWarning`: the bootstrap stamps `data-adp-theme` here
+    // before React hydrates, so the server HTML is meant to differ.
     <div
       id="adp-root"
+      suppressHydrationWarning
       data-adp
       className="flex min-h-screen flex-col bg-background text-foreground"
     >

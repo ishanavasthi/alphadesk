@@ -2,7 +2,7 @@
 
 import { Eye, EyeOff } from "lucide-react";
 
-import { Button } from "./ui";
+import { Button } from "@/components/ui/adp";
 import { toggleAmountsHidden, useAmountsHidden } from "./privacy";
 
 /**

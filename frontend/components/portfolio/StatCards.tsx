@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import type { PortfolioSummary } from "@/lib/api";
 import { inr, inrSigned, num, pctSigned, toneClass } from "./format";
-import { Card } from "./ui";
+import { Card } from "@/components/ui/adp";
 
 function Stat({
   label,

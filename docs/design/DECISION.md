@@ -85,8 +85,9 @@ and chart rules. Only the token *values* change, on
 No component branches on the theme — a component that needs to know which
 theme it is in is a component that has escaped the token set.
 
-Scope is the `[data-adp]` dashboard surface. The Lab keeps its own dark
-terminal chrome and the marketing pages stay light.
+Scope is every `[data-adp]` surface — the dashboard, `/demo`, the marketing
+pages and, since #18, the Lab. (Before #18 the Lab kept its own dark terminal
+chrome; see "The Lab joins the direction" below.)
 
 Behaviour: the OS preference is the default, a toggle in the dashboard top bar
 overrides it and persists in `localStorage["adp-theme"]`, and an inline script
@@ -121,3 +122,58 @@ light — so lightness stays monotonic across the ordered bands in both themes.
 Bands beyond three still sample the ramp by per-channel interpolation
 (`color-mix(in srgb, …)` over the tokens), which reproduces the locked three
 exactly.
+
+## The Lab joins the direction (locked 2026-09-11, issue #18)
+
+**Winner: `lab/a-console.html` — "Desk Console"**, chosen by the operator from a
+five-way bake-off (`docs/design/lab/`, losers in `lab/rejected/`). The Lab's
+dark Bloomberg terminal is retired: it renders inside the same `[data-adp]`
+token surface as the dashboard, light and dark, and **the direction above is
+unchanged** — this is a surface joining it, not an amendment to it.
+
+The reference page is the visual contract for the Lab the way `a-shadcn.html` is
+for the dashboard. What it locks:
+
+- **Chrome.** The dashboard's top bar — wordmark, `Portfolio / Lab` nav, theme
+  toggle, IND Money link chip, account menu. No second chrome.
+- **The simulation band.** Directly under the top bar on every `/lab` view: the
+  purple `lab` badge plus *"A live simulation. Runs aren't saved. Not investment
+  advice; no orders are placed."* on the `lab` badge tokens. It is the Lab's
+  identity — carried by a label, never by a private palette.
+- **Pipeline.** Five equal cells on one bordered strip, left to right, each with
+  the agent's name, its output count and its elapsed time, and a 2px accent rule
+  under the finished ones. Order encodes the real dependency chain, so the
+  sequence is information, not decoration.
+- **Candidates.** Split by outcome, never mixed: **Cleared the guardrails** as a
+  three-up card grid (the three sector slots), **Not staged** as a two-up
+  compact card carrying only the verdict and the reason. A rejection is a
+  result, so it is shown, never hidden.
+- **Conviction and evidence, always together, never against a threshold.**
+  The bake-off mock drew confidence against a 0.70 floor and a 0.75 pass line;
+  **B11 landed between the mock and the port and removed that reading.** It
+  measured the model and found rerun noise larger than the between-stock spread
+  — there is no cut point, the surviving thresholds are a collapse detector, and
+  the number is a self-assessment of *direction*, not a quality score. So the
+  meter carries no ticks: threshold marks would be the most confident-looking
+  thing on the card and the least true. Conviction is labelled as a
+  self-assessment and drawn beside `evidence_quality`, which is low by
+  construction while RAG is dormant — one without the other is the presentation
+  B11 exists to stop. The verdict is the badge's job, and `data_gaps` says what
+  would have made the call better. See `docs/SPECS/B11.md`.
+  *(`lab/a-console.html` predates this and still shows the ticks. Per the usual
+  rule, where the demo and the shipped Lab disagree, the shipped Lab wins.)*
+- **The gate.** The human-approval banner sits on the warn tokens above the
+  candidates and is the loudest element on the view; approval itself is the
+  standard dialog.
+
+### Two amendments the Lab needs
+
+Both are extensions of existing families, declared once in `portfolio.css`:
+
+| Token | Light | Dark | Why |
+| --- | --- | --- | --- |
+| `--adp-bad-bg` / `-bd` / `-ink` (`bad` badge) | `#fef2f2` / `#fecaca` / `#b91c1c` | `#2a0f12` / `#7f1d1d` / `#fca5a5` | A risk verdict of REJECT had no badge tint; built on the `good` badge recipe. |
+| `--adp-warn-mark` | `#d97706` | `#fbbf24` | The warn family is a background, a border and an ink — no value reads as *amber* filling an 8px meter or a 7px dot, and `--adp-warn-ink` used that way reads brown. **A mark only: it never sets text.** |
+
+`up` / `down` / `flag` / `cyan`, `.eyebrow`, `.pill-*`, `.hero-glow`, `.caret`
+and `.bg-up-soft` are gone with the terminal.

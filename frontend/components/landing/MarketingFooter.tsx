@@ -4,7 +4,7 @@ import { Github } from "lucide-react";
 /**
  * The marketing footer.
  *
- * `PortfolioFooter` carries the disclaimer and the legal links but no source
+ * `SurfaceFooter` carries the disclaimer and the legal links but no source
  * link, and the marketing pages are where the open-source repo is worth naming,
  * so this surface gets its own footer rather than an extra prop on a shared one.
  */

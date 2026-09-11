@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { inr, inrSigned, num, pct, pctSigned, toneClass, typeLabel, units } from "./format";
-import { Badge } from "./ui";
+import { Badge } from "@/components/ui/adp";
 
 /** The one sentence behind every `—` in this dialog. */
 const NOT_REPORTED = "Not reported by the source";

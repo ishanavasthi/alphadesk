@@ -149,7 +149,7 @@ describe("every themed surface can read the stored choice", () => {
   const THEMED = sourcesScoping("data-adp");
 
   /**
-   * The one deliberate exception. `/sign-in` and `/waitlist` render a Clerk
+   * The one deliberate exception. `/sign-in` and `/sign-up` render a Clerk
    * form, and Clerk's default appearance is light; theming the shell around a
    * light card would look broken, not dark. It takes the palette for the footer
    * and stays light on purpose — see the component's own comment.
@@ -161,6 +161,9 @@ describe("every themed surface can read the stored choice", () => {
     expect(THEMED.map(([file]) => file).sort()).toEqual([
       "app/(marketing)/layout.tsx",
       "app/demo/layout.tsx",
+      // The Lab joined the token set at issue #18, which is what makes
+      // Portfolio → Lab → Portfolio one theme instead of two.
+      "app/lab/layout.tsx",
       "app/portfolio/layout.tsx",
       "components/shell/AuthFooterShell.tsx",
     ]);

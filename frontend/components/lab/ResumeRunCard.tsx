@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, Loader2, ShieldCheck, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/ui/adp";
 import { getRunStatus, type RunStatusPayload } from "@/lib/api";
 
 /**
@@ -78,34 +78,32 @@ export function ResumeRunCard() {
   const awaiting = run.status === "awaiting_approval";
 
   return (
-    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border border-border border-l-2 border-l-primary bg-card p-3">
-      <div className="flex items-start gap-2.5">
-        <span className="text-primary">
-          {running ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <ShieldCheck className="h-4 w-4" />
-          )}
-        </span>
-        <div className="min-w-0">
-          <div className="eyebrow text-primary">
-            {running
-              ? "A run from this session is in progress"
-              : awaiting
-                ? "A run from this session is awaiting your approval"
-                : "A run from this session has finished"}
-          </div>
-          <div className="mt-0.5 truncate text-[0.8rem] text-muted-foreground">
-            <span className="font-mono">{run.run_id.slice(0, 8)}</span>
-            {run.query ? ` · ${run.query}` : ""}
-          </div>
+    <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2.5 rounded-lg border border-border bg-card px-4 py-3 shadow-[0_1px_2px_var(--adp-shadow)]">
+      <span className="text-[var(--adp-accent)]" aria-hidden>
+        {running ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <ShieldCheck className="h-4 w-4" />
+        )}
+      </span>
+      <div className="min-w-[14rem] flex-1">
+        <div className="text-[13px] font-medium">
+          {running
+            ? "A run from this session is in progress"
+            : awaiting
+              ? "A run from this session is awaiting your approval"
+              : "A run from this session has finished"}
+        </div>
+        <div className="mt-0.5 truncate text-xs text-muted-foreground">
+          <span className="font-mono">{run.run_id.slice(0, 8)}</span>
+          {run.query ? ` · ${run.query}` : ""}
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <Button size="sm" asChild>
+        <Button variant="primary" size="sm" asChild>
           <Link href={`/lab/a/${run.run_id}`}>
             View
-            <ArrowRight />
+            <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </Button>
         <Button
@@ -117,7 +115,7 @@ export function ResumeRunCard() {
             setRun(null);
           }}
         >
-          <X />
+          <X className="h-3.5 w-3.5" />
           Clear
         </Button>
       </div>

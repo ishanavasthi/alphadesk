@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Badge, Button, Card, EmptyCallout } from "./ui";
+import { Badge, Button, Card, EmptyCallout } from "@/components/ui/adp";
 
 /**
  * Full-page states for `/portfolio`, per `a4-shell.html`.

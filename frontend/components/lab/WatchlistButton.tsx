@@ -9,7 +9,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+import { Badge, Button } from "@/components/ui/adp";
 import { getWatchlist, removeFromWatchlist, type WatchlistItem } from "@/lib/api";
 
 export function WatchlistButton() {
@@ -46,22 +46,18 @@ export function WatchlistButton() {
 
   return (
     <>
-      <button
-        onClick={() => onOpenChange(true)}
-        className="flex items-center gap-1.5 rounded-sm border border-border bg-secondary/40 px-2 py-1 font-mono text-[0.65rem] uppercase tracking-[0.1em] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
-      >
-        <Star className="h-3 w-3" />
+      <Button variant="outline" size="sm" onClick={() => onOpenChange(true)}>
+        <Star className="h-3.5 w-3.5" />
         Watchlist
-      </button>
+      </Button>
 
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent>
           <DialogHeader>
-            <div className="flex items-center gap-2 text-primary">
-              <Star className="h-4 w-4" />
-              <span className="eyebrow text-primary">Paper watchlist</span>
-            </div>
-            <DialogTitle>
+            <Badge variant="lab" className="self-start">
+              Paper watchlist
+            </Badge>
+            <DialogTitle className="mt-2">
               {items.length} stock{items.length === 1 ? "" : "s"}
             </DialogTitle>
             <DialogDescription>
@@ -71,8 +67,8 @@ export function WatchlistButton() {
           </DialogHeader>
 
           <div className="max-h-72 space-y-1.5 overflow-y-auto">
-            {loading && <div className="eyebrow caret">Loading</div>}
-            {error && <p className="font-mono text-xs text-down">{error}</p>}
+            {loading && <div className="text-xs text-muted-foreground">Loading…</div>}
+            {error && <p className="text-xs text-[var(--adp-bad)]">{error}</p>}
             {!loading && !error && items.length === 0 && (
               <p className="text-sm text-muted-foreground">
                 Nothing here yet. Approve stocks from a run to add them.
@@ -81,21 +77,23 @@ export function WatchlistButton() {
             {items.map((it) => (
               <div
                 key={it.symbol}
-                className="flex items-center justify-between gap-3 border border-border bg-card px-3 py-2"
+                className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
               >
                 <div className="min-w-0">
-                  <div className="font-mono text-sm font-bold text-primary">{it.symbol}</div>
-                  {it.query && <div className="truncate eyebrow">{it.query}</div>}
+                  <div className="text-[13px] font-semibold">{it.symbol}</div>
+                  {it.query && (
+                    <div className="truncate text-xs text-muted-foreground">{it.query}</div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2.5">
                   {it.added_at && (
-                    <span className="font-mono text-[0.62rem] text-muted-foreground">
+                    <span className="adp-num text-xs text-[var(--adp-faint)]">
                       {new Date(it.added_at).toLocaleDateString()}
                     </span>
                   )}
                   <button
                     onClick={() => remove(it.symbol)}
-                    className="text-muted-foreground transition-colors hover:text-down"
+                    className="text-muted-foreground transition-colors hover:text-[var(--adp-bad)]"
                     aria-label={`Remove ${it.symbol}`}
                   >
                     <X className="h-3.5 w-3.5" />
@@ -107,7 +105,11 @@ export function WatchlistButton() {
 
           <div className="flex justify-end">
             <Button variant="outline" size="sm" onClick={load} disabled={loading}>
-              {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              {loading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
               Refresh
             </Button>
           </div>

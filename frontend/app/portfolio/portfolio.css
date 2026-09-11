@@ -1,18 +1,19 @@
-/* D1 portfolio surface — the locked shadcn direction, scoped.
+/* The locked shadcn direction — the app's one design language.
  *
  * `docs/design/DECISION.md` is the binding contract and `docs/design/shadcn.css`
  * is its canonical token file; the values below are that file, converted to the
  * HSL triplets Tailwind's tokens expect.
  *
- * Why scoped instead of global: this app already ships a Tailwind theme — the
- * dark Bloomberg terminal on `/` and `/a/[id]`, base colour neutral, radius
- * 0.25rem. Redefining those tokens globally would restyle two shipped pages
- * that nobody asked to change. So every token is redeclared on the
- * `[data-adp]` wrapper instead, which means the ordinary shadcn utilities
- * (`bg-card`, `border-border`, `rounded-lg`) resolve to the DECISION palette
- * inside this route and to the terminal palette everywhere else.
+ * Named for the surface that introduced it (D1, the portfolio dashboard), but
+ * every surface imports it now: `/portfolio`, `/demo`, the marketing group, the
+ * auth shell and — since issue #18 — the Lab. The dark Bloomberg terminal it was
+ * originally scoped *around* no longer exists.
  *
- * Flipping the app-wide default to these tokens is U1's call, not D1's.
+ * The `[data-adp]` scoping survives that change on purpose. It is what lets a
+ * layout opt a subtree into the palette explicitly, which is how `ui/dialog.tsx`
+ * knows where to portal and how `ThemeBootstrap` knows what to stamp. The
+ * ordinary shadcn utilities (`bg-card`, `border-border`, `rounded-lg`) resolve
+ * to DECISION values inside it.
  */
 
 [data-adp] {
@@ -60,6 +61,14 @@
   --adp-lab-bg: #faf5ff; /* `lab` badge — every Lab surface */
   --adp-lab-bd: #e9d5ff;
   --adp-lab-ink: #7e22ce;
+  /* Amendment, issue #18: DECISION had no REJECT tint. Same recipe as `good`. */
+  --adp-bad-bg: #fef2f2;
+  --adp-bad-bd: #fecaca;
+  --adp-bad-ink: #b91c1c;
+  /* Amendment, issue #18: the warn family is a background, a border and an ink;
+     none of them reads as *amber* filling an 8px meter or a 7px dot, and
+     --adp-warn-ink used that way reads brown. A MARK only — never text. */
+  --adp-warn-mark: #d97706;
   --adp-tooltip-bg: #09090b; /* chart tooltip: ink-950 / white */
   --adp-tooltip-ink: #ffffff;
   --adp-dot-ring: #ffffff; /* ring that lifts the trend endpoint off the fill */
@@ -135,6 +144,10 @@
   --adp-lab-bg: #2a1240;
   --adp-lab-bd: #6b21a8;
   --adp-lab-ink: #d8b4fe;
+  --adp-bad-bg: #2a0f12;
+  --adp-bad-bd: #7f1d1d;
+  --adp-bad-ink: #fca5a5;
+  --adp-warn-mark: #fbbf24;
   --adp-tooltip-bg: #f4f4f5; /* inverted with the ground, as on light */
   --adp-tooltip-ink: #09090b;
   --adp-dot-ring: #141417; /* the card, not white: same "lift", dark ground */
@@ -192,6 +205,89 @@
 }
 [data-adp] .adp-bar-row:hover .adp-fill {
   opacity: 0.75;
+}
+
+/* --- Lab (issue #18) ----------------------------------------------------- *
+ *
+ * Two things the Lab needs that no other surface does, kept here rather than in
+ * a component so they stay token-driven and invert for free. Everything else
+ * the Lab draws is an ordinary utility over the tokens above.
+ */
+
+/* Hover/focus tooltip on the risk + analyst badges (`components/Hint.tsx`). */
+[data-adp] .adp-hint {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  min-width: 13rem;
+  max-width: 18rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--popover));
+  border-radius: 6px;
+  box-shadow: 0 8px 24px var(--adp-shadow);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: hsl(var(--foreground));
+  text-align: left;
+  white-space: normal;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(2px);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+  pointer-events: none;
+}
+[data-adp] .group:hover > .adp-hint,
+[data-adp] .group:focus-visible > .adp-hint,
+[data-adp] .group:focus-within > .adp-hint {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+[data-adp] .adp-hint-head {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+}
+[data-adp] .adp-hint b {
+  color: hsl(var(--foreground));
+  font-weight: 600;
+}
+
+/* Analyst confidence, drawn against the two lines the Risk Manager enforces.
+   The ticks are the point: 0.82 and 0.68 are the same bar without them. */
+[data-adp] .adp-meter {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--adp-track);
+}
+[data-adp] .adp-meter-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 2px;
+  border-radius: 4px;
+  background: var(--adp-accent);
+}
+[data-adp] .adp-meter-fill[data-tone="warn"] {
+  background: var(--adp-warn-mark);
+}
+[data-adp] .adp-meter-fill[data-tone="bad"] {
+  background: var(--adp-bad);
+}
+[data-adp] .adp-meter-tick {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 1px;
+  background: var(--adp-faint);
 }
 
 /* Recharts paints its own SVG; these keep it inside the design language. */

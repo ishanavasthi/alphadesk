@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { Moon, Sun } from "lucide-react";
 
-import { Button } from "./ui";
+import { Button } from "@/components/ui/adp";
 
 /** Where the choice lives, and what the bootstrap in `layout.tsx` reads. */
 const STORAGE_KEY = "adp-theme";

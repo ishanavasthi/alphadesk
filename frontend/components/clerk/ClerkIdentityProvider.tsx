@@ -39,12 +39,14 @@ function SessionTokenBridge() {
 export function ClerkIdentityProvider({ children }: { children: ReactNode }) {
   return (
     <ClerkProvider
-      // Waitlist mode: signing up is joining a list, so the "no account?" link
-      // on the sign-in card must point at the waitlist rather than a sign-up
-      // form nobody is allowed to complete. Clerk needs the URL to build it.
-      waitlistUrl="/waitlist"
+      // Sign-up is open, so the "no account?" link on the sign-in card points
+      // at the real sign-up form. Clerk needs the URL to build that link; with
+      // neither `signUpUrl` nor `waitlistUrl` set it renders no link at all and
+      // a new visitor reaches the sign-in card with no way forward.
+      signUpUrl="/sign-up"
       signInUrl="/sign-in"
       signInFallbackRedirectUrl="/"
+      signUpFallbackRedirectUrl="/"
       afterSignOutUrl="/"
     >
       <SessionTokenBridge />

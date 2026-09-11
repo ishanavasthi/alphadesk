@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import type { PortfolioHolding } from "@/lib/api";
 import { HoldingDetailDialog } from "./HoldingDetailDialog";
 import { inr, inrSigned, num, pctSigned, toneClass, typeLabel, units } from "./format";
-import { Badge } from "./ui";
+import { Badge } from "@/components/ui/adp";
 
 type SortKey =
   | "name"

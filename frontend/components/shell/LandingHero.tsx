@@ -12,7 +12,7 @@ import { TrustBand } from "@/components/landing/TrustBand";
  *
  * It composes the sections in `components/landing/` and stays the component the
  * marketing page renders, with the same `authEnabled` contract: the flag gates
- * the waitlist CTA in both the hero and the closing block, because `/waitlist`
+ * the sign-up CTA in both the hero and the closing block, because `/sign-up`
  * is a Clerk route that 404s until sign-in is switched on. Flag off, the live
  * demo is the single public entry point.
  *

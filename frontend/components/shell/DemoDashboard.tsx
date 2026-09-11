@@ -9,7 +9,7 @@ import { NetWorthTrend } from "@/components/portfolio/NetWorthTrend";
 import { StatCards } from "@/components/portfolio/StatCards";
 import { StalenessBanner } from "@/components/portfolio/StalenessBanner";
 import { inr, num, typeLabel } from "@/components/portfolio/format";
-import { Badge, Card, CardHead, PortfolioFooter } from "@/components/portfolio/ui";
+import { Badge, Card, CardHead, SurfaceFooter } from "@/components/ui/adp";
 import { SourceEmptyNotice } from "@/components/portfolio/states";
 
 /**
@@ -99,7 +99,7 @@ export function DemoDashboard() {
         </Badge>
       </div>
 
-      <PortfolioFooter demo />
+      <SurfaceFooter demo />
     </>
   );
 }

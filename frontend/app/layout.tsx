@@ -12,26 +12,27 @@ const mono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AlphaDesk - NSE Research Terminal",
+  title: "AlphaDesk",
   description:
-    "Multi-agent Indian equity research desk. Type a thesis; the desk scans, researches, and reviews - you approve.",
+    "One honest view of an Indian portfolio, plus a labelled multi-agent research simulation. Descriptive analytics only; not investment advice.",
 };
 
 export default function RootLayout({
   children,
 }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="en" className={`dark ${inter.variable} ${mono.variable}`}>
+    <html lang="en" className={`${inter.variable} ${mono.variable}`}>
       <body className="min-h-screen font-sans antialiased">
         <Identity>
           {/* Two things live per surface, not here:
 
               1. **Chrome.** Card U1 owns one clean mechanism and it is
                  declarative per surface, not a root-level conditional: the
-                 terminal `TopBar` is rendered by `app/lab/layout` (the Bloomberg
-                 research desk), the light shadcn `SiteHeader` by the marketing
-                 group and `/demo`, and `/portfolio` carries its own
-                 `PortfolioTopBar`. This replaced the interim `TerminalChrome`.
+                 `SiteHeader` is rendered by the marketing group and `/demo`,
+                 `/portfolio` carries its own `PortfolioTopBar`, and `/lab` its
+                 `LabTopBar`. This replaced the interim `TerminalChrome`. Since
+                 issue #18 all three wear the same DECISION tokens; they differ
+                 in what they *hold*, not in how they look.
 
               2. **`AuthProvider`** (the IND Money link state — "has the desk been
                  linked to a broker?", distinct from `Identity`'s "who is looking

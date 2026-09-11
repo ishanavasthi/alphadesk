@@ -20,7 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Badge, Button, Card, CardHead, EmptyCallout } from "@/components/portfolio/ui";
+import { Badge, Button, Card, CardHead, EmptyCallout } from "@/components/ui/adp";
 import { inr, inrSigned, num, pct } from "@/components/portfolio/format";
 import { useAmountsHidden } from "@/components/portfolio/privacy";
 import { usePortfolio } from "@/components/portfolio/PortfolioProvider";

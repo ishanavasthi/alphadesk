@@ -6,7 +6,7 @@ import { NetWorthTrend } from "@/components/portfolio/NetWorthTrend";
 import { usePortfolio } from "@/components/portfolio/PortfolioProvider";
 import { StalenessBanner } from "@/components/portfolio/StalenessBanner";
 import { inrSigned, pctSigned, toneClass } from "@/components/portfolio/format";
-import { Button, Card, CardHead, PortfolioFooter } from "@/components/portfolio/ui";
+import { Button, Card, CardHead, SurfaceFooter } from "@/components/ui/adp";
 
 /**
  * `/portfolio/performance` — the captured history, at full width.
@@ -110,7 +110,7 @@ export default function PortfolioPerformancePage() {
         <CapStrip slices={summary.by_market_cap} />
       </Card>
 
-      <PortfolioFooter demo={demo} />
+      <SurfaceFooter demo={demo} />
     </>
   );
 }

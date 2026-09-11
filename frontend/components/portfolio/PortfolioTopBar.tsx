@@ -9,7 +9,7 @@ import { UserMenu } from "@/components/UserMenu";
 import type { PortfolioSummary } from "@/lib/api";
 import { PrivacyToggle } from "./PrivacyToggle";
 import { ThemeToggle } from "./ThemeToggle";
-import { Button, Chip } from "./ui";
+import { Button, Chip } from "@/components/ui/adp";
 
 /** The product surfaces, in the order they are offered everywhere. */
 const NAV_LINKS = [
