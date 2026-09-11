@@ -384,6 +384,7 @@ def main() -> int:
     parser.add_argument("--provider", help="override LAB_PROVIDER for this probe")
     parser.add_argument("--model", help="override LAB_ANALYST_MODEL for this probe")
     parser.add_argument("--pace", type=float, default=0.4, help="seconds between calls")
+    parser.add_argument("--timeout", type=float, help="per-call timeout in seconds")
     parser.add_argument("--json", type=Path, help="also write the raw results here")
     args = parser.parse_args()
 
@@ -391,6 +392,9 @@ def main() -> int:
         os.environ["LAB_PROVIDER"] = args.provider
     if args.model:
         os.environ["LAB_ANALYST_MODEL"] = args.model
+    if args.timeout:
+        global _CALL_TIMEOUT_S
+        _CALL_TIMEOUT_S = args.timeout
 
     provider = lab_provider() or "(env default)"
     model = lab_model("analyst", an.ANALYST_MODEL)
