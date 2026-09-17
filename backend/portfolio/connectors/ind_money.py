@@ -318,7 +318,7 @@ class IndMoneyConnector(PortfolioConnector):
         from tools.ind_money_auth import MCPAuthError, MCPAuthInvalid
 
         try:
-            return await self._transport(tool, arguments)
+            result = await self._transport(tool, arguments)
         except PortfolioSourceError:
             raise
         except MCPAuthInvalid as exc:
@@ -330,6 +330,12 @@ class IndMoneyConnector(PortfolioConnector):
             raise SourceUnavailable(f"{tool}: IND Money auth unavailable ({exc})") from exc
         except Exception as exc:  # noqa: BLE001 - transport failures are opaque
             raise SourceUnavailable(f"{tool}: IND Money call failed ({exc})") from exc
+        # A success proves the grant is alive, so it heals a remembered
+        # revocation (issue #80). Belt-and-braces beside the callback's
+        # connector eviction: the flag must never outlive the credential it
+        # describes, however the new tokens arrived.
+        self._revoked = False
+        return result
 
     def _backoff(self, retry_after: Optional[float]) -> float:
         """How long to wait: the source's own number, floored and capped."""

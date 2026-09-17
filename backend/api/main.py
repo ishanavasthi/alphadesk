@@ -712,6 +712,7 @@ async def auth_callback_endpoint(
     code: Optional[str] = None,
     state: Optional[str] = None,
     error: Optional[str] = None,
+    session: Optional[AsyncSession] = Depends(optional_session),
 ) -> Response:
     """OAuth redirect target — exchanges the code for tokens, then goes home.
 
@@ -734,7 +735,7 @@ async def auth_callback_endpoint(
             "Missing authorization code or state.", reason=_REASON_MISSING
         )
     try:
-        await complete_login(code, state)
+        user_id = await complete_login(code, state)
     except OAuthStateError as exc:
         return _callback_result(f"{exc} Nothing was connected.", reason=_REASON_STATE)
     except Exception:  # noqa: BLE001 - the message can carry broker payload text
@@ -742,6 +743,14 @@ async def auth_callback_endpoint(
             "Login failed. Please start the connection again.",
             reason=_REASON_FAILED,
         )
+    # A fresh link replaces whatever the process remembered about the old one
+    # (issue #80): the cached per-user connector may hold a sticky `_revoked`
+    # flag from the dead grant, and the summary cache may hold a payload whose
+    # `link_health` says revoked. Without this, the next `/portfolio/summary`
+    # serves fresh numbers paired with a stale "access revoked" chip — and no
+    # amount of Refreshing clears it. Mirrors what the unlink endpoint does.
+    evict_connector(user_id)
+    await portfolio_cache.invalidate_user(session, user_id)
     return _callback_result("IND Money connected.", ok=True)
 
 
