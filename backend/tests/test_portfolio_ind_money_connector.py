@@ -613,6 +613,20 @@ async def test_a_definitive_rejection_is_revoked_not_merely_unlinked():
 
 
 @pytest.mark.asyncio
+async def test_a_successful_call_heals_a_remembered_revocation():
+    """Issue #80: the connector remembered a dead grant (`_revoked`) for the
+    rest of the process, so a relinked user kept seeing "access revoked"
+    beside fresh numbers. A successful call proves the grant is alive, so it
+    clears the memory — belt-and-braces beside the callback's connector
+    eviction."""
+    c = connector(one_shot(mf_rows(mf_row())))
+    c.mark_revoked()
+    assert await c.link_health(USER) is LinkHealth.REVOKED
+    await c.fetch_holdings(USER, AssetType.MF)
+    assert await c.link_health(USER) is LinkHealth.LINKED
+
+
+@pytest.mark.asyncio
 async def test_a_transient_auth_failure_is_not_reported_as_revoked():
     from tools.ind_money_auth import MCPAuthError
 
