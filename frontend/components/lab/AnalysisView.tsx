@@ -91,7 +91,7 @@ export function AnalysisView({ payload }: { payload: AnalysisPayload }) {
         ) : null}
       </div>
 
-      <CandidateSections recs={recs} risks={risks} />
+      <CandidateSections recs={recs} risks={risks} status={runStatus(status, awaiting)} />
 
       <ApprovalModal
         open={modalOpen}
