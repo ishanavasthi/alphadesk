@@ -42,6 +42,7 @@ def test_no_ind_money_vars_without_a_fixture() -> None:
         "OPENROUTER_API_KEY",
         "NVIDIA_API_KEY",
         "BAI_API_KEY",
+        "ANTHROPIC_API_KEY",
         "OVERVIEW_PROVIDER",
         "OVERVIEW_MODEL",
         "LAB_PROVIDER",

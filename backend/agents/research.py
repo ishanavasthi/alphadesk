@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 from typing import Dict, Optional
 
-from agents.llm import get_lab_llm
+from agents.llm import get_lab_llm, message_text
 from graph.state import PortfolioState, ResearchReport, ScanResult
 from tools.ind_money import (
     GreeksHistoryResponse,
@@ -86,7 +86,7 @@ async def _summarize(
     )
     try:
         msg = await _get_llm().ainvoke(prompt)
-        return getattr(msg, "content", None) or "\n".join(facts)
+        return message_text(msg) or "\n".join(facts)
     except Exception:  # noqa: BLE001
         return "\n".join(facts)
 

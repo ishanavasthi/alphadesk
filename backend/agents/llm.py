@@ -42,8 +42,16 @@ deliberately. Ambient OpenAI vars still move nothing.
 
 Keys are read from the environment per provider: ``OPENAI_API_KEY`` (openai and
 compat), ``GROQ_API_KEY`` (groq), ``OPENROUTER_API_KEY`` (openrouter),
-``NVIDIA_API_KEY`` (nvidia), ``BAI_API_KEY`` (bai). Never construct a chat
-model directly in an agent — go through this helper.
+``NVIDIA_API_KEY`` (nvidia), ``BAI_API_KEY`` (bai), ``ANTHROPIC_API_KEY``
+(anthropic, plus ``ANTHROPIC_WORKSPACE_ID`` for a key not scoped to a
+workspace). Never construct a chat model directly in an agent — go through
+this helper.
+
+``provider="anthropic"`` is the one non-OpenAI-shaped transport: it goes through
+``langchain_anthropic.ChatAnthropic`` (the official ``anthropic`` SDK) against
+the Messages API, never Anthropic's OpenAI-compatibility shim. With a family
+routed there and no model var set, the family defaults to
+:data:`ANTHROPIC_DEFAULT_MODEL` rather than its historical Groq/OpenAI id.
 """
 
 from __future__ import annotations
@@ -75,7 +83,22 @@ NVIDIA_NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
 #: overridable with ``BAI_BASE_URL`` if they ever move it.
 BAI_DEFAULT_BASE_URL = "https://api.b.ai/v1"
 
-Provider = Literal["openai", "groq", "compat", "openrouter", "nvidia", "bai"]
+#: Anthropic's Messages API. Pinned for ``provider="anthropic"`` so a stray
+#: ``ANTHROPIC_BASE_URL`` (which the SDK reads from the environment) cannot
+#: redirect a call that carries a real Anthropic key.
+ANTHROPIC_BASE_URL = "https://api.anthropic.com"
+
+#: The model a family routed to Anthropic uses when none of its model vars is
+#: set. The per-agent historical tiers are Groq/OpenAI ids Anthropic would 404.
+ANTHROPIC_DEFAULT_MODEL = "claude-opus-5-5"
+
+#: Output ceiling for Anthropic calls. ``max_tokens`` is mandatory on the
+#: Messages API, and current Claude models think before answering, so the
+#: ceiling covers thinking + answer. Every caller here is non-streaming; 16k is
+#: the largest value that stays clear of the SDK's long-request guard.
+ANTHROPIC_MAX_TOKENS = 16000
+
+Provider = Literal["openai", "groq", "compat", "openrouter", "nvidia", "bai", "anthropic"]
 
 #: Every accepted ``provider`` value, for validating env input.
 PROVIDERS: frozenset[str] = frozenset(get_args(Provider))
@@ -171,6 +194,43 @@ def _chat_bai(model: str, temperature: float, timeout: Optional[float]) -> Any:
     return _chat_openai(model, temperature, base_url, timeout, api_key=api_key)
 
 
+def _chat_anthropic(model: str, timeout: Optional[float]) -> Any:
+    """Anthropic, pinned to its endpoint and its own key.
+
+    Same key discipline as the OpenAI-compatible providers: a missing key
+    raises rather than borrowing another provider's.
+
+    ``temperature`` is deliberately not sent. The current Claude models
+    (Opus 5.5, Sonnet 5.5, Haiku 5.5) reject any non-default sampling value
+    with a 400, and they run adaptive thinking whose depth is set by effort,
+    not temperature — so the callers' ``temperature=0`` has nothing to map to.
+
+    ``ANTHROPIC_WORKSPACE_ID``, when set, rides every request as the
+    ``anthropic-workspace-id`` header. An API key that is not scoped to a
+    workspace is refused (400) without it; a workspace-scoped key needs nothing.
+    """
+    api_key = _env("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ValueError(
+            "provider='anthropic' needs ANTHROPIC_API_KEY set to an Anthropic "
+            "API key (sk-ant-...)."
+        )
+    from langchain_anthropic import ChatAnthropic
+
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "api_key": api_key,
+        "base_url": ANTHROPIC_BASE_URL,
+        "max_tokens": ANTHROPIC_MAX_TOKENS,
+    }
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    workspace_id = _env("ANTHROPIC_WORKSPACE_ID")
+    if workspace_id:
+        kwargs["default_headers"] = {"anthropic-workspace-id": workspace_id}
+    return ChatAnthropic(**kwargs)
+
+
 def get_chat_llm(
     default_model: str,
     *,
@@ -194,13 +254,15 @@ def get_chat_llm(
               ``NVIDIA_API_KEY``, regardless of env.
             - ``"bai"`` — B.ai (default `api.b.ai/v1`, overridable with
               ``BAI_BASE_URL``) on ``BAI_API_KEY``, regardless of env.
+            - ``"anthropic"`` — Anthropic's Messages API (`api.anthropic.com`)
+              on ``ANTHROPIC_API_KEY``, regardless of env. ``temperature`` is
+              not sent (see :func:`_chat_anthropic`).
             - ``"compat"`` — an OpenAI-compatible endpoint from
               ``OPENAI_BASE_URL`` (required) + ``OPENAI_COMPATIBLE_MODEL``.
             - ``None`` — env-selected default: compat **iff** ``OPENAI_BASE_URL``
               is set, otherwise Groq. A lone ``OPENAI_COMPATIBLE_MODEL`` is inert
               here, so the Lab keeps running Groq even when that leftover is set.
-        timeout: Per-request timeout (seconds) for the OpenAI/compat/OpenRouter
-            paths, so a stalled connection fails fast instead of hanging.
+        timeout: Per-request timeout (seconds) for every path but Groq, so a stalled connection fails fast instead of hanging.
             Ignored for Groq.
     """
     if provider == "openai":
@@ -220,6 +282,9 @@ def get_chat_llm(
 
     if provider == "bai":
         return _chat_bai(default_model, temperature, timeout)
+
+    if provider == "anthropic":
+        return _chat_anthropic(default_model, timeout)
 
     if provider == "compat":
         base_url = _env("OPENAI_BASE_URL")
@@ -268,6 +333,32 @@ def _provider_from_env(var: str) -> Optional[Provider]:
     return raw  # type: ignore[return-value]
 
 
+#: The API-key variable each provider authenticates with.
+PROVIDER_KEY_VARS: dict[str, str] = {
+    "openai": "OPENAI_API_KEY",
+    "compat": "OPENAI_API_KEY",
+    "groq": "GROQ_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "nvidia": "NVIDIA_API_KEY",
+    "bai": "BAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+}
+
+
+def provider_key_configured(provider: Provider) -> bool:
+    """Whether ``provider``'s own API key is set (non-blank)."""
+    return bool(_env(PROVIDER_KEY_VARS[provider]))
+
+
+def _family_default(provider: Optional[Provider], default: str) -> str:
+    """The model a family falls back to when none of its model vars is set.
+
+    The callers' defaults are Groq/OpenAI model ids; on Anthropic they would
+    404, so a family routed there falls back to a Claude model instead.
+    """
+    return ANTHROPIC_DEFAULT_MODEL if provider == "anthropic" else default
+
+
 def overview_provider() -> Provider:
     """The AI-overview provider: ``OVERVIEW_PROVIDER``, else real OpenAI.
 
@@ -287,10 +378,11 @@ def get_overview_llm(
     default_model: str, *, temperature: float = 0.2, timeout: Optional[float] = None
 ) -> Any:
     """Construct the AI-overview chat model from its own env vars."""
+    provider = overview_provider()
     return get_chat_llm(
-        overview_model(default_model),
+        overview_model(_family_default(provider, default_model)),
         temperature=temperature,
-        provider=overview_provider(),
+        provider=provider,
         timeout=timeout,
     )
 
@@ -335,10 +427,11 @@ def lab_model(agent: str, default: str) -> str:
 
 def get_lab_llm(agent: str, default_model: str, *, temperature: float = 0) -> Any:
     """Construct one Lab agent's chat model from the Lab env vars."""
+    provider = lab_provider()
     return get_chat_llm(
-        lab_model(agent, default_model),
+        lab_model(agent, _family_default(provider, default_model)),
         temperature=temperature,
-        provider=lab_provider(),
+        provider=provider,
     )
 
 
@@ -356,11 +449,38 @@ def structured(llm: Any, schema: Any) -> Any:
     supports (verified against Groq's ``openai/gpt-oss-120b`` and OpenRouter's
     ``stealth/ox-alpha``), and it is what Groq resolves to by default anyway — so
     pinning it changes nothing on the default path and makes the swap work.
+
+    **Anthropic is the exception** and takes ``method="json_schema"`` — native
+    structured outputs (``output_config.format``), which constrain the reply to
+    the schema. Tool-calling there means a *forced* ``tool_choice``, which the
+    current Claude models reject with a 400 and which cannot be combined with
+    the thinking they run by default.
     """
+    from langchain_anthropic import ChatAnthropic
+
+    if isinstance(llm, ChatAnthropic):
+        return llm.with_structured_output(schema, method="json_schema")
     return llm.with_structured_output(schema, method="function_calling")
 
 
+def message_text(message: Any) -> str:
+    """The plain-text body of a chat-model reply.
+
+    Most providers return ``content`` as a string. Anthropic returns a list of
+    content blocks — a ``thinking`` block ahead of the ``text`` — so reading
+    ``.content`` raw would hand a list to code expecting prose.
+    """
+    content = getattr(message, "content", None)
+    if isinstance(content, str):
+        return content
+    text = getattr(message, "text", None)
+    return text if isinstance(text, str) else ""
+
+
 __all__ = [
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_DEFAULT_MODEL",
+    "ANTHROPIC_MAX_TOKENS",
     "BAI_DEFAULT_BASE_URL",
     "LAB_AGENTS",
     "LAB_MODEL_ALIASES",
@@ -369,13 +489,16 @@ __all__ = [
     "OPENROUTER_BASE_URL",
     "OPENROUTER_HEADERS",
     "PROVIDERS",
+    "PROVIDER_KEY_VARS",
     "Provider",
     "get_chat_llm",
     "get_lab_llm",
     "get_overview_llm",
     "lab_model",
     "lab_provider",
+    "message_text",
     "overview_model",
     "overview_provider",
+    "provider_key_configured",
     "structured",
 ]

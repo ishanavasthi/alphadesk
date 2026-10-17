@@ -81,6 +81,8 @@ Mark secrets as **Secret**.
 | `GROQ_API_KEY` | your Groq key | secret; the Lab / research agents |
 | `NVIDIA_API_KEY` | your NIM key (`nvapi-…`) | secret; only needed when a family names `provider=nvidia` |
 | `BAI_API_KEY` | your B.ai key | secret; only needed when a family names `provider=bai` |
+| `ANTHROPIC_API_KEY` | your Anthropic key (`sk-ant-…`) | secret; only needed when a family names `provider=anthropic` |
+| `ANTHROPIC_WORKSPACE_ID` | `wrkspc_…` | only for an Anthropic key **not** scoped to a workspace — sent as `anthropic-workspace-id`; without it such a key is refused (400) |
 | `IND_MONEY_MCP_URL` | `https://mcp.indmoney.com/mcp` | the MCP server |
 | `IND_MONEY_AUTH_REDIRECT` | `https://<user>-alphadesk.hf.space/auth/callback` | **critical** — exact public backend URL |
 | `CORS_ALLOW_ORIGINS` | `https://alphadesk.ishanavasthi.in,https://<your-vercel>.vercel.app` | comma-separated frontend origins |
@@ -102,8 +104,8 @@ set in prod it fail-opens every request to the operator identity),
 The two LLM families are configured independently, each by its **own** vars.
 Leave everything here unset for the shipped defaults — AI Overview on real
 OpenAI `gpt-4o-mini`, Lab on Groq at its historical per-agent tiers. Valid
-providers: `openai`, `groq`, `openrouter`, `compat`, `nvidia`, `bai`; a typo raises rather than
-silently billing the wrong provider.
+providers: `openai`, `groq`, `openrouter`, `compat`, `nvidia`, `bai`, `anthropic`; a typo
+raises rather than silently billing the wrong provider.
 
 | Var | Example | Notes |
 | --- | --- | --- |
@@ -116,9 +118,13 @@ silently billing the wrong provider.
 | `OPENROUTER_API_KEY` | `sk-or-v1-…` | secret; **required** for `provider=openrouter`. Never falls back to `OPENAI_API_KEY` |
 | `NVIDIA_API_KEY` | `nvapi-…` | secret; **required** for `provider=nvidia` (integrate.api.nvidia.com/v1) |
 | `BAI_API_KEY` | | secret; **required** for `provider=bai` (default api.b.ai/v1, overridable with `BAI_BASE_URL`) |
+| `ANTHROPIC_API_KEY` | `sk-ant-…` | secret; **required** for `provider=anthropic` (pinned to api.anthropic.com — a stray `ANTHROPIC_BASE_URL` is ignored). Plus `ANTHROPIC_WORKSPACE_ID` for a key not scoped to a workspace |
 
 Setting only `LAB_PROVIDER` keeps each agent's historical model id — swapping
-the route never silently rewrites the tiering. The two families are fully
+the route never silently rewrites the tiering — except on `anthropic`, where the
+historical ids are Groq/OpenAI names Anthropic would 404, so a family with no
+model var set falls back to `claude-opus-5-5`. Set `LAB_MODEL` /
+`OVERVIEW_MODEL` (e.g. `claude-sonnet-5-5`, `claude-haiku-5-5`) to choose. The two families are fully
 independent: moving the Lab does not move the Overview.
 
 **Model must support tool-calling.** Structured output is pinned to
@@ -127,7 +133,12 @@ independent: moving the Lab does not move the Overview.
 Analyst swallows the parse error as "skip this stock", and the run comes back
 empty with no error anywhere. Check `supported_parameters` includes `tools` on
 [openrouter.ai/models](https://openrouter.ai/models) before pointing the Lab at
-a new model.
+a new model. **Anthropic is the exception:** it uses native structured outputs
+(`method="json_schema"`), because tool-calling there means a forced
+`tool_choice`, which the current Claude models reject. It also sends no
+`temperature`, since Opus 5.5 / Sonnet 5.5 / Haiku 5.5 reject non-default
+sampling. Claude models think before answering, so if the overview times out,
+raise `OPENAI_OVERVIEW_TIMEOUT` (default 30 s) or pick a faster model.
 
 ### Reconnecting IND Money
 
