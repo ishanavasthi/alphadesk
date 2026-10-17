@@ -33,7 +33,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -41,6 +40,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agents.llm import overview_provider, provider_key_configured
 from agents.portfolio.agents import OverviewLLMError
 from agents.portfolio.metrics import (
     HistoryPoint,
@@ -94,8 +94,18 @@ def _overview_key(day) -> str:
 
 
 def _llm_configured() -> bool:
-    """Whether an OpenAI key is present. No key ⇒ degrade without spending."""
-    return bool((os.environ.get("OPENAI_API_KEY") or "").strip())
+    """Whether the overview provider's own key is present. No key ⇒ degrade
+    without spending.
+
+    Checks the key of the provider ``OVERVIEW_PROVIDER`` routes to (default
+    OpenAI), so an overview on Anthropic or B.ai does not also need an OpenAI
+    key set. An unknown provider name degrades too rather than 500ing.
+    """
+    try:
+        return provider_key_configured(overview_provider())
+    except ValueError:
+        _log.warning("OVERVIEW_PROVIDER is not a known provider; overview degraded")
+        return False
 
 
 async def _gather_holdings(

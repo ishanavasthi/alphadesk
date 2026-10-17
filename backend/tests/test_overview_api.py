@@ -149,6 +149,30 @@ def test_overview_happy_path_with_mocked_llm(
                 assert seg["display"] in displays
 
 
+def test_overview_on_anthropic_needs_only_the_anthropic_key(
+    client: TestClient, local_dev: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The preflight checks the routed provider's key, not OpenAI's."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("OVERVIEW_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-not-real")
+    monkeypatch.setattr(pg, "default_llm_factory", lambda: _FakeLLM())
+    complete = _complete(client.post("/portfolio/overview").text)
+    assert complete["degraded"] is False
+    assert complete["narrative"]
+
+
+def test_overview_on_anthropic_without_its_key_degrades(
+    client: TestClient, local_dev: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")  # wrong provider's key
+    monkeypatch.setenv("OVERVIEW_PROVIDER", "anthropic")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    complete = _complete(client.post("/portfolio/overview").text)
+    assert complete["degraded"] is True
+    assert complete["reason"] == "llm_unavailable"
+
+
 def test_overview_over_spend_cap_degrades(
     client: TestClient, local_dev: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
