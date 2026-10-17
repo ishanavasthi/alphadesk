@@ -66,6 +66,8 @@ _SCRUB_VARS = frozenset(
         "OPENAI_OVERVIEW_MODEL",
         "OPENAI_OVERVIEW_TIMEOUT",
         "LAB_PROVIDER",
+        "LAB_EFFORT",
+        "OVERVIEW_EFFORT",
         "LAB_MODEL",
         "LAB_SCANNER_MODEL",
         "LAB_RESEARCH_MODEL",

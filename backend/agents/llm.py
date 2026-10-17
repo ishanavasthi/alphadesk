@@ -100,6 +100,12 @@ ANTHROPIC_MAX_TOKENS = 16000
 
 Provider = Literal["openai", "groq", "compat", "openrouter", "nvidia", "bai", "anthropic"]
 
+#: Anthropic ``output_config.effort`` levels, accepted by ``OVERVIEW_EFFORT`` /
+#: ``LAB_EFFORT``. Effort is how current Claude models trade thinking depth
+#: against latency and spend; unset leaves the model's own default.
+Effort = Literal["low", "medium", "high", "xhigh", "max"]
+EFFORTS: frozenset[str] = frozenset(get_args(Effort))
+
 #: Every accepted ``provider`` value, for validating env input.
 PROVIDERS: frozenset[str] = frozenset(get_args(Provider))
 
@@ -194,7 +200,7 @@ def _chat_bai(model: str, temperature: float, timeout: Optional[float]) -> Any:
     return _chat_openai(model, temperature, base_url, timeout, api_key=api_key)
 
 
-def _chat_anthropic(model: str, timeout: Optional[float]) -> Any:
+def _chat_anthropic(model: str, timeout: Optional[float], effort: Optional[Effort]) -> Any:
     """Anthropic, pinned to its endpoint and its own key.
 
     Same key discipline as the OpenAI-compatible providers: a missing key
@@ -208,6 +214,9 @@ def _chat_anthropic(model: str, timeout: Optional[float]) -> Any:
     ``ANTHROPIC_WORKSPACE_ID``, when set, rides every request as the
     ``anthropic-workspace-id`` header. An API key that is not scoped to a
     workspace is refused (400) without it; a workspace-scoped key needs nothing.
+
+    ``effort`` sets ``output_config.effort``; ``None`` leaves the model default
+    (``medium`` on Opus 5.5, ``high`` on Sonnet 5.5).
     """
     api_key = _env("ANTHROPIC_API_KEY")
     if not api_key:
@@ -225,6 +234,8 @@ def _chat_anthropic(model: str, timeout: Optional[float]) -> Any:
     }
     if timeout is not None:
         kwargs["timeout"] = timeout
+    if effort is not None:
+        kwargs["effort"] = effort
     workspace_id = _env("ANTHROPIC_WORKSPACE_ID")
     if workspace_id:
         kwargs["default_headers"] = {"anthropic-workspace-id": workspace_id}
@@ -237,6 +248,7 @@ def get_chat_llm(
     temperature: float = 0,
     provider: Optional[Provider] = None,
     timeout: Optional[float] = None,
+    effort: Optional[Effort] = None,
 ) -> Any:
     """Return a chat model, routing by explicit ``provider`` first, then env.
 
@@ -264,6 +276,8 @@ def get_chat_llm(
               here, so the Lab keeps running Groq even when that leftover is set.
         timeout: Per-request timeout (seconds) for every path but Groq, so a stalled connection fails fast instead of hanging.
             Ignored for Groq.
+        effort: Anthropic ``output_config.effort``. Ignored by every other
+            provider — none of them has an equivalent knob.
     """
     if provider == "openai":
         # Pin the official endpoint so a stray OPENAI_BASE_URL cannot redirect
@@ -284,7 +298,7 @@ def get_chat_llm(
         return _chat_bai(default_model, temperature, timeout)
 
     if provider == "anthropic":
-        return _chat_anthropic(default_model, timeout)
+        return _chat_anthropic(default_model, timeout, effort)
 
     if provider == "compat":
         base_url = _env("OPENAI_BASE_URL")
@@ -345,6 +359,33 @@ PROVIDER_KEY_VARS: dict[str, str] = {
 }
 
 
+def _effort_from_env(var: str) -> Optional[Effort]:
+    """Read and validate a family effort var. Blank/unset → ``None``.
+
+    Same posture as the provider vars: a typo raises rather than silently
+    running at a level nobody chose.
+    """
+    raw = _env(var).lower()
+    if not raw:
+        return None
+    if raw not in EFFORTS:
+        raise ValueError(
+            f"{var}={raw!r} is not a known effort level. "
+            f"Expected one of: {', '.join(sorted(EFFORTS))}."
+        )
+    return raw  # type: ignore[return-value]
+
+
+def overview_effort() -> Optional[Effort]:
+    """The AI-overview effort: ``OVERVIEW_EFFORT`` (Anthropic only), else default."""
+    return _effort_from_env("OVERVIEW_EFFORT")
+
+
+def lab_effort() -> Optional[Effort]:
+    """The Lab effort: ``LAB_EFFORT`` (Anthropic only), else default."""
+    return _effort_from_env("LAB_EFFORT")
+
+
 def provider_key_configured(provider: Provider) -> bool:
     """Whether ``provider``'s own API key is set (non-blank)."""
     return bool(_env(PROVIDER_KEY_VARS[provider]))
@@ -384,6 +425,7 @@ def get_overview_llm(
         temperature=temperature,
         provider=provider,
         timeout=timeout,
+        effort=overview_effort(),
     )
 
 
@@ -432,6 +474,7 @@ def get_lab_llm(agent: str, default_model: str, *, temperature: float = 0) -> An
         lab_model(agent, _family_default(provider, default_model)),
         temperature=temperature,
         provider=provider,
+        effort=lab_effort(),
     )
 
 
@@ -482,6 +525,8 @@ __all__ = [
     "ANTHROPIC_DEFAULT_MODEL",
     "ANTHROPIC_MAX_TOKENS",
     "BAI_DEFAULT_BASE_URL",
+    "EFFORTS",
+    "Effort",
     "LAB_AGENTS",
     "LAB_MODEL_ALIASES",
     "NVIDIA_NIM_BASE_URL",
@@ -494,9 +539,11 @@ __all__ = [
     "get_chat_llm",
     "get_lab_llm",
     "get_overview_llm",
+    "lab_effort",
     "lab_model",
     "lab_provider",
     "message_text",
+    "overview_effort",
     "overview_model",
     "overview_provider",
     "provider_key_configured",

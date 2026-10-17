@@ -47,6 +47,8 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "OPENAI_OVERVIEW_MODEL",
         "LAB_PROVIDER",
         "LAB_MODEL",
+        "LAB_EFFORT",
+        "OVERVIEW_EFFORT",
         "LAB_SCANNER_MODEL",
         "LAB_RESEARCH_MODEL",
         "LAB_ANALYST_MODEL",
@@ -176,3 +178,43 @@ def test_message_text_skips_anthropic_thinking_blocks() -> None:
     )
     assert message_text(msg) == "Two factual sentences."
     assert message_text(AIMessage(content="plain")) == "plain"
+
+
+def test_family_effort_vars_reach_output_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LAB_PROVIDER", "anthropic")
+    monkeypatch.setenv("LAB_MODEL", "claude-opus-5-5")
+    monkeypatch.setenv("LAB_EFFORT", "medium")
+    monkeypatch.setenv("OVERVIEW_PROVIDER", "anthropic")
+    monkeypatch.setenv("OVERVIEW_MODEL", "claude-sonnet-5-5")
+    monkeypatch.setenv("OVERVIEW_EFFORT", "HIGH")
+    lab = get_lab_llm("analyst", "openai/gpt-oss-120b")
+    overview = get_overview_llm("gpt-4o-mini")
+    payload = lab._get_request_payload([("human", "hi")])
+    assert payload["output_config"]["effort"] == "medium"
+    assert overview._get_request_payload([("human", "hi")])["output_config"]["effort"] == "high"
+
+
+def test_effort_survives_structured_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    # json_schema binds its own output_config; both keys must reach the request.
+    llm = get_chat_llm("claude-opus-5-5", provider="anthropic", effort="medium")
+    bound = structured(llm, _Schema).first
+    payload = llm._get_request_payload([("human", "hi")], **bound.kwargs)
+    assert payload["output_config"]["effort"] == "medium"
+    assert "format" in payload["output_config"]
+
+
+def test_no_effort_var_leaves_the_model_default() -> None:
+    llm = get_chat_llm("claude-opus-5-5", provider="anthropic")
+    assert "output_config" not in llm._get_request_payload([("human", "hi")])
+
+
+def test_effort_typo_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LAB_PROVIDER", "anthropic")
+    monkeypatch.setenv("LAB_EFFORT", "meduim")
+    with pytest.raises(ValueError, match="LAB_EFFORT"):
+        get_lab_llm("analyst", "openai/gpt-oss-120b")
+
+
+def test_effort_is_inert_off_anthropic(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OVERVIEW_EFFORT", "high")
+    assert isinstance(get_overview_llm("gpt-4o-mini"), ChatOpenAI)

@@ -114,6 +114,7 @@ raises rather than silently billing the wrong provider.
 | `LAB_PROVIDER` | `openrouter` | Lab only. Unset ⇒ the ambient default, which is Groq |
 | `LAB_MODEL` | `stealth/ox-alpha` | blanket: all four Lab agents |
 | `LAB_SCANNER_MODEL` / `LAB_RESEARCH_MODEL` / `LAB_ANALYST_MODEL` / `LAB_RISK_MODEL` | | per-agent, beats `LAB_MODEL`. Unset ⇒ the historical tier |
+| `OVERVIEW_EFFORT` / `LAB_EFFORT` | `high` / `medium` | **Anthropic only** — `output_config.effort` (`low`…`max`); unset ⇒ the model's default. A typo raises; ignored on other providers |
 | `SCANNER_MODEL` / `RESEARCH_MODEL` / `ANALYST_MODEL` / `RISK_MODEL` | | deprecated aliases for the `LAB_`-prefixed names; the prefixed name wins if both are set |
 | `OPENROUTER_API_KEY` | `sk-or-v1-…` | secret; **required** for `provider=openrouter`. Never falls back to `OPENAI_API_KEY` |
 | `NVIDIA_API_KEY` | `nvapi-…` | secret; **required** for `provider=nvidia` (integrate.api.nvidia.com/v1) |
