@@ -16,11 +16,15 @@
  * the body behind a short page, the scrollbars, the overscroll gutter — is the
  * DECISION ground rather than an unstyled white or a leftover near-black.
  *
- * They deliberately mirror the light half of the `[data-adp]` set. A surface
- * that wants dark opts in with `data-adp-theme`, and `color-scheme` follows it
- * there; nothing here should ever be the reason a page looks right.
+ * The document ground follows the active surface too: Safari exposes it during
+ * overscroll and beneath its browser controls. Keeping only the inner wrapper
+ * dark leaves those areas light.
  */
 :root {
+  /* Stop elastic scrolling past the document; ordinary page scrolling remains. */
+  overscroll-behavior-y: none;
+  color-scheme: light;
+  background: hsl(var(--background));
   --background: 0 0% 98%; /* #fafafa */
   --foreground: 240 10% 4%; /* #09090b */
   --card: 0 0% 100%;
@@ -41,6 +45,14 @@
   --input: 240 6% 90%;
   --ring: 221 83% 53%;
   --radius: 0.5rem;
+}
+
+/* Follow the existing theme attribute without a second JS theme state. This
+   covers the pre-paint bootstrap, toggles, OS changes and surface remounts. */
+:root:has([data-adp][data-adp-theme="dark"]) {
+  --background: 240 10% 4%;
+  --foreground: 0 0% 96%;
+  color-scheme: dark;
 }
 
 @layer base {
