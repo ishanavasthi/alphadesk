@@ -49,7 +49,17 @@ file at every card completion and gate. Newest facts win; keep entries terse.
   deliberately not done.
 - Space: `https://huggingface.co/spaces/heyavasthi/alphadesk`, live at
   `https://heyavasthi-alphadesk.hf.space`. Currently running `space-deploy` @
-  `b12f04e` (B10 manual fixed deposits, deployed 2026-08-21).
+  `51579fe` = `main` @ `7a6b9e0` (deployed 2026-10-17): Anthropic provider (#84),
+  plus #81–#83. `8a35241` (#81) had been committed to `space-deploy` but never
+  pushed, so the Space was still on `f09c4bc` until this deploy. **LLM routing
+  on the Space:** Lab `anthropic` / `claude-opus-5-5` / `LAB_EFFORT=medium`;
+  Overview `anthropic` / `claude-sonnet-5-5` / `OVERVIEW_EFFORT=high`; secrets
+  `ANTHROPIC_API_KEY` + `ANTHROPIC_WORKSPACE_ID`. Rollback = set both
+  `*_PROVIDER=openrouter` and `*_MODEL=deepseek/deepseek-v4.1-flash` (the
+  previous routing) and unset the two `*_EFFORT` vars.
+- Pushing to the Space needs the HF token (`hf auth whoami`). The `space` remote
+  has no stored credential, so pass the token via `GIT_ASKPASS`. Never put it
+  in the remote URL or git config.
 
 ## Landmines found so far
 
