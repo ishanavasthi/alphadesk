@@ -70,10 +70,13 @@ export function pct(value: number | null, digits = 1): string {
  * and reveals nothing, but a labelled axis turns it back into a balance. The
  * ticks still render (the gridline positions are the shape), they just stop
  * naming a rupee figure.
+ *
+ * `digits` is the chart's to choose: a zoomed-in axis steps in 0.25L or 0.05L,
+ * and one decimal would print two adjacent ticks as the same label.
  */
-export function lakh(value: number): string {
+export function lakh(value: number, digits = 1): string {
   if (amountsHidden()) return MASK_SHORT;
-  return `${(value / 100000).toFixed(1)}L`;
+  return `${(value / 100000).toFixed(digits)}L`;
 }
 
 /**
