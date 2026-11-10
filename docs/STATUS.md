@@ -34,6 +34,7 @@ file at every card completion and gate. Newest facts win; keep entries terse.
 | --- | --- | --- |
 | B8 top movers | ✅ **done 2026-08-20** | Merged via PR #67 (issue #66). `GET /portfolio/movers` over captured snapshots (price-basis ranking, balance rows as flows, opened/closed never ±100%, window snapping, `buckets_failed` exclusion), `snapshot_holdings.name` (migration 0007), Top movers card on `/portfolio`. Docs: `docs/SPECS/B8.md`, `docs/TESTING/B8.md`. |
 | B10 manual FDs | ✅ **done + deployed 2026-08-21** | Merged via PR #69 (issue #68; implements #56, first slice of #55 — vendor FD repair stays B9/#65). `manual_fds` (migration 0008), pure-Decimal accrual recomputed on every read (clamp before start, freeze at maturity), `/portfolio/fds` CRUD (404-not-403, no-DB: reads empty / writes 503), additive merge into `/holdings?asset_type=FD` + `/summary.manual` with vendor fields byte-untouched, "Fixed deposits — manual" card + add/edit/delete dialogs. Orchestrator re-verified pre-merge: 794 pytest green in a clean env (the 9 failures in the operator checkout reproduce on `main` — `.env` leakage, pre-existing), 158 vitest + build + tsc, migration idempotent, accruals reconciled by hand, all seven visual states pixel-checked at 1280+375 (both dev-console findings reproduce on `main`). **Deployed 2026-08-21:** `alembic upgrade head` run against Neon (0007→0008, `manual_fds` present with CASCADE FK, 0 rows); Space rebuilt from `space-deploy` @ `b12f04e` (`/portfolio/fds` answers 401, `/portfolio/movers` unaffected); Vercel production READY on merge commit `230849e` with the FD card in the page chunk. No new env vars. Docs: `docs/SPECS/B10.md`, `docs/TESTING/B10.md`. |
+| #65 follow-up — exclude holdings | 🟡 **built 2026-11-10, not yet deployed** | Branch `feat/holding-exclusions`. Users can leave any source row out of every figure (the misreported, now double-counted vendor FDs). `holding_exclusions` (migration **0009** — deploy needs `alembic upgrade head`), `/portfolio/exclusions` CRUD, read-time adjustment of history, movers, the AI overview and the dashboard's live totals/allocation; snapshots untouched. Tests: `tests/test_exclusions.py`, `tests/test_api_exclusions.py`, `frontend/tests/exclusions.test.tsx`. |
 | B10 follow-up — FDs in the trend | ✅ **done 2026-08-22** | Merged via PR #71. The B10-deferred half: `/portfolio/history` now prices manual deposits. `history_points` adds each deposit's accrued value *computed at each captured day* (`value_row`) — read-time only, nothing stored, so entering/editing/deleting an FD re-prices the whole line on the next read with no capture run or migration; pre-`start_date` days contribute nothing (clamp-to-principal is for live valuation, not rewriting the past); post-maturity points gain the frozen maturity value. Snapshots stay byte-untouched; both consumers (`/portfolio/history`, AI overview `_history`) inherit one implementation; a failed manual read degrades to vendor-only points. Known caveat documented: days where the vendor's broken FD bucket sits inside captured `total_networth` (#65) double-count until B9 lands. No new deps, no frontend change. Tests: 6 service-level (`tests/test_snapshots.py`, TDD — watched fail first) + 1 HTTP retroactive-pricing test (`tests/test_snapshots_api.py`, whose teardown TRUNCATE now includes `manual_fds`). 819 pytest passed — the only failures are the 2 pre-existing `test_ratelimit` loop flakes that reproduce on the unmodified tree. |
 
 ## Deploy notes (read before pushing to the Space)
@@ -49,7 +50,17 @@ file at every card completion and gate. Newest facts win; keep entries terse.
   deliberately not done.
 - Space: `https://huggingface.co/spaces/heyavasthi/alphadesk`, live at
   `https://heyavasthi-alphadesk.hf.space`. Currently running `space-deploy` @
-  `b12f04e` (B10 manual fixed deposits, deployed 2026-08-21).
+  `51579fe` = `main` @ `7a6b9e0` (deployed 2026-10-17): Anthropic provider (#84),
+  plus #81–#83. `8a35241` (#81) had been committed to `space-deploy` but never
+  pushed, so the Space was still on `f09c4bc` until this deploy. **LLM routing
+  on the Space:** Lab `anthropic` / `claude-opus-5-5` / `LAB_EFFORT=medium`;
+  Overview `anthropic` / `claude-sonnet-5-5` / `OVERVIEW_EFFORT=high`; secrets
+  `ANTHROPIC_API_KEY` + `ANTHROPIC_WORKSPACE_ID`. Rollback = set both
+  `*_PROVIDER=openrouter` and `*_MODEL=deepseek/deepseek-v4.1-flash` (the
+  previous routing) and unset the two `*_EFFORT` vars.
+- Pushing to the Space needs the HF token (`hf auth whoami`). The `space` remote
+  has no stored credential, so pass the token via `GIT_ASKPASS`. Never put it
+  in the remote URL or git config.
 
 ## Landmines found so far
 

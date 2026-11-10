@@ -13,14 +13,18 @@ import {
 import {
   PortfolioError,
   capturePortfolioSnapshot,
+  excludeHolding,
   getPortfolioAllocation,
   getPortfolioHistory,
   getPortfolioHoldingsAll,
   getPortfolioSummary,
+  listExclusions,
   listFds,
+  restoreHolding,
   startAuthLogin,
   type AllocationSlice,
   type BatchBucket,
+  type HoldingExclusion,
   type ManualFd,
   type OverviewComplete,
   type PortfolioHolding,
@@ -31,6 +35,11 @@ import { useLinkConsent } from "@/components/consent/LinkConsent";
 import { toTrendPoints, type TrendPoint } from "@/components/portfolio/NetWorthTrend";
 import type { CaptureState } from "@/components/portfolio/PortfolioTopBar";
 import { num, typeLabel } from "@/components/portfolio/format";
+import {
+  applyExclusions,
+  holdingKey,
+  type ExclusionAdjustment,
+} from "@/components/portfolio/exclusions";
 import { toggleAmountsHidden, useAmountsHidden } from "@/components/portfolio/privacy";
 import {
   ConnectGate,
@@ -220,6 +229,27 @@ export interface PortfolioContextValue {
    * fresher of the two. Falls back to `summary.manual` before the list arrives.
    */
   manual: { total: number; count: number } | null;
+  /** Holdings the reader excluded from every figure (#65's misreported FDs). */
+  exclusions: HoldingExclusion[];
+  /** `holdingKey(source, external_id)` of every excluded holding. */
+  excludedKeys: Set<string>;
+  /** Why the exclusion list is empty when there is no database behind it. */
+  exclusionsNote: string | null;
+  /** The last exclude/restore that failed, in the reader's terms. */
+  exclusionsError: string | null;
+  /** Keys with an exclude/restore in flight, so their buttons can say so. */
+  exclusionsBusy: Set<string>;
+  /** Exclude a holding, or put it back when it already is excluded. */
+  toggleExclusion: (holding: PortfolioHolding) => Promise<void>;
+  /** Put an excluded holding back by its exclusion id (the "Excluded" list). */
+  restoreExclusion: (exclusion: HoldingExclusion) => Promise<void>;
+  /**
+   * The summary with excluded holdings taken out, and what came off. Every
+   * headline figure reads `adjusted.summary`; `summary` stays the source's own.
+   */
+  adjusted: ExclusionAdjustment;
+  /** Bumped after every exclusion change; server-adjusted reads key on it. */
+  exclusionsVersion: number;
 }
 
 const PortfolioContext = createContext<PortfolioContextValue | null>(null);
@@ -282,6 +312,14 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
   const [fdsLoading, setFdsLoading] = useState(AUTH_ENABLED);
   const [fdsNote, setFdsNote] = useState<string | null>(null);
   const [fdsError, setFdsError] = useState<string | null>(null);
+
+  // Excluded holdings. One cheap database read like the FD list, re-read after
+  // every write so the set on screen is always the server's.
+  const [exclusions, setExclusions] = useState<HoldingExclusion[]>([]);
+  const [exclusionsNote, setExclusionsNote] = useState<string | null>(null);
+  const [exclusionsError, setExclusionsError] = useState<string | null>(null);
+  const [exclusionsBusy, setExclusionsBusy] = useState<Set<string>>(() => new Set());
+  const [exclusionsVersion, setExclusionsVersion] = useState(0);
 
   const aborter = useRef<AbortController | null>(null);
   const sectorAborter = useRef<AbortController | null>(null);
@@ -503,6 +541,86 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     void refreshFds();
   }, [reload, refreshFds]);
 
+  const refreshExclusions = useCallback(async () => {
+    if (!AUTH_ENABLED) return;
+    try {
+      const payload = await listExclusions();
+      setExclusions(payload.exclusions ?? []);
+      setExclusionsNote(payload.note ?? null);
+    } catch (err) {
+      // A backend without the route has nothing excluded; anything else is
+      // reported where the reader would act on it, never as a page failure.
+      const failure = err as PortfolioError;
+      if (failure.status !== 404) {
+        setExclusionsError(failure.message || "Excluded holdings could not be read.");
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshExclusions();
+  }, [reload, refreshExclusions]);
+
+  /**
+   * One exclusion write, then everything that depends on the set.
+   *
+   * The live figures recompute from the re-read list on their own. History and
+   * movers are adjusted server-side, so the line is re-read and the movers card
+   * keys on `exclusionsVersion`; the AI overview in memory described the old
+   * figures, so it is dropped and the next visit to Overview writes a new one.
+   */
+  const changeExclusion = useCallback(
+    async (key: string, write: () => Promise<unknown>) => {
+      setExclusionsBusy((current) => new Set(current).add(key));
+      setExclusionsError(null);
+      try {
+        await write();
+        await refreshExclusions();
+        setOverview(null);
+        setExclusionsVersion((v) => v + 1);
+        try {
+          const captured = await getPortfolioHistory(HISTORY_DAYS);
+          const points = toTrendPoints(captured.points);
+          setHistory(points);
+          if (lastKnown) lastKnown = { ...lastKnown, history: points };
+        } catch {
+          // The line keeps its previous shape; the next load corrects it.
+        }
+      } catch (err) {
+        setExclusionsError(
+          (err as PortfolioError).message || "That change could not be saved.",
+        );
+      } finally {
+        setExclusionsBusy((current) => {
+          const next = new Set(current);
+          next.delete(key);
+          return next;
+        });
+      }
+    },
+    [refreshExclusions],
+  );
+
+  const toggleExclusion = useCallback(
+    async (holding: PortfolioHolding) => {
+      const key = holdingKey(holding.source, holding.external_id);
+      const existing = exclusions.find((e) => holdingKey(e.source, e.external_id) === key);
+      await changeExclusion(key, () =>
+        existing ? restoreHolding(existing.id) : excludeHolding(holding),
+      );
+    },
+    [exclusions, changeExclusion],
+  );
+
+  const restoreExclusion = useCallback(
+    async (exclusion: HoldingExclusion) => {
+      await changeExclusion(holdingKey(exclusion.source, exclusion.external_id), () =>
+        restoreHolding(exclusion.id),
+      );
+    },
+    [changeExclusion],
+  );
+
   // Counts the Refresh cooldown down one second at a time, purely for the label.
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -648,6 +766,15 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
 
   const demo = summary?.source === "stub";
 
+  const excludedKeys = useMemo(
+    () => new Set(exclusions.map((e) => holdingKey(e.source, e.external_id))),
+    [exclusions],
+  );
+  const adjusted = useMemo<ExclusionAdjustment | null>(
+    () => (summary ? applyExclusions(summary, holdings, exclusions) : null),
+    [summary, holdings, exclusions],
+  );
+
   // The manual addition, live. `summary.manual` is the same figure a moment
   // earlier; the rows are what the reader just changed.
   const manual = useMemo<{ total: number; count: number } | null>(() => {
@@ -667,7 +794,7 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<PortfolioContextValue | null>(
     () =>
-      summary
+      summary && adjusted
         ? {
             summary,
             demo,
@@ -697,6 +824,15 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
             fdsError,
             refreshFds,
             manual,
+            exclusions,
+            excludedKeys,
+            exclusionsNote,
+            exclusionsError,
+            exclusionsBusy,
+            toggleExclusion,
+            restoreExclusion,
+            adjusted,
+            exclusionsVersion,
           }
         : null,
     [
@@ -727,6 +863,15 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       fdsError,
       refreshFds,
       manual,
+      exclusions,
+      excludedKeys,
+      exclusionsNote,
+      exclusionsError,
+      exclusionsBusy,
+      toggleExclusion,
+      restoreExclusion,
+      adjusted,
+      exclusionsVersion,
     ],
   );
 

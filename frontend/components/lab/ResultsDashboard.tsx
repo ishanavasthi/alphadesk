@@ -229,7 +229,7 @@ export function ResultsDashboard({ query, onReset }: { query: string; onReset: (
       </div>
 
       {recs.length > 0 ? (
-        <CandidateSections recs={recs} risks={risks} />
+        <CandidateSections recs={recs} risks={risks} status={status} />
       ) : status === "running" ? (
         <RunningSkeleton />
       ) : null}

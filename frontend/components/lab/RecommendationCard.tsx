@@ -160,45 +160,93 @@ function Tags({ label, items }: { label: string; items: string[] }) {
   );
 }
 
+function Header({ rec, risk, size }: { rec: AnalystRecommendation; risk?: RiskAssessment; size: string }) {
+  return (
+    <div className="flex items-start gap-3">
+      <div className="min-w-0">
+        <div className={cn("truncate font-semibold tracking-[-0.01em]", size)}>{rec.symbol}</div>
+        <div className="mt-0.5 text-xs text-muted-foreground">
+          {risk?.sector ?? "Sector not reported"}
+        </div>
+      </div>
+      <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
+        <ActionBadge action={rec.action} />
+        {risk ? <RiskBadge decision={risk.decision} flags={risk.flags} /> : null}
+      </div>
+    </div>
+  );
+}
+
+/** One hairline grid, so the two figures read as one object. Unknown is "—"
+ *  and never a computed zero (DECISION, null states). */
+function Figures({ rec }: { rec: AnalystRecommendation }) {
+  return (
+    <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-border bg-border">
+      <Figure
+        label="Target"
+        value={rec.target_price != null ? `₹${inr.format(rec.target_price)}` : null}
+      />
+      <Figure label="Horizon" value={rec.time_horizon ?? null} />
+    </div>
+  );
+}
+
+function RiskNotes({ risk }: { risk?: RiskAssessment }) {
+  if (!risk?.notes) return null;
+  return (
+    <p className="border-t border-[var(--adp-hairline)] pt-2.5 text-xs text-muted-foreground">
+      <b className="font-semibold text-foreground">Risk Manager:</b> {risk.notes}
+    </p>
+  );
+}
+
 /**
  * A candidate that cleared the guardrails — the full brief.
  *
  * Three of these fill a row, which is not a coincidence: the sector cap allows
  * three positions, so a full row is a full sector.
+ *
+ * `wide` is for a call that has the row to itself. The same brief in a third
+ * of the row ran to a screen and a half of single-column text beside two
+ * thirds of nothing, so a lone card spreads it out instead: numbers, bull and
+ * bear side by side, then the three tag lists across the width.
  */
 export function RecommendationCard({
   rec,
   risk,
+  wide = false,
 }: {
   rec: AnalystRecommendation;
   risk?: RiskAssessment;
+  wide?: boolean;
 }) {
+  if (wide) {
+    return (
+      <Card className="flex flex-col gap-4">
+        <Header rec={rec} risk={risk} size="text-base" />
+        <div className="grid grid-cols-1 gap-x-6 gap-y-4 md:grid-cols-2 lg:grid-cols-3">
+          <div className="flex flex-col gap-3.5 md:col-span-2 lg:col-span-1">
+            <Meters rec={rec} />
+            <Figures rec={rec} />
+          </div>
+          <Thesis side="bull" text={rec.bull_thesis} />
+          <Thesis side="bear" text={rec.bear_thesis} />
+        </div>
+        <div className="grid grid-cols-1 gap-x-6 gap-y-4 md:grid-cols-2 lg:grid-cols-3">
+          <Tags label="Catalysts" items={rec.catalysts} />
+          <Tags label="Key risks" items={rec.key_risks} />
+          <Tags label="Data gaps" items={rec.data_gaps ?? []} />
+        </div>
+        <RiskNotes risk={risk} />
+      </Card>
+    );
+  }
+
   return (
     <Card className="flex flex-col gap-3.5">
-      <div className="flex items-start gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-base font-semibold tracking-[-0.01em]">{rec.symbol}</div>
-          <div className="mt-0.5 text-xs text-muted-foreground">
-            {risk?.sector ?? "Sector not reported"}
-          </div>
-        </div>
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
-          <ActionBadge action={rec.action} />
-          {risk ? <RiskBadge decision={risk.decision} flags={risk.flags} /> : null}
-        </div>
-      </div>
-
+      <Header rec={rec} risk={risk} size="text-base" />
       <Meters rec={rec} />
-
-      {/* One hairline grid, so the two figures read as one object. Unknown is
-          "—" and never a computed zero (DECISION, null states). */}
-      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-border bg-border">
-        <Figure
-          label="Target"
-          value={rec.target_price != null ? `₹${inr.format(rec.target_price)}` : null}
-        />
-        <Figure label="Horizon" value={rec.time_horizon ?? null} />
-      </div>
+      <Figures rec={rec} />
 
       <div className="flex flex-col gap-2.5">
         <Thesis side="bull" text={rec.bull_thesis} />
@@ -209,11 +257,7 @@ export function RecommendationCard({
       <Tags label="Key risks" items={rec.key_risks} />
       <Tags label="Data gaps" items={rec.data_gaps ?? []} />
 
-      {risk?.notes ? (
-        <p className="border-t border-[var(--adp-hairline)] pt-2.5 text-xs text-muted-foreground">
-          <b className="font-semibold text-foreground">Risk Manager:</b> {risk.notes}
-        </p>
-      ) : null}
+      <RiskNotes risk={risk} />
     </Card>
   );
 }
@@ -236,18 +280,7 @@ export function RejectedCard({
   const reason = risk?.notes ?? risk?.violations?.join(" · ") ?? "Rejected by the Risk Manager.";
   return (
     <Card className="flex flex-col gap-3">
-      <div className="flex items-start gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-[15px] font-semibold tracking-[-0.01em]">{rec.symbol}</div>
-          <div className="mt-0.5 text-xs text-muted-foreground">
-            {risk?.sector ?? "Sector not reported"}
-          </div>
-        </div>
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
-          <ActionBadge action={rec.action} />
-          {risk ? <RiskBadge decision={risk.decision} flags={risk.flags} /> : null}
-        </div>
-      </div>
+      <Header rec={rec} risk={risk} size="text-[15px]" />
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
         <span className="adp-num">
@@ -266,7 +299,7 @@ export function RejectedCard({
         </span>
       </div>
 
-      <p className="text-xs text-muted-foreground">{reason}</p>
+      <p className="max-w-[90ch] text-xs text-muted-foreground">{reason}</p>
     </Card>
   );
 }

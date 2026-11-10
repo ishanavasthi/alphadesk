@@ -34,7 +34,7 @@ from decimal import Decimal
 from typing import Any, Optional
 
 import httpx
-from sqlalchemy import delete, distinct, func, select
+from sqlalchemy import delete, distinct, func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,6 +57,7 @@ from portfolio.errors import (
     UnsupportedAssetType,
 )
 from portfolio.models import AssetType, Holding, PortfolioSnapshot
+from services import exclusions
 
 log = logging.getLogger(__name__)
 
@@ -722,6 +723,48 @@ class HistoryPoint:
     total_value: Decimal
 
 
+async def _without_excluded(
+    session: AsyncSession,
+    user_id: str,
+    points: list[HistoryPoint],
+    since: date,
+) -> list[HistoryPoint]:
+    """``points`` less each day's captured value for the excluded holdings.
+
+    Additive like the manual overlay: a failed read draws the vendor line.
+    """
+    if not points:
+        return points
+    try:
+        keys = await exclusions.excluded_keys(session, user_id)
+        if not keys:
+            return points
+        rows = await session.execute(
+            select(SnapshotDay.captured_on, func.sum(SnapshotHolding.current_value))
+            .join(SnapshotHolding, SnapshotHolding.snapshot_id == SnapshotDay.id)
+            .where(
+                SnapshotDay.user_id == user_id,
+                SnapshotDay.captured_on >= since,
+                tuple_(SnapshotHolding.source, SnapshotHolding.external_id).in_(
+                    sorted(keys)
+                ),
+            )
+            .group_by(SnapshotDay.captured_on)
+        )
+        removed = {day: total for day, total in rows.all()}
+    except Exception:  # noqa: BLE001 - additive; the chart survives without it
+        log.warning("history: exclusions unavailable; drawing unadjusted", exc_info=True)
+        await session.rollback()
+        return points
+    return [
+        HistoryPoint(
+            captured_on=p.captured_on,
+            total_value=p.total_value - removed.get(p.captured_on, Decimal(0)),
+        )
+        for p in points
+    ]
+
+
 async def history_points(
     session: AsyncSession,
     user_id: str,
@@ -744,6 +787,10 @@ async def history_points(
 
     A manual read that fails costs the FD contribution, never the chart —
     the same posture the summary's `manual` block takes.
+
+    Holdings the user **excluded** (`services.exclusions`) come off each day by
+    the value captured for them *that day*. The captured rows are never
+    rewritten, so restoring a holding puts it back on every point.
     """
     now = now or _now_utc()
     since = attributed_day(now) - timedelta(days=days)
@@ -753,6 +800,7 @@ async def history_points(
         .order_by(SnapshotDay.captured_on)
     )
     points = [HistoryPoint(captured_on=row[0], total_value=row[1]) for row in rows.all()]
+    points = await _without_excluded(session, user_id, points, since)
 
     # Function-local on purpose: `services.manual_fd` imports `IST` from this
     # module, so a top-level import would be a cycle.
@@ -971,6 +1019,10 @@ async def movers_report(
     write.
     """
     now = now or _now_utc()
+    # Holdings the user excluded are not part of their portfolio as far as any
+    # figure on this dashboard is concerned — movers included. Read first: a
+    # failed read rolls the session back, which must not expire rows loaded below.
+    ignored = await exclusions.safe_excluded_keys(session, user_id)
     latest = await session.scalar(
         select(func.max(SnapshotDay.captured_on)).where(SnapshotDay.user_id == user_id)
     )
@@ -1053,6 +1105,8 @@ async def movers_report(
         # every mutual-fund and savings row this source returns, and would
         # collapse them all into one.
         key = (holding.source, holding.external_id)
+        if key in ignored:
+            continue
         bucket = start_rows if holding.snapshot_id == start_day.id else end_rows
         bucket[key] = holding
 

@@ -47,7 +47,12 @@ the implementation vehicle.
   review).
 - Trend: 2px accent line, 7% opacity area, emphasized endpoint dot,
   crosshair + tooltip on hover, y-axis in lakh (`10.2L`), synthetic/paused
-  state labeled in the caption.
+  state labeled in the caption. The y-axis auto-scales to the *visible*
+  points, padded by a share of their range (not of their value), on
+  round-number ticks. The trend pans and zooms TradingView-style: drag to
+  pan, scroll to zoom, drag either axis to rescale, double-click to reset
+  (amended 2026-10-17 — a 20% one-day drop sat on the axis floor and read as
+  a fall to zero).
 - Tooltips: ink-950 bg, white 12px text, 6px radius.
 
 ## Conventions (binding)

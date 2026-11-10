@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { inr, inrSigned, num, pct, pctSigned, toneClass, typeLabel, units } from "./format";
-import { Badge } from "@/components/ui/adp";
+import { Badge, Button } from "@/components/ui/adp";
 
 /** The one sentence behind every `—` in this dialog. */
 const NOT_REPORTED = "Not reported by the source";
@@ -73,10 +73,18 @@ export function HoldingDetailDialog({
   holding,
   portfolioValue,
   onClose,
+  excluded = false,
+  busy = false,
+  onToggleExclude,
 }: {
   holding: PortfolioHolding | null;
   portfolioValue: number | null;
   onClose: () => void;
+  /** Whether the reader has left this holding out of every figure. */
+  excluded?: boolean;
+  busy?: boolean;
+  /** Exclude / include this holding. Absent for manual rows and on `/demo`. */
+  onToggleExclude?: () => void;
 }) {
   if (!holding) return null;
 
@@ -85,7 +93,7 @@ export function HoldingDetailDialog({
   const pnl = num(holding.pnl);
   const pnlPct = num(holding.pnl_pct);
   const share =
-    current !== null && portfolioValue !== null && portfolioValue > 0
+    !excluded && current !== null && portfolioValue !== null && portfolioValue > 0
       ? (current / portfolioValue) * 100
       : null;
 
@@ -145,11 +153,35 @@ export function HoldingDetailDialog({
           </Detail>
           <Detail
             label="Share of portfolio"
-            note={share === null ? undefined : "of the snapshot's current value"}
+            note={
+              excluded
+                ? "excluded from your totals"
+                : share === null
+                  ? undefined
+                  : "of the snapshot's current value"
+            }
           >
             {share === null ? <Unknown /> : pct(share, 2)}
           </Detail>
         </dl>
+
+        {onToggleExclude ? (
+          <div className="mt-1 flex items-start justify-between gap-4 border-t border-[var(--adp-hairline)] pt-3">
+            <p className="m-0 text-[12px] text-muted-foreground">
+              {excluded
+                ? "Left out of net worth, totals, allocation, history and movers. The row stays visible here."
+                : "Misreported by the source, or already entered by hand? Leave it out of every figure. You can put it back any time."}
+            </p>
+            <Button
+              size="sm"
+              variant={excluded ? "outline" : "destructive"}
+              disabled={busy}
+              onClick={onToggleExclude}
+            >
+              {busy ? "Saving…" : excluded ? "Include in totals" : "Exclude from totals"}
+            </Button>
+          </div>
+        ) : null}
       </DialogContent>
     </Dialog>
   );

@@ -22,9 +22,12 @@
                        first user-authored rows in the schema, kept because the
                        source's FD reporting is unreliable and an FD's value is
                        computed from its terms rather than quoted.
+    holding_exclusions source holdings the user excluded from every figure
+                       (#65's misreported FDs), applied at read time.
 
 **Cascade semantics.** `broker_links.user_id`, `oauth_pending.user_id`,
-`snapshot_days.user_id`, `watchlist.user_id` and `manual_fds.user_id` are
+`snapshot_days.user_id`, `watchlist.user_id`, `manual_fds.user_id` and
+`holding_exclusions.user_id` are
 declared `ON DELETE CASCADE` *at the FK level*, as are
 `snapshot_holdings.snapshot_id` and `snapshot_raw.snapshot_id`. Deleting a
 `users` row therefore wipes every dependent row — including the user's entire
@@ -431,8 +434,45 @@ class ManualFd(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow, sa_column=_ts_column())
 
 
+# --------------------------------------------------------------------------- #
+# Holdings the user excluded from every figure
+# --------------------------------------------------------------------------- #
+class HoldingExclusion(SQLModel, table=True):
+    """One source holding the user has told AlphaDesk to leave out of the totals.
+
+    Stores the holding's **identity** — M1's `(source, external_id)` pair — and
+    no value: the exclusion is applied at read time to the live figures and to
+    every captured day, so restoring a holding re-prices history exactly as
+    excluding it did, and no snapshot row is ever rewritten.
+
+    `asset_type` and `name` are display copies frozen at exclusion time, so a
+    holding the source later stops returning can still be named and restored.
+    """
+
+    __tablename__ = "holding_exclusions"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "source", "external_id", name="uq_holding_exclusions_user_holding"
+        ),
+    )
+
+    id: str = Field(default_factory=lambda: uuid4().hex, primary_key=True, max_length=32)
+    user_id: str = Field(
+        foreign_key="users.id",
+        ondelete="CASCADE",
+        index=True,
+        max_length=255,
+    )
+    source: str = Field(max_length=64)
+    external_id: str = Field(max_length=255)
+    asset_type: str = Field(max_length=32)
+    name: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    created_at: datetime = Field(default_factory=utcnow, sa_column=_ts_column())
+
+
 __all__ = [
     "BrokerLink",
+    "HoldingExclusion",
     "ManualFd",
     "OAuthPending",
     "PortfolioCache",
