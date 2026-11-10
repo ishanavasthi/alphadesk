@@ -105,7 +105,12 @@ function MoverGroup({
   );
 }
 
-export function TopMovers() {
+export function TopMovers({
+  refreshKey = 0,
+}: {
+  /** Re-read when this changes — the parent bumps it when the excluded set does. */
+  refreshKey?: number;
+} = {}) {
   const [preset, setPreset] = useState<PresetKey>("1W");
   const [data, setData] = useState<MoversResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -133,7 +138,7 @@ export function TopMovers() {
         setLoading(false);
       });
     return () => controller.abort();
-  }, [preset]);
+  }, [preset, refreshKey]);
 
   const compared = data?.compared;
   const ranked = (data?.gainers.length ?? 0) + (data?.losers.length ?? 0);

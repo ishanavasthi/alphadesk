@@ -168,6 +168,25 @@ async def put(
             pass
 
 
+async def discard(session: Optional[AsyncSession], user_id: str, key: str) -> None:
+    """Drop one cached row, if it exists. Never raises — a miss is harmless."""
+    if session is None:
+        return
+    try:
+        await session.execute(
+            delete(PortfolioCache).where(
+                PortfolioCache.user_id == user_id, PortfolioCache.cache_key == key
+            )
+        )
+        await session.commit()
+    except Exception:  # noqa: BLE001 - the write it follows already succeeded
+        log.warning("portfolio cache discard failed for %s", key, exc_info=True)
+        try:
+            await session.rollback()
+        except Exception:  # noqa: BLE001 - nothing left to salvage
+            pass
+
+
 async def invalidate_user(session: Optional[AsyncSession], user_id: str) -> int:
     """Drop every cached row for one user. Returns how many were removed.
 

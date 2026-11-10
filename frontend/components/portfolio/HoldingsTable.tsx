@@ -5,6 +5,7 @@ import type { PortfolioHolding } from "@/lib/api";
 import { HoldingDetailDialog } from "./HoldingDetailDialog";
 import { inr, inrSigned, num, pctSigned, toneClass, typeLabel, units } from "./format";
 import { Badge } from "@/components/ui/adp";
+import { holdingKey } from "./exclusions";
 
 type SortKey =
   | "name"
@@ -66,13 +67,27 @@ function Unknown() {
  * read from a context: this table is also what the public `/demo` renders, and
  * that page must keep working with no provider and no network above it. Omitting
  * it renders the share as a labeled gap instead of a made-up denominator.
+ *
+ * **Excluding a holding.** With `onToggleExclude`, a source row can be taken out
+ * of every figure — the fix for #65's misreported deposits once the real ones
+ * are entered by hand. The row stays in the table, dimmed and badged, so the
+ * reader can see what they excluded and put it back. Rows carrying a source
+ * caveat offer it inline; every other source row offers it in the detail
+ * dialog. Manual rows are deleted from their own card, never excluded. All
+ * three props are optional, so `/demo` renders exactly as before.
  */
 export function HoldingsTable({
   rows,
   portfolioValue = null,
+  excludedKeys,
+  onToggleExclude,
+  busyKeys,
 }: {
   rows: PortfolioHolding[];
   portfolioValue?: number | null;
+  excludedKeys?: Set<string>;
+  onToggleExclude?: (row: PortfolioHolding) => void;
+  busyKeys?: Set<string>;
 }) {
   const [sortKey, setSortKey] = useState<SortKey>("current_value");
   const [dir, setDir] = useState<-1 | 1>(-1);
@@ -136,6 +151,11 @@ export function HoldingsTable({
         </thead>
         <tbody>
           {sorted.map((row) => {
+            const key = holdingKey(row.source, row.external_id);
+            const excluded = excludedKeys?.has(key) ?? false;
+            const busy = busyKeys?.has(key) ?? false;
+            const canExclude = Boolean(onToggleExclude) && row.source !== "manual";
+            const dim = excluded ? "opacity-50" : "";
             const invested = num(row.invested_amount);
             const pnl = num(row.pnl);
             const pnlPct = num(row.pnl_pct);
@@ -154,10 +174,17 @@ export function HoldingsTable({
                 className="cursor-pointer hover:bg-background focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--adp-accent)]"
               >
                 <td className="border-b border-[var(--adp-hairline)] p-2.5 text-[13px]">
-                  <span className="font-medium">{row.name || row.symbol || row.external_id}</span>
+                  <span className={`font-medium ${excluded ? "text-muted-foreground line-through" : ""}`}>
+                    {row.name || row.symbol || row.external_id}
+                  </span>
                   {row.us_exposure ? (
                     <Badge variant="us" className="ml-1.5">
                       US
+                    </Badge>
+                  ) : null}
+                  {excluded ? (
+                    <Badge variant="soon" className="ml-1.5" title="Left out of every figure">
+                      Excluded
                     </Badge>
                   ) : null}
                   {row.symbol ? (
@@ -171,27 +198,41 @@ export function HoldingsTable({
                       ⚠ source caveat
                     </div>
                   ) : null}
+                  {canExclude && (excluded || row.note) ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onToggleExclude?.(row);
+                      }}
+                      onKeyDown={(event) => event.stopPropagation()}
+                      className="mt-0.5 block text-[11.5px] font-medium text-[var(--adp-accent)] hover:underline disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {busy ? "Saving…" : excluded ? "Include in totals" : "Exclude from totals"}
+                    </button>
+                  ) : null}
                 </td>
-                <td className="hidden border-b border-[var(--adp-hairline)] p-2.5 text-[13px] sm:table-cell">
+                <td className={`hidden border-b border-[var(--adp-hairline)] p-2.5 text-[13px] sm:table-cell ${dim}`}>
                   <Badge variant="type">{typeLabel(row.asset_type, row.asset_type_raw)}</Badge>
                 </td>
-                <td className="hidden border-b border-[var(--adp-hairline)] p-2.5 text-right text-[13px] sm:table-cell">
+                <td className={`hidden border-b border-[var(--adp-hairline)] p-2.5 text-right text-[13px] sm:table-cell ${dim}`}>
                   {units(num(row.units))}
                 </td>
-                <td className="border-b border-[var(--adp-hairline)] p-2.5 text-right text-[13px]">
+                <td className={`border-b border-[var(--adp-hairline)] p-2.5 text-right text-[13px] ${dim}`}>
                   {invested === null ? <Unknown /> : inr(invested)}
                 </td>
-                <td className="border-b border-[var(--adp-hairline)] p-2.5 text-right text-[13px]">
+                <td className={`border-b border-[var(--adp-hairline)] p-2.5 text-right text-[13px] ${dim}`}>
                   {inr(num(row.current_value))}
                 </td>
-                <td className="border-b border-[var(--adp-hairline)] p-2.5 text-right text-[13px]">
+                <td className={`border-b border-[var(--adp-hairline)] p-2.5 text-right text-[13px] ${dim}`}>
                   {pnl === null ? (
                     <Unknown />
                   ) : (
                     <span className={toneClass(pnl)}>{inrSigned(pnl)}</span>
                   )}
                 </td>
-                <td className="border-b border-[var(--adp-hairline)] p-2.5 text-right text-[13px]">
+                <td className={`border-b border-[var(--adp-hairline)] p-2.5 text-right text-[13px] ${dim}`}>
                   {pnlPct === null ? (
                     <Unknown />
                   ) : (
@@ -207,6 +248,17 @@ export function HoldingsTable({
         holding={selected}
         portfolioValue={portfolioValue}
         onClose={() => setSelected(null)}
+        excluded={
+          selected ? excludedKeys?.has(holdingKey(selected.source, selected.external_id)) : false
+        }
+        busy={
+          selected ? busyKeys?.has(holdingKey(selected.source, selected.external_id)) : false
+        }
+        onToggleExclude={
+          onToggleExclude && selected && selected.source !== "manual"
+            ? () => onToggleExclude(selected)
+            : undefined
+        }
       />
     </div>
   );

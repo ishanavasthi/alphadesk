@@ -55,7 +55,7 @@ from graph.portfolio_graph import overview_stream
 from portfolio.connectors import PortfolioConnector
 from portfolio.errors import PortfolioSourceError
 from portfolio.models import AssetType, PortfolioSnapshot
-from services import portfolio_cache
+from services import exclusions, portfolio_cache
 from services.snapshots import attributed_day, history_points, optional_session
 
 _log = logging.getLogger(__name__)
@@ -209,6 +209,12 @@ async def overview(
         holdings = await _gather_holdings(connector, user_id, snapshot)
     except PortfolioSourceError as exc:
         _fail(exc)  # -> HTTPException, matches the dashboard's error contract
+
+    # Holdings the user excluded leave the metrics the same way they leave the
+    # dashboard's totals; `_history` below is already adjusted server-side.
+    snapshot, holdings = exclusions.apply_to_snapshot(
+        snapshot, holdings, await exclusions.safe_excluded_keys(session, user_id)
+    )
 
     sips = await _gather_sips(connector, user_id)
     history = await _history(session, user_id)

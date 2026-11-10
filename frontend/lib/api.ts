@@ -880,6 +880,61 @@ export function deleteFd(id: string, signal?: AbortSignal): Promise<void> {
 }
 
 // --------------------------------------------------------------------------- #
+// Excluded holdings (#65 follow-up)
+// --------------------------------------------------------------------------- #
+
+/**
+ * A source holding the reader has told AlphaDesk to leave out of every figure.
+ *
+ * Identity only — M1's `(source, external_id)` pair — plus display copies of
+ * the type and name, so a row the source stops returning can still be named
+ * and restored. The value is never stored: the dashboard subtracts whatever the
+ * source reports for the row now, and the server does the same for history.
+ */
+export interface HoldingExclusion {
+  id: string;
+  source: string;
+  external_id: string;
+  asset_type: string;
+  name: string | null;
+  created_at: string;
+}
+
+export interface HoldingExclusionList {
+  exclusions: HoldingExclusion[];
+  /** Why the list is empty when there is no database behind it. */
+  note: string | null;
+}
+
+/** GET /portfolio/exclusions — the caller's excluded holdings. */
+export function listExclusions(signal?: AbortSignal): Promise<HoldingExclusionList> {
+  return portfolioFetch<HoldingExclusionList>("/portfolio/exclusions", signal);
+}
+
+/** POST /portfolio/exclusions — idempotent; excluding twice returns the same row. */
+export function excludeHolding(
+  holding: Pick<PortfolioHolding, "source" | "external_id" | "asset_type" | "name">,
+  signal?: AbortSignal,
+): Promise<HoldingExclusion> {
+  return portfolioFetch<HoldingExclusion>("/portfolio/exclusions", signal, {
+    method: "POST",
+    body: {
+      source: holding.source,
+      external_id: holding.external_id,
+      asset_type: holding.asset_type,
+      name: holding.name,
+    },
+  });
+}
+
+/** DELETE /portfolio/exclusions/{id} — put the holding back into the figures. */
+export function restoreHolding(id: string, signal?: AbortSignal): Promise<void> {
+  return portfolioFetch<void>(`/portfolio/exclusions/${encodeURIComponent(id)}`, signal, {
+    method: "DELETE",
+  });
+}
+
+// --------------------------------------------------------------------------- #
 // AI overview (card A1)
 // --------------------------------------------------------------------------- #
 

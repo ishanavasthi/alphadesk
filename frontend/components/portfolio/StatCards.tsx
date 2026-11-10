@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import type { PortfolioSummary } from "@/lib/api";
 import { inr, inrSigned, num, pctSigned, toneClass } from "./format";
 import { Card } from "@/components/ui/adp";
+import type { ExclusionAdjustment } from "./exclusions";
 
 function Stat({
   label,
@@ -47,6 +48,7 @@ export function StatCards({
   countIsPartial,
   holdingsHref,
   manual,
+  excluded,
 }: {
   summary: PortfolioSummary;
   holdingsCount: number;
@@ -67,15 +69,33 @@ export function StatCards({
    * card is byte-identical to before B10.
    */
   manual?: { total: number; count: number } | null;
+  /**
+   * Holdings the reader excluded from every figure (#65's misreported FDs).
+   *
+   * Like `manual`, a **labelled** adjustment: the headline figures are read
+   * from `excluded.summary`, and each card names what came off so the source's
+   * own total is never silently replaced. Absent or empty and the cards are
+   * byte-identical to before.
+   */
+  excluded?: ExclusionAdjustment | null;
 }) {
+  const removed = excluded && excluded.removedCount > 0 ? excluded : null;
+  const figures = removed ? removed.summary : summary;
   const liabilities = num(summary.liabilities_total);
-  const pnl = num(summary.pnl);
-  const pnlPct = num(summary.pnl_pct);
+  const pnl = num(figures.pnl);
+  const pnlPct = num(figures.pnl_pct);
 
   const vendorNetWorth = num(summary.net_worth);
+  const adjustedNetWorth = num(figures.net_worth);
   const added = manual && manual.count > 0 ? manual : null;
   const netWorth =
-    added && vendorNetWorth !== null ? vendorNetWorth + added.total : vendorNetWorth;
+    added && adjustedNetWorth !== null ? adjustedNetWorth + added.total : adjustedNetWorth;
+  const excludedNote = removed ? (
+    <span className="adp-num">
+      excl. {inr(removed.removedValue)} in {removed.removedCount} excluded holding
+      {removed.removedCount === 1 ? "" : "s"}
+    </span>
+  ) : null;
   const sourceNote =
     liabilities === null ? "as the source reports it" : `after ${inr(liabilities)} liabilities`;
 
@@ -85,12 +105,15 @@ export function StatCards({
         label="Net worth"
         value={inr(netWorth)}
         note={
-          added ? (
+          added || removed ? (
             <>
-              <span className="adp-num">
-                incl. {inr(added.total)} in {added.count} manual FD
-                {added.count === 1 ? "" : "s"}
-              </span>
+              {added ? (
+                <div className="adp-num">
+                  incl. {inr(added.total)} in {added.count} manual FD
+                  {added.count === 1 ? "" : "s"}
+                </div>
+              ) : null}
+              {excludedNote ? <div>{excludedNote}</div> : null}
               <div className="adp-num">
                 source reports {inr(vendorNetWorth)} · {sourceNote}
               </div>
@@ -102,9 +125,10 @@ export function StatCards({
       />
       <Stat
         label="Current value"
-        value={inr(num(summary.current_value))}
+        value={inr(num(figures.current_value))}
         note={
           <>
+            {excludedNote ? <div>{excludedNote}</div> : null}
             {countIsPartial
               ? `across ${holdingsCount} holdings loaded so far`
               : `across ${holdingsCount} holdings`}{" "}
@@ -121,8 +145,16 @@ export function StatCards({
       />
       <Stat
         label="Invested"
-        value={inr(num(summary.invested_total))}
-        note="where cost basis is known"
+        value={inr(num(figures.invested_total))}
+        note={
+          removed && removed.removedInvested > 0 ? (
+            <span className="adp-num">
+              where cost basis is known · excl. {inr(removed.removedInvested)} excluded
+            </span>
+          ) : (
+            "where cost basis is known"
+          )
+        }
       />
       <Stat
         label="Overall return"
