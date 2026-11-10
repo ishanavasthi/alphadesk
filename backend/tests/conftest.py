@@ -309,6 +309,7 @@ _ALL_TABLES = (
     "watchlist",
     "portfolio_cache",
     "manual_fds",
+    "holding_exclusions",
 )
 
 

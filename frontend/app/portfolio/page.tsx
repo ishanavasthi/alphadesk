@@ -41,11 +41,13 @@ export default function PortfolioOverviewPage() {
     overview,
     setOverview,
     manual,
+    adjusted,
+    exclusionsVersion,
   } = usePortfolio();
 
   return (
     <>
-      <Greeting asOf={summary.as_of} pnl={num(summary.pnl)} demo={demo} />
+      <Greeting asOf={summary.as_of} pnl={num(adjusted.summary.pnl)} demo={demo} />
 
       {/* Above the numbers on purpose: if the history has stopped accruing, the
           reader needs to know that before they read a trend line drawn from it. */}
@@ -63,6 +65,7 @@ export default function PortfolioOverviewPage() {
         countIsPartial={loadingHoldings}
         holdingsHref="/portfolio/holdings"
         manual={manual}
+        excluded={adjusted}
       />
 
       {/* AI overview (card A1). Streams its own metrics + narrative and degrades
@@ -89,7 +92,7 @@ export default function PortfolioOverviewPage() {
           moved, this says which holdings moved it. It reads the same captured
           snapshots and makes no fresh source call. */}
       <div className="mt-4">
-        <TopMovers />
+        <TopMovers refreshKey={exclusionsVersion} />
       </div>
 
       {/* Below the movers, per card B10: everything above this line is the
@@ -102,8 +105,15 @@ export default function PortfolioOverviewPage() {
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <Card>
-          <CardHead title="Allocation by asset type" desc="Share of current value" />
-          <AllocationBars slices={summary.by_asset_type} labelMode="type" />
+          <CardHead
+            title="Allocation by asset type"
+            desc={
+              adjusted.removedCount > 0
+                ? "Share of current value · excluded holdings left out"
+                : "Share of current value"
+            }
+          />
+          <AllocationBars slices={adjusted.summary.by_asset_type} labelMode="type" />
         </Card>
         <Card>
           <CardHead
