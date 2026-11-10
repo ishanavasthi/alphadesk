@@ -30,6 +30,8 @@ export type CaptureState =
   | "busy"
   | "done"
   | "existing"
+  /** Today's earlier reading was replaced with a fresh one. */
+  | "replaced"
   /** A capture this page did not start is already running — nothing failed. */
   | "in_flight"
   | "failed";
@@ -39,6 +41,7 @@ const CAPTURE_LABEL: Record<CaptureState, string> = {
   busy: "Capturing…",
   done: "Captured",
   existing: "Already captured today",
+  replaced: "Snapshot replaced",
   in_flight: "Capturing in background…",
   failed: "Capture failed",
 };
@@ -49,7 +52,8 @@ const CAPTURE_TITLE: Record<CaptureState, string> = {
   busy: "Reading every bucket the snapshot reports, paced against the source's rate limit.",
   done: "Today's snapshot is stored.",
   existing:
-    "Today already has a snapshot. The first capture of a day is kept: it ran closest to the time it was timed for.",
+    "Today already has a snapshot. You can replace it with a fresh reading — useful after refreshing a stale balance in the IND Money app.",
+  replaced: "Today's snapshot now holds the fresh reading.",
   in_flight:
     "A capture for today was already running — opening this page starts one when the day is missing. It will finish on its own.",
   failed: "The source could not be read. Tonight's scheduled run will try again.",

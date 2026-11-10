@@ -36,6 +36,7 @@ const CASES: Array<[CaptureState, string]> = [
   ["busy", "Capturing…"],
   ["done", "Captured"],
   ["existing", "Already captured today"],
+  ["replaced", "Snapshot replaced"],
   ["in_flight", "Capturing in background…"],
   ["failed", "Capture failed"],
 ];

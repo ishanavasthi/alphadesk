@@ -20,6 +20,7 @@ import logging
 import os
 import secrets
 from collections.abc import Callable
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
@@ -33,6 +34,7 @@ from services.snapshots import (
     capture_all,
     optional_session,
     prune_raw,
+    resolve_day,
 )
 
 log = logging.getLogger(__name__)
@@ -128,6 +130,13 @@ router = APIRouter(
 
 @router.post("/snapshot")
 async def snapshot(
+    for_day: Optional[date] = Query(
+        None,
+        description=(
+            "The IST day this run was scheduled for (YYYY-MM-DD). Lets a late "
+            "cron file under its own day; only today or yesterday is accepted."
+        ),
+    ),
     session: Optional[AsyncSession] = Depends(optional_session),
     # The same connector *cache* the dashboard reads through — a factory now,
     # because a connector is bound to one user's credentials since F3 and this
@@ -144,13 +153,34 @@ async def snapshot(
     the 23:45 IST primary and the ~01:00 IST retry do — the second call is a
     no-op that reports its users as `skipped`.
 
+    ``for_day`` is how the workflow says which day it was *scheduled* for.
+    GitHub routinely starts these jobs hours late; without it a run that begins
+    after the 06:00 IST cutoff files under the next day, leaving its own day
+    empty forever and locking the next one at a morning reading.
+
     Answers 200 with counts even when individual users failed. The workflow reads
     `errors` and the response body; a non-2xx here would mean the *request*
     failed, and conflating "three users are unlinked" with "the backend is down"
     would make the retry hammer a healthy server.
     """
+    database = _require_database(session)
+    try:
+        resolve_day(datetime.now(timezone.utc), for_day)
+    except ValueError:
+        # Not a retryable failure: a reading taken now may not be written that
+        # far into the past, and asking again will not change that.
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "day_out_of_window",
+                "message": (
+                    "for_day must be today's or yesterday's attributed IST day; a "
+                    "reading taken now is never filed further back."
+                ),
+            },
+        )
     report = await capture_all(
-        _require_database(session), connector_factory=connector_factory
+        database, connector_factory=connector_factory, day=for_day
     )
     log.info(
         "snapshot run for %s: captured=%d skipped=%d errors=%d",
