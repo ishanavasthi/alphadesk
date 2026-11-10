@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import { AppNav } from "@/components/shell/AppNav";
 import { PortfolioTopBar } from "@/components/portfolio/PortfolioTopBar";
+import { RecaptureDialog } from "@/components/portfolio/RecaptureDialog";
 import { usePortfolio } from "@/components/portfolio/PortfolioProvider";
 
 /** The dashboard's own pages, in the order they are offered. */
@@ -30,6 +31,9 @@ export function PortfolioShell({ children }: { children: ReactNode }) {
     cooldown,
     capture,
     captureState,
+    captureOffer,
+    dismissCaptureOffer,
+    recapture,
   } = usePortfolio();
 
   return (
@@ -42,6 +46,11 @@ export function PortfolioShell({ children }: { children: ReactNode }) {
         cooldown={cooldown}
         onCapture={() => void capture()}
         captureState={captureState}
+      />
+      <RecaptureDialog
+        offer={captureOffer}
+        onDismiss={dismissCaptureOffer}
+        onRecapture={recapture}
       />
 
       {/* The surface's own tabs, below the product-level nav in the bar above:

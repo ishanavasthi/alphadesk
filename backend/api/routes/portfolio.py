@@ -710,6 +710,13 @@ async def summary(
 
 @router.post("/capture")
 async def capture(
+    replace: bool = Query(
+        False,
+        description=(
+            "Re-read the source and replace today's stored reading. For after the "
+            "user has refreshed a stale balance at the source."
+        ),
+    ),
     user_id: str = Depends(portfolio_identity),
     connector: PortfolioConnector = Depends(connector_for_request),
     session: Optional[AsyncSession] = Depends(optional_session),
@@ -723,7 +730,17 @@ async def capture(
     ``in_flight`` instead of making a second burst of source calls.
 
     Idempotent by construction: the day already having a row answers
-    ``already_captured``, not a duplicate.
+    ``already_captured``, not a duplicate — with the stored reading in
+    ``existing`` so the dashboard can offer to replace it.
+
+    ``?replace=1`` is that offer taken: today's reading is re-read and replaced
+    (``recaptured``, with the replaced one in ``replaced``). The source is the
+    only clock that matters here — IND Money serves a stale bank balance until
+    the user refreshes it in their app, so "the first capture of the day" is not
+    necessarily the true one. A failed read keeps the earlier reading, and a
+    partial one never replaces a complete one (``failed`` /
+    ``partial_recapture``). Only today can be recaptured: the source cannot be
+    asked about any other day.
     """
     if session is None:
         raise HTTPException(
@@ -738,16 +755,32 @@ async def capture(
     # (The fire-and-forget net in `/summary` is the opposite case and opens its
     # own, because a request-scoped session is closed by the time it runs.)
     outcome = await capture_if_missing(
-        user_id, connector=connector, session=session
+        user_id, connector=connector, session=session, replace=replace
     )
     if outcome is None:
         return {"status": "in_flight", "captured_on": None}
+    previous = (
+        {
+            "total_value": _num(outcome.previous_total),
+            "captured_at": (
+                outcome.previous_captured_at.isoformat()
+                if outcome.previous_captured_at
+                else None
+            ),
+        }
+        if outcome.previous_total is not None
+        else None
+    )
     return {
         "status": outcome.status,
         "captured_on": outcome.captured_on.isoformat(),
         "holdings": outcome.holdings,
         "reason": outcome.reason,
         "buckets_failed": [f.as_dict() for f in outcome.buckets_failed],
+        # The stored reading this call found: kept (`already_captured`, or a
+        # refused recapture) or replaced (`recaptured`).
+        "existing": previous if outcome.status != "recaptured" else None,
+        "replaced": previous if outcome.status == "recaptured" else None,
     }
 
 
