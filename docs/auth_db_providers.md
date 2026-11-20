@@ -298,6 +298,11 @@ best latency option. Since the backend is on HF Spaces (also not in India), what
 matters is co-locating the Space and the Neon region — not user-to-database
 distance.
 
+> **Applied 2026-11-21.** The project had been created in Singapore anyway, while
+> the Space runs in AWS us-east-1 — so every query crossed the globe (~220 ms per
+> round trip) and `/auth/login` took 7–9 s. Production now runs on a us-east-1
+> Neon project; see `docs/STATUS.md` → Deploy notes.
+
 ### Connection settings — a real gap, not yet applied
 
 This is the most actionable engineering finding of this research. **Nothing

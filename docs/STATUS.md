@@ -61,6 +61,17 @@ file at every card completion and gate. Newest facts win; keep entries terse.
   `ANTHROPIC_API_KEY` + `ANTHROPIC_WORKSPACE_ID`. Rollback = set both
   `*_PROVIDER=openrouter` and `*_MODEL=deepseek/deepseek-v4.1-flash` (the
   previous routing) and unset the two `*_EFFORT` vars.
+- **Database: Neon `alphadesk-us` (`dawn-truth-49148844`), AWS us-east-1,
+  Postgres 18** — co-located with the Space since 2026-11-21. It was Neon
+  `alphadesk` (`withered-band-08460022`, ap-southeast-1): ~220 ms per round trip
+  from the Space made `/auth/login` take 7–9 s (measured: 8.8 s cold, 2.7 s warm
+  at 220 ms vs 0.15 s / 0.04 s co-located). Moved by pausing the Space,
+  `pg_dump -Fc` → `pg_restore` with `postgres:18` client tools, verifying every
+  table by row count + content md5 (plus sequences, 9 cascade FKs, 25 indexes),
+  swapping the `DATABASE_URL` secret and restarting: ~1 min 45 s down, zero
+  mismatches, Alembic at 0009. **The old Singapore project is kept untouched as
+  the rollback** (rollback = point the secret back; any rows written since the
+  move would be lost) until it is deliberately deleted.
 - Pushing to the Space needs the HF token (`hf auth whoami`). The `space` remote
   has no stored credential, so pass the token via `GIT_ASKPASS`. Never put it
   in the remote URL or git config.

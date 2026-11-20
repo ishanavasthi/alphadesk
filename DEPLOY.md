@@ -36,8 +36,12 @@ credential and no admin-secret path (both removed at F3/L1).
 
 Required — HF Spaces disk is ephemeral.
 
-1. neon.tech -> new project -> copy the connection string
-   (`postgresql://…?sslmode=require`). The app's async engine translates
+1. neon.tech -> new project **in `AWS us-east-1`** -> copy the connection string
+   (`postgresql://…?sslmode=require`). The region is not a detail: the Space
+   runs in AWS us-east-1 (Ashburn), and every request makes many sequential DB
+   round trips. With Neon in Singapore (~220 ms per round trip) `/auth/login`
+   took 7–9 s; co-located it is well under a second. Production moved to
+   `us-east-1` on 2026-11-21 for exactly this reason. The app's async engine translates
    `sslmode` for asyncpg automatically; paste it verbatim.
 2. Run migrations against it once (and after any future migration):
    ```bash
