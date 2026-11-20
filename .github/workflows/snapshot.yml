@@ -129,8 +129,27 @@ jobs:
         env:
           BACKEND_URL: ${{ vars.BACKEND_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          EVENT: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
         run: |
           url="${BACKEND_URL%/}/internal/snapshot"
+          # Name the day this run was *scheduled* for. GitHub starts these jobs
+          # hours late (06:59 IST has happened), and a run past the backend's
+          # 06:00 IST cutoff would otherwise file under the next day — leaving
+          # its own day empty forever. The intended day is the UTC date of the
+          # most recent occurrence of this cron's HH:MM at or before now: for
+          # 18:15 UTC that is the 23:45 IST day itself, and for the 19:30 UTC
+          # retry (01:00 IST) the day before, which is the one it retries.
+          # A manual dispatch sends nothing and captures the current day.
+          if [ "$EVENT" = "schedule" ] && [ -n "$SCHEDULE" ]; then
+            read -r cron_min cron_hour _ <<< "$SCHEDULE"
+            now_s=$(date -u +%s)
+            slot_s=$(date -u -d "$(date -u +%Y-%m-%d) ${cron_hour}:${cron_min}" +%s)
+            if [ "$slot_s" -gt "$now_s" ]; then slot_s=$(( slot_s - 86400 )); fi
+            for_day=$(date -u -d "@$slot_s" +%Y-%m-%d)
+            echo "scheduled for IST day $for_day (cron '$SCHEDULE')"
+            url="$url?for_day=$for_day"
+          fi
           # Retry only what a retry can fix. A dead connection or a 5xx from the
           # platform means the Space is still coming up or fell over; a wrong
           # secret, a wrong URL or a rejected request will be just as wrong in
@@ -172,7 +191,14 @@ jobs:
                      "the Space's. Retrying would not help."
                 exit 1
                 ;;
-              404|422)
+              422)
+                cat response.json
+                echo "::error::The backend refused the request (422) - see the"\
+                     "body above. A day_out_of_window means this run started more"\
+                     "than a day late; that day cannot be recovered."
+                exit 1
+                ;;
+              404)
                 echo "::error::The backend rejected the request ($code)."\
                      "Check BACKEND_URL points at the Space root - the route is"\
                      "POST <root>/internal/snapshot. Retrying would not help."

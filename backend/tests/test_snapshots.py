@@ -963,3 +963,157 @@ async def test_the_batch_refuses_to_run_with_no_connector_at_all(
 ) -> None:
     with pytest.raises(ValueError):
         await svc.capture_all(db_session, user_ids=["alice"], now=PRIMARY_RUN)
+
+
+# --------------------------------------------------------------------------- #
+# Recapture — the reader replaces today's reading after refreshing at the source
+# --------------------------------------------------------------------------- #
+#: IND Money serves a stale bank balance until the user refreshes it in their
+#: app, so the first capture of a day is not necessarily its true reading.
+LATER_SAME_DAY = PRIMARY_RUN + timedelta(minutes=30)
+
+
+class RefreshedConnector(ScriptedConnector):
+    """The same portfolio after the user refreshed a balance at the source."""
+
+    def __init__(self, net_worth: Decimal, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._net_worth = net_worth
+
+    async def fetch_snapshot(self, user_id: str) -> PortfolioSnapshot:
+        snapshot = await super().fetch_snapshot(user_id)
+        return snapshot.model_copy(update={"net_worth": self._net_worth})
+
+
+async def _recapture(
+    session: AsyncSession, connector: StubConnector, now: datetime = LATER_SAME_DAY
+) -> svc.UserOutcome:
+    return await svc.capture_user(
+        session,
+        USER,
+        connector=connector,
+        now=now,
+        fx=_fx_ok,
+        sleep=_no_sleep,
+        call_spacing=0,
+        replace=True,
+    )
+
+
+async def test_already_captured_reports_the_reading_it_kept(db_session: AsyncSession) -> None:
+    first = await _capture(db_session)
+    again = await _capture(db_session, now=LATER_SAME_DAY)
+    assert again.status == svc.ALREADY_CAPTURED
+    days = await _days(db_session)
+    assert again.previous_total == days[0].total_value
+    assert again.previous_captured_at == days[0].captured_at
+    assert first.status == svc.CAPTURED
+
+
+async def test_recapture_replaces_the_days_reading_in_place(db_session: AsyncSession) -> None:
+    await _capture(db_session)
+    before = (await _days(db_session))[0]
+    before_id, before_total = before.id, before.total_value
+    raw_before = await db_session.scalar(select(func.count()).select_from(SnapshotRaw))
+
+    outcome = await _recapture(db_session, RefreshedConnector(Decimal("362387.89")))
+
+    assert outcome.status == svc.RECAPTURED
+    assert outcome.previous_total == before_total
+    db_session.expire_all()
+    days = await _days(db_session)
+    assert len(days) == 1
+    assert days[0].id == before_id
+    assert days[0].total_value == Decimal("362387.89")
+    assert days[0].captured_at == LATER_SAME_DAY
+    holdings = await db_session.scalar(
+        select(func.count()).select_from(SnapshotHolding).where(
+            SnapshotHolding.snapshot_id == before_id
+        )
+    )
+    assert holdings == outcome.holdings
+    # The replaced reading's payloads stay inspectable beside the new ones.
+    raw_after = await db_session.scalar(select(func.count()).select_from(SnapshotRaw))
+    assert raw_after == 2 * raw_before
+
+
+async def test_a_failed_recapture_keeps_the_earlier_reading(db_session: AsyncSession) -> None:
+    await _capture(db_session)
+    before = (await _days(db_session))[0].total_value
+
+    outcome = await _recapture(
+        db_session, ScriptedConnector(snapshot_error=SourceUnavailable("down"))
+    )
+
+    assert outcome.status == svc.FAILED
+    db_session.expire_all()
+    assert [d.total_value for d in await _days(db_session)] == [before]
+
+
+async def test_a_partial_recapture_never_replaces_a_complete_day(
+    db_session: AsyncSession,
+) -> None:
+    await _capture(db_session)
+    before = (await _days(db_session))[0].total_value
+    bucket = next(iter((await ScriptedConnector().fetch_snapshot(USER)).by_asset_type)).asset_type
+    connector = RefreshedConnector(
+        Decimal("1"), holdings_errors={bucket: SourceUnavailable("one bucket down")}
+    )
+
+    outcome = await _recapture(db_session, connector)
+
+    assert outcome.status == svc.FAILED
+    assert outcome.reason == svc.PARTIAL_RECAPTURE
+    db_session.expire_all()
+    days = await _days(db_session)
+    assert [d.total_value for d in days] == [before]
+    assert days[0].buckets_failed is None
+
+
+async def test_recapture_with_no_row_yet_is_an_ordinary_capture(
+    db_session: AsyncSession,
+) -> None:
+    outcome = await _recapture(db_session, ScriptedConnector(), now=PRIMARY_RUN)
+    assert outcome.status == svc.CAPTURED
+    assert outcome.previous_total is None
+    assert len(await _days(db_session)) == 1
+
+
+# --------------------------------------------------------------------------- #
+# A late scheduled run files under the day it was scheduled for
+# --------------------------------------------------------------------------- #
+#: 06:59 IST on 2026-08-17: the 2026-08-16 23:45 run, seven hours late — past
+#: the 06:00 cutoff, so by the clock alone it would file under 2026-08-17.
+LATE_RUN = datetime(2026, 8, 17, 1, 29, tzinfo=timezone.utc)
+
+
+def test_resolve_day_accepts_today_and_yesterday_only() -> None:
+    assert svc.attributed_day(LATE_RUN) == date(2026, 8, 17)
+    assert svc.resolve_day(LATE_RUN) == date(2026, 8, 17)
+    assert svc.resolve_day(LATE_RUN, date(2026, 8, 17)) == date(2026, 8, 17)
+    assert svc.resolve_day(LATE_RUN, date(2026, 8, 16)) == date(2026, 8, 16)
+    with pytest.raises(ValueError):
+        svc.resolve_day(LATE_RUN, date(2026, 8, 15))
+    with pytest.raises(ValueError):
+        svc.resolve_day(LATE_RUN, date(2026, 8, 18))
+
+
+async def test_a_late_run_naming_its_day_leaves_today_open(db_session: AsyncSession) -> None:
+    report = await svc.capture_all(
+        db_session,
+        connector=ScriptedConnector(),
+        user_ids=[USER],
+        now=LATE_RUN,
+        fx=_fx_ok,
+        sleep=_no_sleep,
+        call_spacing=0,
+        day=date(2026, 8, 16),
+    )
+    assert report.captured_on == date(2026, 8, 16)
+    assert report.users_captured == 1
+    assert [d.captured_on for d in await _days(db_session)] == [date(2026, 8, 16)]
+
+    # Today is still open for tonight's reading.
+    tonight = await _capture(db_session, now=LATE_RUN + timedelta(hours=16))
+    assert tonight.status == svc.CAPTURED
+    assert tonight.captured_on == date(2026, 8, 17)

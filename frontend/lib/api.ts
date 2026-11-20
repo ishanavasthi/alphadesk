@@ -777,24 +777,46 @@ export function getMovers(
   return portfolioFetch<MoversResponse>(`/portfolio/movers${query ? `?${query}` : ""}`, signal);
 }
 
+/** A stored reading of one day: what a capture kept or replaced. */
+export interface CapturedReading {
+  total_value: string;
+  captured_at: string | null;
+}
+
 /** The outcome of a capture attempt. `in_flight` means one was already running. */
 export interface CaptureResult {
-  status: "captured" | "already_captured" | "skipped" | "failed" | "in_flight";
+  status: "captured" | "already_captured" | "recaptured" | "skipped" | "failed" | "in_flight";
   captured_on: string | null;
   holdings?: number;
+  /** `partial_recapture` when a recapture was refused to protect a complete day. */
   reason?: string | null;
+  /** The day's stored reading, when one was kept (`already_captured`, a refused recapture). */
+  existing?: CapturedReading | null;
+  /** The reading a `recaptured` call replaced. */
+  replaced?: CapturedReading | null;
 }
 
 /**
  * POST /portfolio/capture — take today's snapshot now.
  *
  * Behind the same gate as the reads, because it acts on the same account.
- * Idempotent: a day that already has a row answers `already_captured` rather
- * than taking a second reading, so this button cannot overwrite the nightly
- * capture — which ran at the time it was timed for — with a later, worse one.
+ * Idempotent: a day that already has a row answers `already_captured` (with the
+ * stored reading in `existing`) rather than taking a second one.
+ *
+ * `replace` is the reader's explicit "recapture now": today's reading is re-read
+ * and replaced. IND Money serves a stale bank balance until it is refreshed in
+ * their app, so the first reading of a day is not necessarily the true one. A
+ * failed or partial read keeps the earlier reading.
  */
-export function capturePortfolioSnapshot(signal?: AbortSignal): Promise<CaptureResult> {
-  return portfolioFetch<CaptureResult>("/portfolio/capture", signal, { method: "POST" });
+export function capturePortfolioSnapshot(
+  signal?: AbortSignal,
+  replace = false,
+): Promise<CaptureResult> {
+  return portfolioFetch<CaptureResult>(
+    `/portfolio/capture${replace ? "?replace=1" : ""}`,
+    signal,
+    { method: "POST" },
+  );
 }
 
 // --------------------------------------------------------------------------- #

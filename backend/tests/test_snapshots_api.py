@@ -27,7 +27,7 @@ from api.routes.internal import CRON_SECRET_ENV, CRON_SECRET_HEADER
 from api.routes.portfolio import connector_factory, connector_for_request
 from db.session import async_session
 from portfolio.connectors import StubConnector
-from portfolio.errors import NotLinked
+from portfolio.errors import NotLinked, SourceUnavailable
 from portfolio.models import LinkHealth, PortfolioSnapshot
 from services import manual_fd, snapshots as svc
 
@@ -387,3 +387,66 @@ async def test_prune_route_reports_what_it_deleted(api: Any) -> None:
     # The history itself is untouched — only the forensic copies went.
     async with maker() as session:
         assert len(await svc.history_points(session, "local", days=90)) == 1
+
+
+async def test_capture_button_offers_and_performs_a_recapture(
+    api: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, maker, connector = api
+    monkeypatch.setenv("ALPHADESK_SINGLE_TENANT", "1")
+
+    first = await client.post("/portfolio/capture")
+    assert first.json()["status"] == svc.CAPTURED
+
+    again = await client.post("/portfolio/capture")
+    body = again.json()
+    assert body["status"] == svc.ALREADY_CAPTURED
+    assert body["existing"]["total_value"]
+    assert body["existing"]["captured_at"]
+    assert body["replaced"] is None
+
+    replaced = await client.post("/portfolio/capture?replace=1")
+    body = replaced.json()
+    assert body["status"] == svc.RECAPTURED
+    assert body["replaced"]["total_value"]
+    assert body["existing"] is None
+    async with maker() as session:
+        assert len(await svc.history_points(session, "local", days=90)) == 1
+
+
+async def test_a_failed_recapture_says_so_and_keeps_the_reading(
+    api: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, maker, connector = api
+    monkeypatch.setenv("ALPHADESK_SINGLE_TENANT", "1")
+    await client.post("/portfolio/capture")
+    async with maker() as session:
+        before = [p.total_value for p in await svc.history_points(session, "local", days=90)]
+
+    connector._snapshot_error = SourceUnavailable("down")
+    body = (await client.post("/portfolio/capture?replace=1")).json()
+    assert body["status"] == svc.FAILED
+    assert body["existing"]["total_value"]
+
+    async with maker() as session:
+        after = [p.total_value for p in await svc.history_points(session, "local", days=90)]
+    assert after == before
+
+
+async def test_internal_snapshot_accepts_its_scheduled_day(api: Any) -> None:
+    client, maker, _ = api
+    today = svc.attributed_day(datetime.now(timezone.utc))
+    yesterday = today - timedelta(days=1)
+
+    response = await client.post(
+        f"/internal/snapshot?for_day={yesterday.isoformat()}", headers=CRON_AUTH
+    )
+    assert response.status_code == 200
+    assert response.json()["captured_on"] == yesterday.isoformat()
+
+    too_old = await client.post(
+        f"/internal/snapshot?for_day={(today - timedelta(days=2)).isoformat()}",
+        headers=CRON_AUTH,
+    )
+    assert too_old.status_code == 422
+    assert too_old.json()["detail"]["code"] == "day_out_of_window"

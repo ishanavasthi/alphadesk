@@ -174,6 +174,16 @@ CAPTURED = "captured"
 ALREADY_CAPTURED = "already_captured"
 SKIPPED = "skipped"
 FAILED = "failed"
+#: A manual recapture replaced the day's earlier reading (`replace=True`).
+RECAPTURED = "recaptured"
+
+#: Why a recapture was refused while the earlier reading was kept.
+PARTIAL_RECAPTURE = "partial_recapture"
+
+#: How many attributed days back an explicit ``day`` may reach. One: a scheduled
+#: run that arrives late may still file under the day it was scheduled for, but
+#: a reading taken *now* is never written into anything older than yesterday.
+MAX_DAY_LAG = 1
 
 
 #: Why one bucket's rows could not be read. Our own vocabulary, never the
@@ -224,6 +234,10 @@ class UserOutcome:
     buckets_failed: tuple[BucketFailure, ...] = ()
     #: True when the day's row exists but carries no FX rate.
     fx_missing: bool = False
+    #: The day's stored reading *before* this call: set when the day already had
+    #: one — the reading an ``already_captured`` kept, or a recapture replaced.
+    previous_total: Optional[Decimal] = None
+    previous_captured_at: Optional[datetime] = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -243,7 +257,7 @@ class CaptureReport:
 
     @property
     def users_captured(self) -> int:
-        return sum(1 for o in self.outcomes if o.status == CAPTURED)
+        return sum(1 for o in self.outcomes if o.status in (CAPTURED, RECAPTURED))
 
     @property
     def skipped(self) -> int:
@@ -338,6 +352,37 @@ async def _day_exists(session: AsyncSession, user_id: str, day: date) -> bool:
     return found is not None
 
 
+async def _existing_day(
+    session: AsyncSession, user_id: str, day: date
+) -> Optional[SnapshotDay]:
+    return await session.scalar(
+        select(SnapshotDay).where(
+            SnapshotDay.user_id == user_id, SnapshotDay.captured_on == day
+        )
+    )
+
+
+def resolve_day(now: datetime, day: Optional[date] = None) -> date:
+    """The day a capture taken at ``now`` is filed under.
+
+    Normally :func:`attributed_day`. A scheduled run may name the day it was
+    *scheduled* for instead — GitHub starts cron jobs hours late, and a 23:45
+    IST run that only begins at 06:59 IST the next morning would otherwise file
+    itself under the new day, leaving the day it was meant for empty and locking
+    the new one at a morning reading. Only today or yesterday is accepted
+    (`MAX_DAY_LAG`): a reading taken now is never written further into the past.
+    """
+    current = attributed_day(now)
+    if day is None:
+        return current
+    if not (current - timedelta(days=MAX_DAY_LAG) <= day <= current):
+        raise ValueError(
+            f"{day.isoformat()} is outside the window a capture at "
+            f"{now.isoformat()} may be filed under"
+        )
+    return day
+
+
 def _holding_row(snapshot_id: int, holding: Holding) -> SnapshotHolding:
     return SnapshotHolding(
         snapshot_id=snapshot_id,
@@ -403,6 +448,8 @@ async def capture_user(
     fx: Optional[FxFetcher] = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     call_spacing: Optional[float] = None,
+    day: Optional[date] = None,
+    replace: bool = False,
 ) -> UserOutcome:
     """Capture one user's portfolio for the attributed day, or report why not.
 
@@ -416,14 +463,34 @@ async def capture_user(
     The idempotency is enforced twice: a read first (cheap, and it avoids
     spending source calls on a day already captured) and the unique constraint
     second (correct, and it is what survives two runs racing).
+
+    **``replace=True`` is the one exception, and only a person asks for it.**
+    The source's freshness is not a function of the clock — IND Money serves a
+    stale bank balance until the user refreshes it in their app — so a reader
+    who has just done that may replace the day's reading with a new one. The
+    source is read *before* the stored row is touched, so a failed read keeps
+    the earlier reading, and a complete day is never replaced by a partial one.
+    The scheduled runs and the page-open capture never pass it.
+
+    ``day`` lets a late scheduled run name the day it was scheduled for; see
+    :func:`resolve_day`.
     """
     now = now or _now_utc()
     fx = fx or fetch_usd_inr
     call_spacing = CALL_SPACING_SECONDS if call_spacing is None else call_spacing
-    day = attributed_day(now)
+    day = resolve_day(now, day)
 
-    if await _day_exists(session, user_id, day):
-        return UserOutcome(user_id=user_id, status=ALREADY_CAPTURED, captured_on=day)
+    existing = await _existing_day(session, user_id, day)
+    previous_total = existing.total_value if existing is not None else None
+    previous_at = existing.captured_at if existing is not None else None
+    if existing is not None and not replace:
+        return UserOutcome(
+            user_id=user_id,
+            status=ALREADY_CAPTURED,
+            captured_on=day,
+            previous_total=previous_total,
+            previous_captured_at=previous_at,
+        )
 
     # ----------------------------------------------------------- acquisition
     raws: list[tuple[str, dict[str, Any]]] = []
@@ -435,14 +502,18 @@ async def capture_user(
         # lapsed account hides a real outage behind a permanent alarm.
         log.info("snapshot: skipping %s — link not usable (%s)", user_id, type(exc).__name__)
         return UserOutcome(
-            user_id=user_id, status=SKIPPED, captured_on=day, reason="not_linked"
+            user_id=user_id, status=SKIPPED, captured_on=day,
+            previous_total=previous_total, previous_captured_at=previous_at,
+            reason="not_linked"
         )
     except PortfolioSourceError as exc:
         log.warning(
             "snapshot: %s failed on the source call (%s)", user_id, type(exc).__name__
         )
         return UserOutcome(
-            user_id=user_id, status=FAILED, captured_on=day, reason="source_error"
+            user_id=user_id, status=FAILED, captured_on=day,
+            previous_total=previous_total, previous_captured_at=previous_at,
+            reason="source_error"
         )
 
     raws.append((snapshot.source, {"kind": "snapshot", "asset_type": None, "payload": snapshot.raw}))
@@ -486,6 +557,20 @@ async def capture_user(
             failed.append(BucketFailure(vanished, BUCKET_VANISHED))
 
     rate = await fx()
+
+    if existing is not None:
+        return await _replace_day(
+            session,
+            existing,
+            snapshot=snapshot,
+            holdings=holdings,
+            failed=failed,
+            raws=raws,
+            rate=rate,
+            now=now,
+            previous_total=previous_total,
+            previous_at=previous_at,
+        )
 
     # ------------------------------------------------------------- persistence
     day_row = SnapshotDay(
@@ -550,6 +635,89 @@ async def capture_user(
         holdings=len(holdings),
         buckets_failed=tuple(failed),
         fx_missing=rate is None,
+    )
+
+
+async def _replace_day(
+    session: AsyncSession,
+    day_row: SnapshotDay,
+    *,
+    snapshot: PortfolioSnapshot,
+    holdings: list[Holding],
+    failed: list[BucketFailure],
+    raws: list[tuple[str, dict[str, Any]]],
+    rate: Optional[Decimal],
+    now: datetime,
+    previous_total: Optional[Decimal],
+    previous_at: Optional[datetime],
+) -> UserOutcome:
+    """Overwrite ``day_row`` with a fresh reading, in one transaction.
+
+    The row keeps its id, its holdings are replaced, and the earlier reading's
+    raw payloads are **kept** in `snapshot_raw` beside the new ones (each stamped
+    with its own `captured_at`), so what was replaced stays inspectable until the
+    90-day prune.
+    """
+    user_id, day = day_row.user_id, day_row.captured_on
+    if failed and not day_row.buckets_failed:
+        log.warning(
+            "snapshot: %s recapture for %s refused — partial reading (%s) over a complete one",
+            user_id,
+            day,
+            ", ".join(f"{f.asset_type}({f.reason})" for f in failed),
+        )
+        return UserOutcome(
+            user_id=user_id,
+            status=FAILED,
+            captured_on=day,
+            reason=PARTIAL_RECAPTURE,
+            buckets_failed=tuple(failed),
+            previous_total=previous_total,
+            previous_captured_at=previous_at,
+        )
+    try:
+        day_row.total_value = snapshot.net_worth
+        day_row.currency = snapshot.currency
+        day_row.usd_inr_rate = rate
+        day_row.buckets_failed = [f.as_dict() for f in failed] or None
+        day_row.captured_at = now.astimezone(timezone.utc)
+        session.add(day_row)
+        await session.execute(
+            delete(SnapshotHolding).where(SnapshotHolding.snapshot_id == day_row.id)
+        )
+        for holding in holdings:
+            session.add(_holding_row(day_row.id, holding))
+        for source, payload in raws:
+            session.add(
+                SnapshotRaw(
+                    snapshot_id=day_row.id,
+                    source=source,
+                    payload=payload,
+                    captured_at=day_row.captured_at,
+                )
+            )
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        log.exception("snapshot: %s failed to replace %s", user_id, day)
+        raise
+    log.info(
+        "snapshot: %s recaptured %s (%s at %s -> %s)",
+        user_id,
+        day,
+        previous_total,
+        previous_at.isoformat() if previous_at else None,
+        snapshot.net_worth,
+    )
+    return UserOutcome(
+        user_id=user_id,
+        status=RECAPTURED,
+        captured_on=day,
+        holdings=len(holdings),
+        buckets_failed=tuple(failed),
+        fx_missing=rate is None,
+        previous_total=previous_total,
+        previous_captured_at=previous_at,
     )
 
 
@@ -639,6 +807,7 @@ async def capture_all(
     fx: Optional[FxFetcher] = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     call_spacing: Optional[float] = None,
+    day: Optional[date] = None,
 ) -> CaptureReport:
     """Capture every user, one at a time.
 
@@ -657,7 +826,7 @@ async def capture_all(
     if connector is None and connector_factory is None:
         raise ValueError("capture_all needs a connector or a connector_factory")
     now = now or _now_utc()
-    day = attributed_day(now)
+    day = resolve_day(now, day)
     ids = list(user_ids) if user_ids is not None else await capture_users(session)
 
     outcomes: list[UserOutcome] = []
@@ -674,6 +843,7 @@ async def capture_all(
                 fx=fx,
                 sleep=sleep,
                 call_spacing=call_spacing,
+                day=day,
             )
         except Exception as exc:  # noqa: BLE001 - one user never aborts the batch
             log.exception("snapshot: unexpected failure capturing %s", user_id)
@@ -1261,8 +1431,13 @@ async def capture_if_missing(
     connector: PortfolioConnector,
     now: Optional[datetime] = None,
     session: Optional[AsyncSession] = None,
+    replace: bool = False,
 ) -> Optional[UserOutcome]:
     """Capture the current attributed day if it has no row yet.
+
+    ``replace=True`` is the reader's "recapture now": the day is re-read and its
+    earlier reading replaced (see :func:`capture_user`). Only the awaited button
+    passes it; the page-open background net never does.
 
     The third net. The two scheduled runs are the plan; this is what covers the
     week GitHub quietly disables the workflow, or the night the Space refused to
@@ -1284,10 +1459,14 @@ async def capture_if_missing(
             log.debug("opportunistic capture for %s already in flight", user_id)
             return None
         if session is not None:
-            return await capture_user(session, user_id, connector=connector, now=now)
+            return await capture_user(
+                session, user_id, connector=connector, now=now, replace=replace
+            )
         maker = get_sessionmaker()
         async with maker() as owned:
-            return await capture_user(owned, user_id, connector=connector, now=now)
+            return await capture_user(
+                owned, user_id, connector=connector, now=now, replace=replace
+            )
 
 
 def schedule_capture_if_missing(user_id: str, connector: PortfolioConnector) -> None:
@@ -1331,6 +1510,9 @@ __all__ = [
     "BASIS_PRICE",
     "CAPTURED",
     "FAILED",
+    "MAX_DAY_LAG",
+    "PARTIAL_RECAPTURE",
+    "RECAPTURED",
     "BucketFailure",
     "FX_URL",
     "IST",
@@ -1343,6 +1525,7 @@ __all__ = [
     "MoversReport",
     "UserOutcome",
     "attributed_day",
+    "resolve_day",
     "capture_all",
     "capture_if_missing",
     "capture_user",

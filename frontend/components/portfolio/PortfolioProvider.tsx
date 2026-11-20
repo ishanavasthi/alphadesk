@@ -24,6 +24,7 @@ import {
   startAuthLogin,
   type AllocationSlice,
   type BatchBucket,
+  type CapturedReading,
   type HoldingExclusion,
   type ManualFd,
   type OverviewComplete,
@@ -192,6 +193,11 @@ export interface PortfolioContextValue {
   cooldown: number;
   capture: () => Promise<void>;
   captureState: CaptureState;
+  /** Today's stored reading when the reader may replace it; `null` otherwise. */
+  captureOffer: CapturedReading | null;
+  dismissCaptureOffer: () => void;
+  /** Replace today's reading. Resolves to why it was kept, or `null` on success. */
+  recapture: () => Promise<string | null>;
   /** Selected drill-down, or `null` for the whole portfolio. */
   sectorType: string | null;
   /** The sector bars to draw: never the portfolio-wide fallback under a drill-down. */
@@ -302,6 +308,8 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
   const { begin: beginConsent, dialog: consentDialog } = useLinkConsent();
 
   const [captureState, setCaptureState] = useState<CaptureState>("idle");
+  /** Today's stored reading, offered for replacement after `already_captured`. */
+  const [captureOffer, setCaptureOffer] = useState<CapturedReading | null>(null);
 
   const [overview, setOverview] = useState<OverviewComplete | null>(null);
 
@@ -642,19 +650,31 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
    * owed an answer. It walks every bucket the snapshot reports, paced, so this
    * takes seconds — which is why the label says "Capturing…" instead of a bare
    * spinner. A day that already has a row comes back `already_captured`, and the
-   * label says exactly that rather than pretending to have done work.
+   * label says exactly that rather than pretending to have done work — while
+   * the stored reading is offered for replacement (`captureOffer`), because the
+   * source's freshness is not the clock's: IND Money serves a stale bank
+   * balance until it is refreshed in their app.
    */
+  const reloadHistory = useCallback(async () => {
+    const captured = await getPortfolioHistory(HISTORY_DAYS);
+    const points = toTrendPoints(captured.points);
+    setHistory(points);
+    setLastCapturedAt(captured.last_captured_at);
+    if (lastKnown) {
+      lastKnown = { ...lastKnown, history: points, lastCapturedAt: captured.last_captured_at };
+    }
+  }, []);
+
   const capture = useCallback(async () => {
     setCaptureState("busy");
     try {
       const result = await capturePortfolioSnapshot();
       if (result.status === "captured") {
         setCaptureState("done");
-        const captured = await getPortfolioHistory(HISTORY_DAYS);
-        setHistory(toTrendPoints(captured.points));
-        setLastCapturedAt(captured.last_captured_at);
+        await reloadHistory();
       } else if (result.status === "already_captured") {
         setCaptureState("existing");
+        setCaptureOffer(result.existing ?? { total_value: "", captured_at: null });
       } else if (result.status === "in_flight") {
         // Opening this page starts a capture when today's row is missing, so
         // pressing the button a second later legitimately finds one running.
@@ -670,7 +690,37 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     } catch {
       setCaptureState("failed");
     }
-  }, []);
+  }, [reloadHistory]);
+
+  /**
+   * Replace today's reading with a fresh one — the offer above, accepted.
+   *
+   * Resolves to a sentence for the dialog when the earlier reading was kept
+   * (the source could not be read, or only partly), and to `null` on success.
+   */
+  const recapture = useCallback(async (): Promise<string | null> => {
+    setCaptureState("busy");
+    try {
+      const result = await capturePortfolioSnapshot(undefined, true);
+      if (result.status === "recaptured" || result.status === "captured") {
+        setCaptureState(result.status === "recaptured" ? "replaced" : "done");
+        setCaptureOffer(null);
+        await reloadHistory();
+        return null;
+      }
+      setCaptureState("idle");
+      if (result.status === "in_flight") {
+        return "A capture is already running. Try again in a moment.";
+      }
+      if (result.reason === "partial_recapture") {
+        return "Some holdings could not be read just now, so today's complete earlier reading was kept. Try again in a minute.";
+      }
+      return "IND Money could not be read just now, so today's earlier reading was kept.";
+    } catch {
+      setCaptureState("idle");
+      return "The snapshot could not be replaced. Today's earlier reading was kept.";
+    }
+  }, [reloadHistory]);
 
   /**
    * Return the button to "Capture snapshot" a few seconds after it settles.
@@ -808,6 +858,9 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
             cooldown,
             capture,
             captureState,
+            captureOffer,
+            dismissCaptureOffer: () => setCaptureOffer(null),
+            recapture,
             sectorType,
             sectorSource,
             sectorError,
@@ -848,6 +901,8 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       cooldown,
       capture,
       captureState,
+      captureOffer,
+      recapture,
       sectorType,
       sectorSource,
       sectorError,
