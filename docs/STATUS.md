@@ -50,10 +50,12 @@ file at every card completion and gate. Newest facts win; keep entries terse.
   deliberately not done.
 - Space: `https://huggingface.co/spaces/heyavasthi/alphadesk`, live at
   `https://heyavasthi-alphadesk.hf.space`. Currently running `space-deploy` @
-  `8254d0c` = `main` @ `5125a19` (deployed 2026-11-10): holding exclusions
-  (#87, migration 0009), token-cache test isolation (#88), Lab layout (#86),
-  trend pan/zoom (#85). Previous: `51579fe` = `main` @ `7a6b9e0` (2026-10-17,
-  Anthropic provider #84 plus #81–#83). **LLM routing
+  `01a9757` = `main` @ `60b5658` (deployed 2026-11-20): IND Money OAuth
+  `resource` = the MCP URL (#90) — IND's November update rejects the bare
+  origin with a 400 "Connection permissions — not valid" page, which broke every
+  new Connect. No migration. Previous: `8254d0c` = `main` @ `5125a19`
+  (2026-11-10): holding exclusions (#87, migration 0009), token-cache test
+  isolation (#88), Lab layout (#86), trend pan/zoom (#85). **LLM routing
   on the Space:** Lab `anthropic` / `claude-opus-5-5` / `LAB_EFFORT=medium`;
   Overview `anthropic` / `claude-sonnet-5-5` / `OVERVIEW_EFFORT=high`; secrets
   `ANTHROPIC_API_KEY` + `ANTHROPIC_WORKSPACE_ID`. Rollback = set both
