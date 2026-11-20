@@ -72,6 +72,14 @@ file at every card completion and gate. Newest facts win; keep entries terse.
   mismatches, Alembic at 0009. **The old Singapore project is kept untouched as
   the rollback** (rollback = point the secret back; any rows written since the
   move would be lost) until it is deliberately deleted.
+- **Nightly snapshot trigger: Cloudflare Worker `alphadesk-snapshot-cron`
+  (primary, since 2026-11-21, #95)** on the operator's Cloudflare account,
+  crons `15 18 * * *` / `30 19 * * *` / `45 19 * * SUN` (UTC), Worker secret
+  `CRON_SECRET`. Deploy: `cd infra/snapshot-cron && npx wrangler deploy` with a
+  `CLOUDFLARE_API_TOKEN` (Edit Workers template; wrangler's interactive login
+  does not work in agent sessions). Logs: dashboard → Workers → the Worker →
+  Logs. `.github/workflows/snapshot.yml` is the backup and skips scheduled
+  captures that start 06:00–23:00 IST (GitHub was 5–6 h late, #94).
 - Pushing to the Space needs the HF token (`hf auth whoami`). The `space` remote
   has no stored credential, so pass the token via `GIT_ASKPASS`. Never put it
   in the remote URL or git config.
