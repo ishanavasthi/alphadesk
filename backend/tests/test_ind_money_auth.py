@@ -370,6 +370,22 @@ async def test_both_scopes_are_requested(db_env: Any, broker: FakeBroker) -> Non
     assert set(scope.split()) == {"portfolio:read", "market:read"}
 
 
+async def test_the_resource_is_the_mcp_server_url(db_env: Any, broker: FakeBroker) -> None:
+    """RFC 8707 `resource` must name the MCP endpoint, not the bare origin.
+
+    IND Money's 2026-11 update started enforcing it against its protected-resource
+    metadata (`resource: https://mcp.indmoney.com/mcp`). The bare origin got a
+    400 "Connection permissions — This connection request is not valid" page
+    with no redirect back, so no new link could complete. Both the
+    authorization request and the code exchange carry it.
+    """
+    url = await auth.begin_login(USER_A, REDIRECT)
+    assert parse_qs(urlsplit(url).query)["resource"] == [f"{ISSUER}/mcp"]
+
+    await _link(USER_A)
+    assert broker.last_token_form["resource"] == [f"{ISSUER}/mcp"]
+
+
 async def test_the_authorization_url_carries_pkce(db_env: Any, broker: FakeBroker) -> None:
     query = parse_qs(urlsplit(await auth.begin_login(USER_A, REDIRECT)).query)
     assert query["code_challenge_method"] == ["S256"]

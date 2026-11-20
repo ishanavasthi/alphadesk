@@ -95,7 +95,6 @@ _CACHE_FILE = Path(__file__).resolve().parents[1] / ".ind_money_token.json"
 _CLAUDE_CREDS = Path.home() / ".claude" / ".credentials.json"
 _DEFAULT_TOKEN_URL = "https://mcp.indmoney.com/token"
 _CLAUDE_PREFIX = "indmoney"
-_RESOURCE = "https://mcp.indmoney.com/"
 
 #: The connector key this module speaks for. One row per (user, source).
 SOURCE = "ind_money"
@@ -186,10 +185,26 @@ class OAuthStateError(MCPAuthError):
     """
 
 
+def _mcp_url() -> str:
+    return os.environ.get("IND_MONEY_MCP_URL") or "https://mcp.indmoney.com/mcp"
+
+
 def _issuer_base() -> str:
-    url = os.environ.get("IND_MONEY_MCP_URL") or "https://mcp.indmoney.com/mcp"
-    parts = urllib.parse.urlsplit(url)
+    parts = urllib.parse.urlsplit(_mcp_url())
     return f"{parts.scheme}://{parts.netloc}"
+
+
+def _resource() -> str:
+    """The RFC 8707 ``resource`` indicator: the MCP server's own URL.
+
+    Per the MCP authorization spec this is the canonical URI of the MCP server,
+    which is what IND Money's protected-resource metadata advertises
+    (``https://mcp.indmoney.com/mcp``). It used to be the bare origin; since the
+    2026-11 server update a mismatch is a 400 "This connection request is not
+    valid" page at ``/authorize`` that never redirects back, so new links fail
+    silently. Sent on the authorization request and the code exchange.
+    """
+    return _mcp_url().rstrip("/")
 
 
 # --------------------------------------------------------------------------- #
@@ -1150,7 +1165,7 @@ async def begin_login(
         "state": state,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
-        "resource": _RESOURCE,
+        "resource": _resource(),
     }
     return md["authorization_endpoint"] + "?" + urllib.parse.urlencode(params)
 
@@ -1289,7 +1304,7 @@ async def complete_login(code: str, state: str) -> str:
         "redirect_uri": pend["redirect_uri"],
         "client_id": pend["client_id"],
         "code_verifier": pend["verifier"],
-        "resource": _RESOURCE,
+        "resource": _resource(),
     }
     if pend.get("client_secret"):
         data["client_secret"] = pend["client_secret"]
