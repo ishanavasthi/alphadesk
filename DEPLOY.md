@@ -192,13 +192,21 @@ Vercel -> Domains -> add `alphadesk.ishanavasthi.in`; add the DNS record; then
 ensure that exact origin is in the backend `CORS_ALLOW_ORIGINS` **and**
 `CLERK_AUTHORIZED_PARTIES`.
 
-## 5. Snapshots — GitHub Actions
+## 5. Snapshots — Cloudflare Worker (primary) + GitHub Actions (backup)
 
-`.github/workflows/snapshot.yml` calls `POST /internal/snapshot` nightly
-(23:45 IST + a retry). Needs repo **secret** `CRON_SECRET` (matching the Space)
-and repo **variable** `BACKEND_URL`. A run with no linked users is green with
-`skipped`. GitHub disables scheduled workflows after 60 days of repo inactivity
-— the staleness banner surfaces a stalled job.
+**Primary:** `infra/snapshot-cron` is a cron-only Cloudflare Worker that calls
+`POST /internal/snapshot` at 23:45 IST (retry 01:00 IST) and prunes on Sundays.
+It fires on the minute. Deploy and secret steps are in its `README.md`. It needs
+the Worker secret `CRON_SECRET` (matching the Space); `BACKEND_URL` is in
+`wrangler.jsonc`.
+
+**Backup:** `.github/workflows/snapshot.yml` runs the same crons. Needs repo
+**secret** `CRON_SECRET` (matching the Space) and repo **variable**
+`BACKEND_URL`. GitHub's schedule is best-effort and was starting runs 5–6 h late
+(#94), so a scheduled capture that starts after 06:00 IST skips itself instead
+of claiming the next day's slot. A run with no linked users is green with
+`skipped`. GitHub disables scheduled workflows after 60 days of repo inactivity;
+the staleness banner surfaces a stalled job.
 
 ## 6. Wire-up checklist (the cross-references that bite)
 
@@ -206,7 +214,8 @@ and repo **variable** `BACKEND_URL`. A run with no linked users is green with
 - `CORS_ALLOW_ORIGINS` (backend) ⊇ the live frontend origin, exact.
 - `CLERK_AUTHORIZED_PARTIES` (backend) ⊇ the live frontend origin, exact.
 - `NEXT_PUBLIC_API_URL` (frontend) = `<BACKEND_URL>`, exact.
-- `CRON_SECRET` identical on the Space and as a GitHub secret.
+- `CRON_SECRET` identical on the Space, as a GitHub secret, and as the
+  `alphadesk-snapshot-cron` Worker secret.
 
 ## 7. Verify
 

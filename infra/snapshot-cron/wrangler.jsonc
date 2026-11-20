@@ -1,0 +1,24 @@
+// Nightly snapshot trigger for AlphaDesk (#94). See README.md.
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "alphadesk-snapshot-cron",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-01",
+  // Cron-only Worker: no public URL to probe or abuse.
+  "workers_dev": false,
+  "preview_urls": false,
+  "triggers": {
+    // UTC. Keep in sync with CAPTURE_CRONS / PRUNE_CRON in src/run.js —
+    // an expression missing from there is rejected as "Unknown cron".
+    "crons": [
+      "15 18 * * *", // 23:45 IST  primary capture
+      "30 19 * * *", // 01:00 IST  retry (same attributed day; a no-op if the primary worked)
+      "45 19 * * 0"  // Sunday 01:15 IST  prune raw payloads > 90 days
+    ]
+  },
+  "vars": {
+    "BACKEND_URL": "https://heyavasthi-alphadesk.hf.space"
+  },
+  // CRON_SECRET is a Worker secret: `npx wrangler secret put CRON_SECRET`.
+  "observability": { "enabled": true }
+}
