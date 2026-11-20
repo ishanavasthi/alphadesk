@@ -22,6 +22,12 @@
 # Actions tab until you have.
 #
 # ---------------------------------------------------------------------------
+# **Primary vs backup (#94).** The Cloudflare Worker in infra/snapshot-cron fires
+# these same crons on the minute and is the primary trigger. This workflow is
+# the backup: GitHub had been starting it 5-6 h late (median 5 h 24 m in
+# Nov 2026), so a scheduled capture that starts after 06:00 IST skips itself
+# (see the first step) rather than claiming the next day's slot.
+#
 # Timing. Cron on GitHub is UTC and **best-effort — runs can start late**, which
 # is precisely why the backend attributes a capture to an IST calendar day with
 # a 06:00 IST cutoff rather than trusting the clock it happens to run on:
@@ -79,7 +85,30 @@ jobs:
     # 40 leaves headroom for runner setup and a slow checkout-free start.
     timeout-minutes: 40
     steps:
+      - name: Skip if too late for tonight
+        id: window
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          # This workflow is the BACKUP trigger (#94); the Cloudflare Worker in
+          # infra/snapshot-cron is primary and fires on the minute. GitHub has
+          # been starting these runs 5-6 h late. Past 06:00 IST the backend files
+          # a capture under the *next* day, and first capture wins — so a late
+          # backup run would take tomorrow's slot with this morning's numbers and
+          # make tomorrow's on-time 23:45 capture skip. Between 06:00 and 23:00
+          # IST a scheduled run therefore does nothing. Manual runs are exempt.
+          hour=$(TZ=Asia/Kolkata date +%-H)
+          if [ "$EVENT" = "schedule" ] && [ "$hour" -ge 6 ] && [ "$hour" -lt 23 ]; then
+            echo "::notice::Started at $(TZ=Asia/Kolkata date +%H:%M) IST, past the 06:00 IST"\
+                 "cutoff for the night it was scheduled for. Skipping so it cannot claim"\
+                 "the next day's slot; the Cloudflare Worker owns on-time capture."
+            echo "late=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "late=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check configuration
+        if: steps.window.outputs.late != 'true'
         env:
           BACKEND_URL: ${{ vars.BACKEND_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
@@ -94,6 +123,7 @@ jobs:
           fi
 
       - name: Wake the Space
+        if: steps.window.outputs.late != 'true'
         env:
           BACKEND_URL: ${{ vars.BACKEND_URL }}
         run: |
@@ -126,6 +156,7 @@ jobs:
           exit 1
 
       - name: Trigger capture
+        if: steps.window.outputs.late != 'true'
         env:
           BACKEND_URL: ${{ vars.BACKEND_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
