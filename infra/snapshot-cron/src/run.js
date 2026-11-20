@@ -16,8 +16,12 @@
 
 /** 23:45 IST primary and 01:00 IST retry — both attributed to the same IST day. */
 export const CAPTURE_CRONS = ["15 18 * * *", "30 19 * * *"];
-/** Sunday 01:15 IST: drop snapshot_raw payloads older than 90 days. */
-export const PRUNE_CRON = "45 19 * * 0";
+/**
+ * Sunday 01:15 IST: drop snapshot_raw payloads older than 90 days.
+ * `SUN`, not `0`: Cloudflare numbers weekdays 1-7 with 1 = Sunday and rejects
+ * `0` (GitHub's workflow uses `0`, which is Sunday there).
+ */
+export const PRUNE_CRON = "45 19 * * SUN";
 
 // Budgets. Cloudflare kills a scheduled invocation at 15 minutes of wall time,
 // so the worst case is computed, not guessed (and pinned by a test):

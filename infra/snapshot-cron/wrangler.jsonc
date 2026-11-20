@@ -13,7 +13,7 @@
     "crons": [
       "15 18 * * *", // 23:45 IST  primary capture
       "30 19 * * *", // 01:00 IST  retry (same attributed day; a no-op if the primary worked)
-      "45 19 * * 0"  // Sunday 01:15 IST  prune raw payloads > 90 days
+      "45 19 * * SUN" // Sunday 01:15 IST  prune raw payloads > 90 days (SUN: Cloudflare weekdays are 1-7, 1 = Sunday)
     ]
   },
   "vars": {

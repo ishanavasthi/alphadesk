@@ -161,3 +161,15 @@ test("worst case fits Cloudflare's 15-minute cron wall-time limit", () => {
     TRIGGER_BACKOFF_SECONDS.reduce((a, b) => a + b, 0);
   assert.ok(worst < 15 * 60 - 30, `worst case ${worst}s leaves under 30 s of headroom`);
 });
+
+test("wrangler.jsonc schedules exactly the crons the code handles", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const raw = await readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8");
+  // Strip // comments that are not inside a string.
+  const json = raw.replace(/("(?:[^"\\]|\\.)*")|\/\/[^\n]*/g, (m, str) => str ?? "");
+  const crons = JSON.parse(json).triggers.crons;
+  assert.deepEqual([...crons].sort(), [...CAPTURE_CRONS, PRUNE_CRON].sort());
+  for (const c of crons) {
+    assert.doesNotMatch(c.split(" ")[4], /^0$/, "Cloudflare rejects weekday 0 (1 = Sunday)");
+  }
+});
